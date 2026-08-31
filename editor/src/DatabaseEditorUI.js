@@ -2709,7 +2709,10 @@ class DatabaseEditorUI {
                 // A video file previews as a playing video, not a dead <img>.
                 // Sheet selection never applies to videos, so the overlay
                 // logic below only ever sees the image element.
-                const isVideoPreview = options.mediaType === 'video';
+                // Surface pickers mix movies and stills: only a real movie
+                // file gets a <video>; anything else previews as an image.
+                const isVideoPreview = options.mediaType === 'video'
+                    && /\.(?:webm|mp4)$/i.test(String(file || ''));
                 const img = document.createElement(isVideoPreview ? 'video' : 'img');
                 if (isVideoPreview) {
                     img.muted = true;

@@ -547,7 +547,7 @@ test('previews show scanlines, stand on their anchor like the game, clamp typed 
     assert.match(runtime, /y -= descriptor\.height \* Math\.abs\(descriptor\.scaleY\) \/ 2;/);
     assert.doesNotMatch(runtime, /descriptor\.z \* th/);
     assert.equal(VideoSurfacePreviewManager.standingLift({ target: 'screen', height: 180, scaleY: 1 }), 0);
-    assert.match(fs.readFileSync(path.join(editorRoot, '..', 'runtime', 'reactor_main.js'), 'utf8'), /runtime revision: 20260830\.36/);
+    assert.match(fs.readFileSync(path.join(editorRoot, '..', 'runtime', 'reactor_main.js'), 'utf8'), /runtime revision: 20260831\.1/);
     assert.match(editor, /if \(options\.max !== undefined && next > options\.max\) next = options\.max;/);
     assert.match(editor, /if \(final && options\.min !== undefined && next < options\.min\) next = options\.min;/);
     assert.match(manager, /setEnabled\(enabled\) \{/);
@@ -733,4 +733,48 @@ test('clearing the 3D scene survives previewed model groups among the event mark
     const map3d = read('src/MapEditor3D.js');
     assert.match(map3d, /if \(child\.userData\?\.modelPreview\) \{/, 'model previews are groups, not meshes');
     assert.match(map3d, /child\.geometry\?\.dispose\?\.\(\);/, 'and nothing assumes a geometry or a single material');
+});
+
+test('the editor accepts image files and lists pictures beside movies', () => {
+    assert.equal(VideoSurfaceEditor.safeMoviePath('posters/launch.png'), true);
+    assert.equal(VideoSurfaceEditor.safeMoviePath('decals/rust.WEBP'), true);
+    assert.equal(VideoSurfaceEditor.safeMoviePath('anim/loop.gif'), false);
+    assert.equal(VideoSurfaceEditor.isImageFile('posters/launch.png'), true);
+    assert.equal(VideoSurfaceEditor.isImageFile('clips/intro.webm'), false);
+
+    const errors = VideoSurfaceEditor.validate('ShowVideoSurface', Object.assign(
+        VideoSurfaceEditor.defaults(), { movie: 'posters/launch.png', target: 'map' }));
+    assert.deepEqual(errors, [], 'an image file passes Show validation');
+});
+
+test('mediaFiles merges the movies folder with img/pictures', () => {
+    const fs = require('node:fs');
+    const os = require('node:os');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-media-'));
+    fs.mkdirSync(path.join(dir, 'movies', 'clips'), { recursive: true });
+    fs.mkdirSync(path.join(dir, 'img', 'pictures', 'posters'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'movies', 'clips', 'intro.webm'), 'x');
+    fs.writeFileSync(path.join(dir, 'img', 'pictures', 'posters', 'launch.png'), 'x');
+    try {
+        const editor = new VideoSurfaceEditor(null, { currentProject: { path: dir } });
+        const names = editor.mediaFiles().map(file => file.relativePath).sort();
+        assert.deepEqual(names, ['clips/intro.webm', 'posters/launch.png']);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('the dialog hides playback-only controls for a still', () => {
+    const fs = require('node:fs');
+    const source = fs.readFileSync(path.join(editorRoot, 'src', 'event', 'commands', 'VideoSurfaceEditor.js'), 'utf8');
+    assert.match(source, /_syncMediaFields\(\) \{/);
+    assert.match(source, /\['volume', 'playbackRate', 'loop', 'muted', 'wait'\]/);
+    // The workspace previews a still in an <img> while the video stays dark.
+    assert.match(source, /vs-image-preview/);
+    assert.match(source, /VideoSurfaceEditor\.isImageFile\(this\.data\.movie\)/);
+    // The live map preview manager grew the same branch in all backends.
+    const preview = fs.readFileSync(path.join(editorRoot, 'src', 'VideoSurfacePreviewManager.js'), 'utf8');
+    assert.match(preview, /_isImage\(file\)/);
+    assert.match(preview, /img', 'pictures'/);
+    assert.match(preview, /tagName === 'IMG'/);
 });

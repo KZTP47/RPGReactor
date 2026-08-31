@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased - 0.98.5]
 
+### Added
+- **Surfaces now show still images as well as videos (runtime revision `20260831.1`).** The Show/Transform/Stop Video Surface event commands and the 3D Models media effect accept PNG/JPG/WEBP files from `img/pictures` alongside WebM/MP4 from `movies` — a sticker on a model, a billboard with custom art, a poster on a wall, all through the same anchors, placement and sizing. Images load through the game's picture pipeline, so encrypted deployments keep working; playback-only options (volume, rate, loop, mute, wait) hide when a still is chosen, and every preview — command dialog, live map authoring, database 3D Models, 3D map view — renders the image on its plane. The database effect type is now labelled **Media Surface**.
+
 ### Fixed
 - The Show Text previews (miniature and full) now really use the project's main font: the font loader read the file without awaiting it, threw inside its own try, and silently fell back to sans-serif on every project — the overflow measurement ran on the wrong face too.
 - Database 3D Models: picking a video surface's movie now plays the video in the picker's preview pane (muted, looping, with controls) instead of showing nothing — the picker was handed an empty path and drew a dead image element. The confirm button reads "Choose a video…" rather than "Select This Image".

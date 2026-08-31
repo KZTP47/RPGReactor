@@ -1662,14 +1662,25 @@ class MapEditor3D {
     _videoEffectPlane(effect, project, extent) {
         if (!project?.path || typeof THREE === 'undefined') return null;
         const path = require('path');
-        const file = path.join(project.path, 'movies', effect.video.file);
+        const isImage = /\.(?:png|jpe?g|webp)$/i.test(effect.video.file);
+        const file = path.join(project.path,
+            isImage ? path.join('img', 'pictures') : 'movies', effect.video.file);
         const url = typeof RRAssetFiles !== 'undefined' && RRAssetFiles.toUrl ? RRAssetFiles.toUrl(file) : 'file://' + file;
-        const video = document.createElement('video');
-        video.muted = true;
-        video.loop = effect.video.loop !== false;
-        video.playsInline = true;
-        video.src = url;
-        const texture = new THREE.VideoTexture(video);
+        let video = null;
+        let texture;
+        if (isImage) {
+            const image = new Image();
+            texture = new THREE.Texture();
+            image.onload = () => { texture.image = image; texture.needsUpdate = true; };
+            image.src = url;
+        } else {
+            video = document.createElement('video');
+            video.muted = true;
+            video.loop = effect.video.loop !== false;
+            video.playsInline = true;
+            video.src = url;
+            texture = new THREE.VideoTexture(video);
+        }
         if (THREE.SRGBColorSpace) texture.colorSpace = THREE.SRGBColorSpace;
         const plane = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide, toneMapped: false }));
         // A fraction of the model's size, in its units, as a child of it.
@@ -1678,7 +1689,7 @@ class MapEditor3D {
         plane.scale.set(native[0] * axes[0], native[1] * axes[1], 1);
         plane.userData.video = video;
         plane.userData.texture = texture;
-        video.play().catch(() => {});
+        if (video) video.play().catch(() => {});
         return plane;
     }
 

@@ -93,12 +93,23 @@
             || /^[a-z]:[\\/]/i.test(path) || path.indexOf("\\") >= 0) return null;
         const parts = path.split("/");
         if (!parts.length || parts.some(part => !part || part === "." || part === "..")) return null;
-        if (!/\.(?:webm|mp4)$/i.test(parts[parts.length - 1])) return null;
+        if (!/\.(?:webm|mp4|png|jpe?g|webp)$/i.test(parts[parts.length - 1])) return null;
         return parts.join("/");
     }
 
     function movieUrl(path) {
         return "movies/" + path.split("/").map(encodeURIComponent).join("/");
+    }
+
+    // A surface's media follows its file: movies play from movies/, still
+    // images come from img/pictures/ — a sticker on a model, a billboard,
+    // a poster on a wall, through the exact same placement machinery.
+    function isImageFile(path) {
+        return typeof path === "string" && /\.(?:png|jpe?g|webp)$/i.test(path);
+    }
+
+    function pictureUrl(path) {
+        return "img/pictures/" + path.split("/").map(encodeURIComponent).join("/");
     }
 
     function normalizeTarget(value) {
@@ -248,6 +259,11 @@
         const muted = booleanArgument(args, ["muted"], mutedDefault);
         if (![loop, scanlines, wait, ended, waitReleased, audio, muted].every(item => item.ok)) return null;
         if (wait.value && loop.value) loop.value = false;
+        // A still image never ends, so a wait on one would hang the event.
+        if (isImageFile(file) && wait.value) {
+            wait.value = false;
+            waitReleased.value = true;
+        }
 
         const layerField = field(args, ["layer", "zIndex"]);
         const layer = layerField.present ? normalizeLayer(layerField.value) : 3;
@@ -436,8 +452,10 @@
             this.cleaned = false;
             this.started = false;
             this.listeners = [];
+            this.isImage = isImageFile(descriptor.file);
             try {
-                this.createVideo();
+                if (this.isImage) this.createImage();
+                else this.createVideo();
                 this.attach(spriteset);
             } catch (error) {
                 this.cleanup("error");
@@ -479,8 +497,61 @@
             this.updateAudio();
         }
 
+        createImage() {
+            // In the game, pictures load through ImageManager so encrypted
+            // deployments (.png_) decrypt exactly as Show Picture does. The
+            // editor previews and tests have no ImageManager and read raw.
+            const name = this.descriptor.file.replace(/\.[^.]+$/, "");
+            if (typeof ImageManager !== "undefined"
+                && (ImageManager.loadPicture || ImageManager.loadBitmap)) {
+                this.bitmap = ImageManager.loadPicture
+                    ? ImageManager.loadPicture(name)
+                    : ImageManager.loadBitmap("img/pictures/", name);
+                return;
+            }
+            if (typeof document === "undefined" || !document.createElement) return;
+            const image = document.createElement("img");
+            this.image = image;
+            this.listen(image, "error", event => {
+                if (this.current()) this.manager.failed(this.id, this.generation, event);
+            });
+            image.src = pictureUrl(this.descriptor.file);
+        }
+
+        imageReady() {
+            if (this.bitmap) return !!(this.bitmap.isReady && this.bitmap.isReady());
+            const image = this.image;
+            return !!(image && image.complete && image.naturalWidth > 0);
+        }
+
+        /** The decoded pixels, for a texture that takes any image-like. */
+        imageSource() {
+            if (this.bitmap) return this.bitmap.canvas || this.bitmap.image || null;
+            return this.image || null;
+        }
+
+        /** The decoded pixels as a canvas, for PIXI's CanvasSource. */
+        imageCanvas() {
+            if (this.bitmap) return this.bitmap.canvas || null;
+            const image = this.image;
+            if (!image || !image.naturalWidth) return null;
+            const canvas = document.createElement("canvas");
+            canvas.width = image.naturalWidth;
+            canvas.height = image.naturalHeight;
+            canvas.getContext("2d").drawImage(image, 0, 0);
+            return canvas;
+        }
+
         attach(spriteset) {
-            if (this.cleaned || !this.video || !spriteset || this.backend) return false;
+            if (this.cleaned || !spriteset || this.backend) return false;
+            if (!this.video && !this.isImage) return false;
+            // A texture built from an undecoded image is a silent black
+            // quad; update() retries attach each frame until the pixels
+            // are actually in.
+            if (this.isImage && !this.imageReady()) {
+                this.spriteset = spriteset;
+                return false;
+            }
             this.spriteset = spriteset;
             const backend = this.desiredBackend(this.descriptor);
             if (backend === "three") {
@@ -524,6 +595,10 @@
         }
 
         startPlayback() {
+            if (this.isImage) {
+                this.started = true;
+                return;
+            }
             if (this.started || !this.video) return;
             this.started = true;
             if (this.videoSource && this.videoSource.load) {
@@ -606,17 +681,24 @@
         }
 
         attachPixi(spriteset) {
-            const source = new PIXI.VideoSource({
-                resource: this.video, width: 1, height: 1,
-                autoLoad: false, autoPlay: false, updateFPS: 0
-            });
-            const onSourceError = event => {
-                if (this.current()) this.manager.failed(this.id, this.generation, event);
-            };
-            if (source.on) source.on("error", onSourceError);
-            this.videoSourceError = onSourceError;
-            this.videoSource = source;
-            this.pixiTexture = new PIXI.Texture({ source: source, dynamic: true });
+            if (this.isImage) {
+                const canvas = this.imageCanvas();
+                if (!canvas) throw new Error("Image surface has no decoded image");
+                this.imagePixiSource = new PIXI.CanvasSource({ resource: canvas });
+                this.pixiTexture = new PIXI.Texture({ source: this.imagePixiSource });
+            } else {
+                const source = new PIXI.VideoSource({
+                    resource: this.video, width: 1, height: 1,
+                    autoLoad: false, autoPlay: false, updateFPS: 0
+                });
+                const onSourceError = event => {
+                    if (this.current()) this.manager.failed(this.id, this.generation, event);
+                };
+                if (source.on) source.on("error", onSourceError);
+                this.videoSourceError = onSourceError;
+                this.videoSource = source;
+                this.pixiTexture = new PIXI.Texture({ source: source, dynamic: true });
+            }
             this.pixiContainer = new PIXI.Container();
             this.pixiMesh = new PIXI.PerspectiveMesh({ texture: this.pixiTexture });
             this.pixiContainer.addChild(this.pixiMesh);
@@ -661,7 +743,10 @@
         }
 
         attachThree(state) {
-            const texture = new THREE.VideoTexture(this.video);
+            const texture = this.isImage
+                ? new THREE.CanvasTexture(this.imageSource())
+                : new THREE.VideoTexture(this.video);
+            if (this.isImage) texture.needsUpdate = true;
             texture.generateMipmaps = false;
             if (THREE.LinearFilter) {
                 texture.minFilter = THREE.LinearFilter;
@@ -779,7 +864,7 @@
 
         updateAudio() {
             const video = this.video;
-            if (!video) return;
+            if (this.isImage || !video) return;
             video.loop = this.descriptor.loop;
             video.muted = this.descriptor.muted;
             video.defaultMuted = this.descriptor.muted;
@@ -1064,6 +1149,9 @@
             if (this.pixiTexture && this.pixiTexture.destroy) this.pixiTexture.destroy(true);
             this.pixiTexture = null;
             this.videoSource = null;
+            this.imagePixiSource = null;
+            this.bitmap = null;
+            this.image = null;
 
             this.destroyThreeScanline();
             if (this.threeMesh && this.threeMesh.parent) this.threeMesh.parent.remove(this.threeMesh);
@@ -1464,6 +1552,8 @@
         WAIT_MODE: WAIT_MODE,
         sanitizeMoviePath: sanitizeMoviePath,
         movieUrl: movieUrl,
+        isImageFile: isImageFile,
+        pictureUrl: pictureUrl,
         normalizeShowArgs: normalizeShowArgs,
         normalizeTransformArgs: normalizeTransformArgs,
         normalizeStopArgs: normalizeStopArgs,

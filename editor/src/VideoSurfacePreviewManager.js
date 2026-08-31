@@ -217,7 +217,9 @@ class VideoSurfacePreviewManager {
         const Editor = VideoSurfacePreviewManager._editorClass();
         if (!root || !Editor?.safeMoviePath(movie) || typeof require !== 'function') return '';
         const path = require('path');
-        const absolute = path.join(root, 'movies', ...String(movie).split('/'));
+        const absolute = VideoSurfacePreviewManager._isImage(movie)
+            ? path.join(root, 'img', 'pictures', ...String(movie).split('/'))
+            : path.join(root, 'movies', ...String(movie).split('/'));
         let assets = typeof RRAssetFiles !== 'undefined' ? RRAssetFiles : null;
         if (!assets) {
             try { assets = require('./utils/AssetFiles.js'); } catch (_) {}
@@ -225,8 +227,18 @@ class VideoSurfacePreviewManager {
         return assets?.toUrl ? assets.toUrl(absolute) : `file://${absolute.replace(/\\/g, '/')}`;
     }
 
+    static _isImage(file) {
+        return /\.(?:png|jpe?g|webp)$/i.test(String(file || ''));
+    }
+
     _createMedia(state) {
         if (typeof document === 'undefined') return null;
+        if (VideoSurfacePreviewManager._isImage(state.movie)) {
+            const image = document.createElement('img');
+            const imageUrl = this._movieUrl(state.movie);
+            if (imageUrl) image.src = imageUrl;
+            return image;
+        }
         const video = document.createElement('video');
         video.muted = true;
         video.defaultMuted = true;
@@ -294,7 +306,21 @@ class VideoSurfacePreviewManager {
         owner.placeholderTexture = new PIXI.Texture({ source: owner.placeholderSource });
         const video = this._createMedia(state);
         owner.video = video;
-        if (video?.src && typeof PIXI.VideoSource === 'function') {
+        if (video?.src && video.tagName === 'IMG') {
+            // A still paints into the placeholder canvas once decoded; the
+            // mesh keeps the placeholder texture and simply shows the image.
+            const paint = () => {
+                if (owner.destroyed || !video.naturalWidth) return;
+                const context = owner.canvas.getContext('2d');
+                context.drawImage(video, 0, 0, owner.canvas.width, owner.canvas.height);
+                owner.placeholderSource.update?.();
+            };
+            if (video.complete) paint();
+            else {
+                video.addEventListener('load', paint);
+                owner.listeners.push(() => video.removeEventListener('load', paint));
+            }
+        } else if (video?.src && typeof PIXI.VideoSource === 'function') {
             // One load() call, ours, so its rejection (the texture destroyed
             // mid-load when the preview is torn down) has a handler.
             owner.source = new PIXI.VideoSource({
@@ -1062,8 +1088,22 @@ class VideoSurfacePreviewManager {
         };
         try {
             owner.video = this._createMedia(state);
-            if (owner.video?.src) owner.texture = new THREE.VideoTexture(owner.video);
-            else {
+            if (owner.video?.src && owner.video.tagName === 'IMG') {
+                // A still paints into the placeholder canvas once decoded.
+                owner.canvas = this._placeholderCanvas(state);
+                owner.texture = new THREE.CanvasTexture(owner.canvas);
+                const image = owner.video;
+                const paint = () => {
+                    if (!image.naturalWidth) return;
+                    const context = owner.canvas.getContext('2d');
+                    context.drawImage(image, 0, 0, owner.canvas.width, owner.canvas.height);
+                    owner.texture.needsUpdate = true;
+                };
+                if (image.complete) paint();
+                else image.addEventListener('load', paint, { once: true });
+            } else if (owner.video?.src) {
+                owner.texture = new THREE.VideoTexture(owner.video);
+            } else {
                 owner.canvas = this._placeholderCanvas(state);
                 owner.texture = new THREE.CanvasTexture(owner.canvas);
             }

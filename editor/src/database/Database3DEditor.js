@@ -3327,7 +3327,9 @@ class Database3DEditor {
         if (!work) return;
         const lister = typeof VideoSurfaceEditor !== 'undefined'
             ? new VideoSurfaceEditor(this.databaseManager, this.projectController) : null;
-        const files = lister ? lister.movieFiles(this._project()) : [];
+        const files = lister
+            ? (lister.mediaFiles ? lister.mediaFiles(this._project()) : lister.movieFiles(this._project()))
+            : [];
         const picker = window.reactor?.databaseEditorUI;
         const names = files.map(file => file.relativePath);
         if (!names.length) {
@@ -3340,8 +3342,10 @@ class Database3DEditor {
             const path = require('path');
             const urlFor = name => {
                 const file = files.find(entry => entry.relativePath === name);
+                const isImage = /\.(?:png|jpe?g|webp)$/i.test(String(name || ''));
                 const absolute = file ? file.absolutePath
-                    : path.join(this._project().path, 'movies', name);
+                    : path.join(this._project().path,
+                        isImage ? path.join('img', 'pictures') : 'movies', name);
                 return typeof RRAssetFiles !== 'undefined' && RRAssetFiles.toUrl
                     ? RRAssetFiles.toUrl(absolute) : 'file://' + absolute;
             };
@@ -3375,15 +3379,27 @@ class Database3DEditor {
         if (typeof THREE === 'undefined' || !this._scene || !raw.video || !raw.video.file) return;
         this._stopVideoPreview();
         const path = require('path');
+        const isImage = /\.(?:png|jpe?g|webp)$/i.test(raw.video.file);
+        const mediaPath = path.join(this._project().path,
+            isImage ? path.join('img', 'pictures') : 'movies', raw.video.file);
         const url = typeof RRAssetFiles !== 'undefined' && RRAssetFiles.toUrl
-            ? RRAssetFiles.toUrl(path.join(this._project().path, 'movies', raw.video.file))
-            : 'file://' + path.join(this._project().path, 'movies', raw.video.file);
-        const video = document.createElement('video');
-        video.muted = !raw.video.audio;
-        video.loop = raw.video.loop !== false;
-        video.playsInline = true;
-        video.src = url;
-        const texture = new THREE.VideoTexture(video);
+            ? RRAssetFiles.toUrl(mediaPath) : 'file://' + mediaPath;
+        let video;
+        let texture;
+        if (isImage) {
+            // A still on the plane: same placement, no playback machinery.
+            video = new Image();
+            texture = new THREE.Texture();
+            video.onload = () => { texture.image = video; texture.needsUpdate = true; };
+            video.src = url;
+        } else {
+            video = document.createElement('video');
+            video.muted = !raw.video.audio;
+            video.loop = raw.video.loop !== false;
+            video.playsInline = true;
+            video.src = url;
+            texture = new THREE.VideoTexture(video);
+        }
         if (THREE.SRGBColorSpace) texture.colorSpace = THREE.SRGBColorSpace;
         const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide, toneMapped: false }));
         mesh.userData.__reactorOverlay = true;

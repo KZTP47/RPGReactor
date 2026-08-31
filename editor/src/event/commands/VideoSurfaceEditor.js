@@ -323,7 +323,12 @@ class VideoSurfaceEditor {
             || /^[a-z]:[\\/]/i.test(path) || path.includes('\\')) return false;
         const parts = path.split('/');
         return parts.length > 0 && parts.every(part => part && part !== '.' && part !== '..')
-            && /\.(?:webm|mp4)$/i.test(parts.at(-1));
+            && /\.(?:webm|mp4|png|jpe?g|webp)$/i.test(parts.at(-1));
+    }
+
+    /** Movies play from movies/; a still image comes from img/pictures/. */
+    static isImageFile(value) {
+        return /\.(?:png|jpe?g|webp)$/i.test(String(value || ''));
     }
 
     static validate(operation, data, context = {}, changedFields = null) {
@@ -349,7 +354,7 @@ class VideoSurfaceEditor {
             errors.push('Event target requires a positive event ID.');
         }
         if (operation === 'ShowVideoSurface' && !this.safeMoviePath(data.movie)) {
-            errors.push('Select a safe WebM or MP4 movie.');
+            errors.push('Select a safe WebM, MP4, PNG, JPG, or WEBP file.');
         }
         for (const [key, min, max, label] of [
             ['x', -1000000, 1000000, 'X'], ['y', -1000000, 1000000, 'Y'],
@@ -420,6 +425,25 @@ class VideoSurfaceEditor {
 
     discoverMovies(project) {
         return this.movieFiles(project);
+    }
+
+    imageFiles(project = this._project()) {
+        if (!project?.path || typeof require !== 'function') return [];
+        const path = require('path');
+        const root = path.join(project.path, 'img', 'pictures');
+        let assets = typeof RRAssetFiles !== 'undefined' ? RRAssetFiles : null;
+        if (!assets) {
+            try { assets = require('../../utils/AssetFiles.js'); } catch (_) {}
+        }
+        if (!assets?.list) return [];
+        return assets.list(root, ['.png', '.jpg', '.jpeg', '.webp'], { anyCase: true })
+            .filter(file => VideoSurfaceEditor.safeMoviePath(file.relativePath))
+            .map(file => ({ relativePath: file.relativePath, absolutePath: file.absolutePath }));
+    }
+
+    /** Everything a surface can show: movies first, then still pictures. */
+    mediaFiles(project = this._project()) {
+        return this.movieFiles(project).concat(this.imageFiles(project));
     }
 
     _t(text) {
@@ -571,6 +595,12 @@ class VideoSurfaceEditor {
             media.pause();
             media.removeAttribute('src');
             media.load?.();
+            media.style.display = '';
+        }
+        for (const image of [this.imagePreview, this.image3d]) {
+            if (!image) continue;
+            image.removeAttribute('src');
+            image.style.display = 'none';
         }
         const asset = this._movieAsset();
         if (!asset || !this.video) return;
@@ -578,7 +608,18 @@ class VideoSurfaceEditor {
         if (!assets && typeof require === 'function') {
             try { assets = require('../../utils/AssetFiles.js'); } catch (_) {}
         }
-        this.video.src = assets?.toUrl ? assets.toUrl(asset.absolutePath) : asset.absolutePath;
+        const url = assets?.toUrl ? assets.toUrl(asset.absolutePath) : asset.absolutePath;
+        if (VideoSurfaceEditor.isImageFile(this.data.movie)) {
+            // A still previews in an <img>; the video elements stay dark.
+            for (const [video, image] of [[this.video, this.imagePreview], [this.video3d, this.image3d]]) {
+                if (!image) continue;
+                if (video) video.style.display = 'none';
+                image.src = url;
+                image.style.display = '';
+            }
+            return;
+        }
+        this.video.src = url;
         this.video.muted = true;
         this.video.loop = true;
         this.video.playbackRate = Math.max(0.05, this.data.playbackRate || 1);
@@ -706,10 +747,10 @@ class VideoSurfaceEditor {
         if (this.operation === 'ShowVideoSurface') {
             const movieGroup = this._el('label', 'vs-field');
             movieGroup.style.cssText = 'display:flex;flex-direction:column;gap:4px;grid-column:1/-1;color:var(--color-text-muted);font-size:11px;';
-            movieGroup.appendChild(this._el('span', '', this._t('Movie')));
+            movieGroup.appendChild(this._el('span', '', this._t('Media file')));
             const movie = this._el('select', 'vs-input');
             movie.style.cssText = 'width:100%;padding:6px 7px;border:1px solid var(--color-border-input);border-radius:3px;background:var(--color-bg-input);color:var(--color-text);';
-            const none = this._el('option', '', this._t('(Select a movie)'));
+            const none = this._el('option', '', this._t('(Select a movie or image)'));
             none.value = '';
             movie.appendChild(none);
             for (const file of this.movies) {
@@ -727,6 +768,7 @@ class VideoSurfaceEditor {
             this._listen(movie, 'change', () => {
                 this.data.movie = movie.value;
                 this._setMovie();
+                this._syncMediaFields();
                 this._updatePreviews();
             });
             movieGroup.appendChild(movie);
@@ -800,6 +842,16 @@ class VideoSurfaceEditor {
         ]) this._field(transformGrid, label, key, { min: -360000, max: 360000, step: 1 });
         this._field(transformGrid, 'Scale X', 'scaleX', { min: -1000, max: 1000, step: 0.01 });
         this._field(transformGrid, 'Scale Y', 'scaleY', { min: -1000, max: 1000, step: 0.01 });
+        this._syncMediaFields();
+    }
+
+    /** Playback-only controls disappear when the chosen file is a still. */
+    _syncMediaFields() {
+        const isImage = VideoSurfaceEditor.isImageFile(this.data.movie);
+        for (const key of ['volume', 'playbackRate', 'loop', 'muted', 'wait']) {
+            const wrapper = this.fields[key]?.closest?.('label');
+            if (wrapper) wrapper.style.display = isImage ? 'none' : '';
+        }
     }
 
     _button(text, className = 'rr-btn-secondary') {
@@ -847,8 +899,12 @@ class VideoSurfaceEditor {
         video.playsInline = true;
         video.style.cssText = 'width:100%;height:100%;object-fit:cover;pointer-events:none;background:linear-gradient(135deg,#173246,#251b3c);';
         surface.appendChild(video);
+        const imagePreview = this._el('img', 'vs-image-preview');
+        imagePreview.style.cssText = 'display:none;width:100%;height:100%;object-fit:cover;pointer-events:none;';
+        surface.appendChild(imagePreview);
         frame.appendChild(surface);
         this.video = video;
+        this.imagePreview = imagePreview;
         this.quadSurface = surface;
 
         this.handles = this.data.corners.map((_, index) => {
@@ -872,6 +928,10 @@ class VideoSurfaceEditor {
         video3d.playsInline = true;
         video3d.style.cssText = 'width:100%;height:100%;object-fit:cover;pointer-events:none;';
         plane.appendChild(video3d);
+        const image3d = this._el('img', 'vs-image-preview-3d');
+        image3d.style.cssText = 'display:none;width:100%;height:100%;object-fit:cover;pointer-events:none;';
+        plane.appendChild(image3d);
+        this.image3d = image3d;
         perspective.appendChild(plane);
         frame.appendChild(perspective);
         this.perspective = perspective;
@@ -1535,7 +1595,7 @@ class VideoSurfaceEditor {
         this.rawArgs = this.data?.[VideoSurfaceEditor.META]?.rawArgs || {};
         this.changedFields = new Set();
         this._applyContextDefaults(command);
-        this.movies = this.movieFiles();
+        this.movies = this.mediaFiles();
         this.fields = {};
         this.liveMapAuthoring = this._beginLiveMapAuthoring();
 

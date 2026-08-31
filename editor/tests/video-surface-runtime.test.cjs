@@ -424,3 +424,42 @@ test('main loads video surfaces in the required compatibility order', () => {
     const mv = mainSource.indexOf('"js/reactor_mv_compat.js"');
     assert.ok(pictures >= 0 && surfaces > pictures && mv > surfaces);
 });
+
+test('surfaces accept still images and route them from img/pictures', () => {
+    assert.equal(runtime.sanitizeMoviePath('posters/launch.png'), 'posters/launch.png');
+    assert.equal(runtime.sanitizeMoviePath('decals/Rust.JPG'), 'decals/Rust.JPG');
+    assert.equal(runtime.sanitizeMoviePath('signs/neon.webp'), 'signs/neon.webp');
+    assert.equal(runtime.sanitizeMoviePath('anim/loop.gif'), null, 'gif stays out');
+    assert.equal(runtime.sanitizeMoviePath('../poster.png'), null);
+
+    assert.equal(runtime.isImageFile('posters/launch.png'), true);
+    assert.equal(runtime.isImageFile('clips/intro.webm'), false);
+    assert.equal(runtime.pictureUrl('signs/big neon.png'), 'img/pictures/signs/big%20neon.png');
+});
+
+test('an image surface never arms a wait: a still has no completion', () => {
+    const descriptor = runtime.normalizeShowArgs({
+        id: 3, file: 'posters/launch.png', target: 'map', wait: 'true', loop: 'true'
+    }, null);
+    assert.ok(descriptor, 'image files normalize like movies');
+    assert.equal(descriptor.wait, false, 'wait is disarmed for a still');
+    assert.equal(descriptor.waitReleased, true, 'and reads as already released');
+
+    const movie = runtime.normalizeShowArgs({
+        id: 3, file: 'clips/intro.webm', target: 'map', wait: 'true'
+    }, null);
+    assert.equal(movie.wait, true, 'movies keep their wait semantics');
+});
+
+test('the image owner path skips playback machinery and gates on decode', () => {
+    // Source-level guards: the owner branches media creation on the file,
+    // marks itself started without touching video playback, and refuses to
+    // build a texture from an undecoded image.
+    assert.match(source, /this\.isImage = isImageFile\(descriptor\.file\);/);
+    assert.match(source, /if \(this\.isImage\) this\.createImage\(\);\n\s+else this\.createVideo\(\);/);
+    assert.match(source, /if \(this\.isImage && !this\.imageReady\(\)\) \{/);
+    assert.match(source, /ImageManager\.loadPicture/);
+    assert.match(source, /new THREE\.CanvasTexture\(this\.imageSource\(\)\)/);
+    assert.match(source, /new PIXI\.CanvasSource\(\{ resource: canvas \}\)/);
+    assert.match(source, /if \(this\.isImage \|\| !video\) return;/, 'updateAudio skips stills');
+});
