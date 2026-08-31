@@ -368,7 +368,7 @@
         const family = `rr-preview-${filename.replace(/[^A-Za-z0-9]/g, '-')}`;
         const promise = (async () => {
             try {
-                const bytes = readFileBytes(absolute);
+                const bytes = await readFileBytes(absolute);
                 // A copy into a fresh ArrayBuffer: FontFace will not take a
                 // Node Buffer view backed by a pooled allocation.
                 const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
