@@ -211,7 +211,11 @@ class LightingManager {
             if (!light.on) continue;
             let x = light.x;
             let y = light.y;
-            if (light.attach && light.attach.event) {
+            if (light.attach) {
+                // Event carriers preview on their event; a player-attached
+                // light has no carrier in the editor and must not land on
+                // tile 0,0 - it stays listed in the panel instead.
+                if (!light.attach.event) continue;
                 const event = (map.events || [])[light.attach.event];
                 if (!event) continue;
                 x += event.x + 0.5;
@@ -644,10 +648,22 @@ class LightingManager {
         this._destroyPanel();
         const panel = this._el('div', 'lighting-panel');
         panel.id = 'lighting-panel';
-        panel.style.cssText = 'position:fixed;top:84px;right:12px;bottom:12px;width:288px;z-index:9000;'
-            + 'display:flex;flex-direction:column;gap:10px;padding:12px;overflow-y:auto;'
+        // Docked inside the workspace, below the map info bar — floating
+        // fixed at the window's top right it sat on the map checkboxes.
+        const workspace = document.getElementById('workspace');
+        const infoBar = document.getElementById('map-info-content');
+        let top = 44;
+        if (workspace && infoBar) {
+            const workspaceTop = workspace.getBoundingClientRect().top;
+            top = Math.max(0, Math.round(infoBar.getBoundingClientRect().bottom - workspaceTop)) + 6;
+        }
+        panel.style.cssText = (workspace
+            ? 'position:absolute;top:' + top + 'px;right:8px;bottom:8px;z-index:900;'
+            : 'position:fixed;top:84px;right:12px;bottom:12px;z-index:9000;')
+            + 'width:288px;display:flex;flex-direction:column;gap:10px;padding:12px;overflow-y:auto;'
             + 'background:var(--color-bg-panel);border:1px solid var(--color-border);'
             + 'border-radius:6px;box-shadow:0 6px 24px rgba(0,0,0,.45);font-size:12px;color:var(--color-text);';
+        if (workspace && !workspace.style.position) workspace.style.position = 'relative';
 
         const header = this._el('div');
         header.style.cssText = 'display:flex;align-items:center;gap:8px;';
@@ -668,7 +684,7 @@ class LightingManager {
         this._propsHost = this._el('div');
         panel.appendChild(this._propsHost);
 
-        document.body.appendChild(panel);
+        (workspace || document.body).appendChild(panel);
         this._panel = panel;
         this._syncPanel();
     }

@@ -114,6 +114,17 @@ test('the tool is wired: toolbar button, scripts, dispatcher, instance', () => {
     assert.ok(fs.existsSync(path.join(editorRoot, 'images', 'icon-lighting.svg')));
 });
 
+test('the panel docks in the workspace and player lights stay off tile 0,0', () => {
+    // Verified over CDP in a live editor (2026-08-31): appended to the body
+    // the absolutely-positioned panel resolved against the viewport and sat
+    // on the map checkboxes; and a player-attached light has no carrier in
+    // the editor, so it must not preview at the map origin.
+    const manager = read('src/LightingManager.js');
+    assert.match(manager, /\(workspace \|\| document\.body\)\.appendChild\(panel\);/);
+    assert.match(manager, /infoBar\.getBoundingClientRect\(\)\.bottom - workspaceTop/);
+    assert.match(manager, /if \(!light\.attach\.event\) continue;/);
+});
+
 test('every panel string is a lit.* key present in the locale tables', () => {
     const manager = read('src/LightingManager.js');
     const used = new Set([...manager.matchAll(/'(lit\.[A-Za-z]+)'/g)].map(match => match[1]));
