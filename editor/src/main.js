@@ -238,6 +238,14 @@ class RPGReactor {
                     this.projectController.getTilemapManager());
             }
 
+            // Lighting is map content too: the toolbar tool edits it live.
+            if (!this.lightingManager && typeof LightingManager !== 'undefined') {
+                this.lightingManager = new LightingManager(this.projectController);
+            }
+            if (this.lightingManager) {
+                this.projectController.lightingManager = this.lightingManager;
+            }
+
             // Set current map for event manager
             if (this.eventManager) {
                 const currentMap = this.projectController.getTilemapManager().currentMap;

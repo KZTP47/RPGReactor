@@ -96,16 +96,15 @@ test('the namespace module loads before the managers that use it', () => {
     assert.ok(three >= 0 && managers > three);
 });
 
-test('every map on disk asks for its sidecar; the web asks only when 3D is in play', () => {
-    // Otherwise every map load in every 2D project pays for a 404.
+test('every map asks for its sidecar; nothing is gated on a note', () => {
+    // Placing a light (or a prop, or an event model) is the whole opt-in —
+    // automatic, like the 3D checkbox replaced the <3d> note. On disk a
+    // missing file is skipped for free; on the web it costs one 404 probe.
     const at = managersSource.indexOf('DataManager.loadMapSidecar = function');
     assert.ok(at >= 0);
     const body = managersSource.slice(at, managersSource.indexOf('\n};', at));
-    assert.doesNotMatch(body, /!mapData\.meta\["3d"\]\) return;/, 'flat maps fetch their sidecar too (event models, previews)');
+    assert.doesNotMatch(body, /mapData\.meta/, 'no note designation gates the fetch');
     assert.match(body, /if \(!fs\.existsSync\(path\.join\(base, url\)\)\) return;/, 'on disk: only when the file exists');
-    assert.match(body,
-        /else if \(!\(mapData\.meta && \(mapData\.meta\["3d"\] \|\| mapData\.meta\.lighting\)\)[\s\S]{0,40}&& !Reactor3D\._databaseSidecar\) \{/,
-        'on the web: a <3d> or <lighting> map, or a project with 3D bindings');
     assert.match(body, /typeof Reactor3D === "undefined"/,
         'and it degrades if the namespace is somehow absent');
 });

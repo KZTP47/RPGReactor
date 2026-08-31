@@ -234,19 +234,17 @@ DataManager.loadMapSidecar = function(mapData) {
 
     const filename = this._lastMapSrc.replace(/\.json$/, Reactor3D.SIDECAR_SUFFIX);
     const url = "data/" + filename;
-    // The sidecar also carries event models and previews a flat map draws as
-    // sprites, so it is wanted whether or not the note says <3d>. A missing
-    // file is a normal state, but a request for it would log a network error
-    // the page cannot suppress: on disk, ask the disk; on the web, ask only
-    // when the note opts in or the project has 3D bindings at all.
+    // The sidecar carries lights, event models and previews that any map —
+    // 2D or 3D — may use, so every map asks for its own. Automatic beats a
+    // designation: placing a light on a map is the whole opt-in. On disk the
+    // answer is free; on the web a map without one costs a single 404 line
+    // in the network log, the same accepted probe the extensionless BGM
+    // lookup makes.
     if (Utils.isNwjs()) {
         const fs = require("fs");
         const path = require("path");
         const base = path.dirname(process.mainModule.filename);
         if (!fs.existsSync(path.join(base, url))) return;
-    } else if (!(mapData.meta && (mapData.meta["3d"] || mapData.meta.lighting))
-        && !Reactor3D._databaseSidecar) {
-        return;
     }
     const xhr = new XMLHttpRequest();
     this._mapSidecarPending = true;

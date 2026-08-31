@@ -1456,6 +1456,14 @@ class UIManager {
                     }
                 }
                 break;
+            case 'lighting-tool':
+                if (this.callbacks.disableEventModeIfActive) {
+                    this.callbacks.disableEventModeIfActive();
+                }
+                if (typeof window !== 'undefined' && window.reactor?.lightingManager) {
+                    window.reactor.lightingManager.toggle();
+                }
+                break;
             case 'shadow-pen':
                 if (this.callbacks.disableEventModeIfActive) {
                     this.callbacks.disableEventModeIfActive();
