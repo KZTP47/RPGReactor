@@ -919,3 +919,58 @@ test('the flat compositor multiplies ambient and adds lights, never punches hole
     // The 3D pass owns the lights when it exists; the flat pass stands down.
     assert.match(sprites, /!this\._reactor3dLights\n(.*\n)?.*lightingEnabled\(\$dataMap\)/);
 });
+
+//-----------------------------------------------------------------------------
+// Occlusion audit (pixel-verified 2026-08-31 in the light-lab boot harness:
+// exterior-camera room maps blacked out every light before the interior rule)
+
+test('an exterior camera never plays hide-the-lamp with the shell', () => {
+    // Interior open cell, eye above the floor: occlusion applies.
+    const map = { width: 10, height: 10, reactor3d: {} };
+    withGlobals({ $dataMap: map }, () => {
+        const grid = Reactor3D._lightSolids && Reactor3D._lightSolids.get
+            ? null : null; // grids are cached per map; use the API only
+        assert.equal(Reactor3D.lightEyeInterior({ x: 5.5, y: 2, z: 5.5 }), true,
+            'an eye standing in the open interior marches');
+        // Outside the grid entirely: cinematic viewpoint, no marching.
+        assert.equal(Reactor3D.lightEyeInterior({ x: -4, y: 2, z: 5.5 }), false);
+        assert.equal(Reactor3D.lightEyeInterior({ x: 5.5, y: 2, z: 40 }), false);
+        assert.equal(Reactor3D.lightEyeInterior(null), false);
+    });
+    // Embedded in a room's shell: the cell reads wall-height solid and the
+    // eye sits below its top - a camera past the wall, looking in.
+    const room = { width: 10, height: 10, data: [],
+        reactor3d: { room: { height: 6 } } };
+    withGlobals({ $dataMap: room }, () => {
+        const wallTop = Reactor3D.lightBlockHeightAt(1, 1);
+        if (wallTop > 2) {
+            assert.equal(Reactor3D.lightEyeInterior({ x: 1.5, y: 2, z: 2 }), false,
+                'an eye inside the shell volume does not march');
+        }
+        assert.equal(Reactor3D.lightEyeInterior({ x: 1.5, y: wallTop + 1, z: 2 }), true,
+            'and above the walls it does');
+    });
+});
+
+test('a sidecar ambient colour string reaches the compositors as a number', () => {
+    // The editor writes "#rrggbb"; the compositors bit-shift. Passed through
+    // raw, the string shifted as NaN and ambient multiplied the world by
+    // black — pixel-verified in the light-lab harness before the parse.
+    const ambient = Reactor3D.ambientFor(
+        { reactor3d: { lighting: { ambient: 0.3, ambientColour: '#5a6fc0' } } });
+    assert.equal(ambient.colour, 0x5a6fc0);
+    assert.equal(typeof ambient.colour, 'number');
+    assert.equal(Reactor3D.ambientFor({}).colour, 0xffffff);
+    // And late-built wall chunks join the ambient rather than staying white:
+    // the cache keys on the material count too.
+    const source = fs.readFileSync(path.join(repoRoot, 'runtime', 'reactor_3d.js'), 'utf8');
+    assert.match(source, /this\._ambientCount !== this\._materials\.length/);
+});
+
+test('the sync march is gated on the interior rule and the per-light flag', () => {
+    const source = fs.readFileSync(path.join(repoRoot, 'runtime', 'reactor_3d.js'), 'utf8');
+    assert.match(source,
+        /Reactor3D\.LIGHT_OCCLUSION && light\.occlude !== false && camera/);
+    assert.match(source,
+        /Reactor3D\.lightEyeInterior\(eye\)\n\s+&& Reactor3D\.lightSegmentBlocked/);
+});

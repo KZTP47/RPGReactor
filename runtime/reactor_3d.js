@@ -5723,9 +5723,15 @@ Reactor3D.MapScene.prototype.syncLights = function(focus) {
     // nothing to a billboard, whose vertices the shader rewrites to face the
     // camera, and a light model buys the ground nothing when the lights
     // themselves are additive quads in a pass of their own.
-    if (this._ambientLevel !== level || this._ambientColour !== colour) {
+    // Re-applied when the ambient changes AND when the material list grows:
+    // wall and floor chunks build lazily, and one arriving after the last
+    // ambient set kept its construction white — a fully lit slab in a dark
+    // room — until the next ambient change happened to repaint it.
+    if (this._ambientLevel !== level || this._ambientColour !== colour
+        || this._ambientCount !== this._materials.length) {
         this._ambientLevel = level;
         this._ambientColour = colour;
+        this._ambientCount = this._materials.length;
         const r = (((colour >> 16) & 255) / 255) * level;
         const g = (((colour >> 8) & 255) / 255) * level;
         const b = ((colour & 255) / 255) * level;
@@ -5810,7 +5816,13 @@ Reactor3D.MapScene.prototype.syncLights = function(focus) {
         // honoured here or its glow floats on this side of the wall.
         if (Reactor3D.LIGHT_OCCLUSION && light.occlude !== false && camera) {
             const eye = camera.getWorldPosition(Reactor3D._lightEye || (Reactor3D._lightEye = new THREE.Vector3()));
-            if (Reactor3D.lightSegmentBlocked(eye.x - 0.5, eye.z - 1, eye.y, light.x, light.y, standsOn + 0.5)) {
+            // Only an eye standing in open interior plays hide-the-lamp with
+            // walls. A camera past the room's shell — the cinematic exterior
+            // angle, the editor orbiting the map — sees the whole interior
+            // the renderer draws anyway, and marching its segments through
+            // the shell blacked out every light on the map.
+            if (Reactor3D.lightEyeInterior(eye)
+                && Reactor3D.lightSegmentBlocked(eye.x - 0.5, eye.z - 1, eye.y, light.x, light.y, standsOn + 0.5)) {
                 pool.count--;
                 continue;
             }
@@ -6293,6 +6305,22 @@ Reactor3D.LIGHT_CULL_MARGIN = 20;
  */
 Reactor3D.LIGHT_OCCLUSION = true;
 
+/**
+ * Whether the camera stands in the walkable interior, where hiding a lamp
+ * behind a wall means something. Outside the grid, or embedded in a cell the
+ * solid grid calls wall (a room's unpainted shell), the eye is a cinematic
+ * viewpoint: it sees the interior the renderer draws regardless, so its
+ * sight-lines must not be marched through the shell.
+ */
+Reactor3D.lightEyeInterior = function(eye) {
+    const mapData = typeof $dataMap !== "undefined" ? $dataMap : null;
+    if (!mapData || !eye) return false;
+    const x = Math.round(eye.x - 0.5);
+    const y = Math.round(eye.z - 1);
+    if (x < 0 || y < 0 || x >= mapData.width || y >= mapData.height) return false;
+    return eye.y >= this.lightBlockHeightAt(x, y);
+};
+
 /** Where a room map has no floor tile at all it is wall, cached per map. */
 Reactor3D.lightSolidGrid = function() {
     if (typeof $gameMap === "undefined" || !$gameMap || !$gameMap.width) return this._lightSolid || null;
@@ -6665,7 +6693,11 @@ Reactor3D.ambientFor = function(mapData) {
     const lighting = (sidecar && sidecar.lighting) || {};
     return {
         intensity: lighting.ambient === undefined ? 0.25 : lighting.ambient,
-        colour: lighting.ambientColour === undefined ? 0xffffff : lighting.ambientColour
+        // The sidecar stores "#rrggbb"; the compositors bit-shift a number.
+        // Passed through raw, the string shifted as NaN and the ambient
+        // multiplied the whole world by black.
+        colour: this.parseColour(
+            lighting.ambientColour === undefined ? 0xffffff : lighting.ambientColour)
     };
 };
 

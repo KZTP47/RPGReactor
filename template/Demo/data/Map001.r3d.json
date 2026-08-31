@@ -10403,5 +10403,139 @@
   "eventZ": {
     "2": 20,
     "17": 15.38
+  },
+  "lights": [
+    {
+      "id": "dying-tube",
+      "type": "point",
+      "x": 24.5,
+      "y": 44.5,
+      "height": 2.5,
+      "radius": 5.5,
+      "color": "#cfe8ff",
+      "intensity": 1.6,
+      "flicker": 0.75,
+      "tag": "flicker"
+    },
+    {
+      "id": "neon-mag",
+      "type": "point",
+      "x": 16.5,
+      "y": 40,
+      "radius": 6,
+      "color": "#ff2d95",
+      "intensity": 1.4,
+      "tag": "neon"
+    },
+    {
+      "id": "neon-cyan",
+      "type": "point",
+      "x": 32.5,
+      "y": 40,
+      "radius": 6,
+      "color": "#19d7ff",
+      "intensity": 1.4,
+      "tag": "neon"
+    },
+    {
+      "id": "alarm-west",
+      "type": "point",
+      "x": 12.5,
+      "y": 40,
+      "radius": 7,
+      "color": "#ff1720",
+      "intensity": 1.5,
+      "pulse": {
+        "min": 0.3,
+        "max": 1,
+        "period": 150
+      },
+      "tag": "alarm"
+    },
+    {
+      "id": "alarm-east",
+      "type": "point",
+      "x": 36.5,
+      "y": 40,
+      "radius": 7,
+      "color": "#ff1720",
+      "intensity": 1.5,
+      "pulse": {
+        "min": 0.3,
+        "max": 1,
+        "period": 150
+      },
+      "tag": "alarm"
+    },
+    {
+      "id": "vat",
+      "type": "point",
+      "x": 10.5,
+      "y": 46.5,
+      "radius": 6,
+      "color": "#39ff6a",
+      "intensity": 1.2,
+      "flicker": 0.15,
+      "pulse": {
+        "min": 0.75,
+        "max": 1,
+        "period": 220
+      },
+      "tag": "vat"
+    },
+    {
+      "id": "crt-west",
+      "type": "point",
+      "x": 21,
+      "y": 40,
+      "radius": 3.6,
+      "color": "#7f9bff",
+      "intensity": 1,
+      "flicker": 0.4,
+      "tag": "crt"
+    },
+    {
+      "id": "crt-east",
+      "type": "point",
+      "x": 27,
+      "y": 40,
+      "radius": 3.6,
+      "color": "#7f9bff",
+      "intensity": 1,
+      "flicker": 0.4,
+      "tag": "crt"
+    },
+    {
+      "id": "door-beam",
+      "type": "spot",
+      "x": 24.5,
+      "y": 49.5,
+      "yaw": 180,
+      "radius": 11,
+      "angle": 20,
+      "color": "#ff3344",
+      "intensity": 1,
+      "tag": "alarm"
+    },
+    {
+      "id": "torch",
+      "type": "spot",
+      "x": 0,
+      "y": 0,
+      "yaw": 180,
+      "radius": 6,
+      "angle": 28,
+      "color": "#eaf6ff",
+      "intensity": 0.5,
+      "flicker": 0.08,
+      "attach": {
+        "player": true
+      },
+      "tag": "torch"
+    }
+  ],
+  "lighting": {
+    "ambient": 0.3,
+    "ambientColour": "#5a6fc0"
   }
 }
