@@ -267,3 +267,16 @@ test('the 3D models video picker hands over real URLs and the video mode', () =>
     assert.match(call, /selectButtonLabel/);
     assert.doesNotMatch(call, /\(\) => ''/, 'the empty path callback is gone');
 });
+
+test('the enemy picker is left alone, because its list is not files', () => {
+    // A negative guard, not an omission. DatabaseTroopEditor lists database
+    // records as `#12 Ork Boy`; `#` is not a path separator, so those labels
+    // have no folders to build and asking for the tree would section them by
+    // a character that means nothing here.
+    const troopSource = source('src/database/DatabaseTroopEditor.js');
+    const call = troopSource.indexOf('RRPickerIndex.createBrowser({');
+    assert.ok(call >= 0, 'the enemy picker still goes through the shared browser');
+    const block = troopSource.slice(call, troopSource.indexOf('});', call));
+    assert.doesNotMatch(block, /folders: true/);
+    assert.match(block, /files: labels/);
+});
