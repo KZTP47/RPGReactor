@@ -1,6 +1,10 @@
-# Handoff - 0.98.4 In Progress
+# Handoff - 0.98.5 In Progress
 
-Last updated 2026-08-30.
+Last updated 2026-08-31. 0.98.4 shipped 2026-08-31. Carried into 0.98.5:
+the fs-backed editor prefs store (so future NW bumps stop resetting prefs),
+`refreshMap3DView`'s awaiting fire-and-forget reconcile + full setEnabled
+cycle on project change, and (optional) a web audio extension manifest to
+silence the one-per-track BGM probe 404.
 
 ## 2026-08-31 — Windows no-launch: unsigned binaries vs fresh Windows
 
