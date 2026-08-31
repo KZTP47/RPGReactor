@@ -15,14 +15,14 @@ test('picker exposes all native Reactor video-surface commands', () => {
     const EventCommandPicker = require(path.join(editorRoot, 'src', 'event', 'EventCommandPicker.js'));
     const picker = new EventCommandPicker();
     const sections = picker.commandData.tab4.columns.flatMap(column => column.sections);
-    const section = sections.find(candidate => candidate.title === 'Video Surfaces');
-    assert.ok(section, 'Reactor has a Video Surfaces section');
+    const section = sections.find(candidate => candidate.title === 'Media Surfaces');
+    assert.ok(section, 'Reactor has a Media Surfaces section');
     assert.deepEqual(section.commands.map(command => ({
         name: command.name, code: command.code, reactor: command.reactor
     })), [
-        { name: 'Show Video Surface', code: 357, reactor: 'ShowVideoSurface' },
-        { name: 'Transform Video Surface', code: 357, reactor: 'TransformVideoSurface' },
-        { name: 'Stop Video Surface', code: 357, reactor: 'StopVideoSurface' }
+        { name: 'Show Media Surface', code: 357, reactor: 'ShowVideoSurface' },
+        { name: 'Transform Media Surface', code: 357, reactor: 'TransformVideoSurface' },
+        { name: 'Stop Media Surface', code: 357, reactor: 'StopVideoSurface' }
     ]);
 });
 

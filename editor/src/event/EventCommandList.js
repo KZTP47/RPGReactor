@@ -1941,8 +1941,13 @@ class EventCommandList {
                 const commandName = label || params[1] || '';
                 if (code === 357 && pluginName === 'RPGReactor' && commandName) {
                     // Reactor's own commands are listed by what they do, not
-                    // as an anonymous plugin call.
-                    info.name = this._commandName(commandName);
+                    // as an anonymous plugin call. The internal name maps to
+                    // the CURRENT display name, so a command saved before a
+                    // rename (Video Surface → Media Surface) reads like one
+                    // inserted today.
+                    const canonical = typeof VideoSurfaceEditor !== 'undefined' && params[1]
+                        ? VideoSurfaceEditor.OPERATIONS?.[params[1]] : null;
+                    info.name = this._commandName(canonical || commandName);
                     description = '';
                 } else if (pluginName && commandName) {
                     description = `${pluginName}: ${commandName}`;

@@ -256,11 +256,11 @@ class EventCommandPicker {
                                 ]
                             },
                             {
-                                title: 'Video Surfaces',
+                                title: 'Media Surfaces',
                                 commands: [
-                                    { name: 'Show Video Surface', code: 357, reactor: 'ShowVideoSurface' },
-                                    { name: 'Transform Video Surface', code: 357, reactor: 'TransformVideoSurface' },
-                                    { name: 'Stop Video Surface', code: 357, reactor: 'StopVideoSurface' }
+                                    { name: 'Show Media Surface', code: 357, reactor: 'ShowVideoSurface' },
+                                    { name: 'Transform Media Surface', code: 357, reactor: 'TransformVideoSurface' },
+                                    { name: 'Stop Media Surface', code: 357, reactor: 'StopVideoSurface' }
                                 ]
                             }
                         ]

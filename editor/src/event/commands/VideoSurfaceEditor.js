@@ -26,9 +26,11 @@ class VideoSurfaceEditor {
 
     static get OPERATIONS() {
         return {
-            ShowVideoSurface: 'Show Video Surface',
-            TransformVideoSurface: 'Transform Video Surface',
-            StopVideoSurface: 'Stop Video Surface'
+            // The keys are the stored wire format and never change; the
+            // display names follow the feature: surfaces show any media.
+            ShowVideoSurface: 'Show Media Surface',
+            TransformVideoSurface: 'Transform Media Surface',
+            StopVideoSurface: 'Stop Media Surface'
         };
     }
 
@@ -348,7 +350,7 @@ class VideoSurfaceEditor {
             errors.push('Common events require an explicit target; This Event is invocation-dependent.');
         }
         if (context.type === 'troop' && operation !== 'StopVideoSurface') {
-            errors.push('Show and Transform Video Surface are map-only commands.');
+            errors.push('Show and Transform Media Surface are map-only commands.');
         }
         if (data.target === 'event' && (!Number.isInteger(data.eventId) || data.eventId < 1)) {
             errors.push('Event target requires a positive event ID.');

@@ -1413,7 +1413,7 @@ class DatabaseTroopEditor {
     }
 
     warnVideoSurfaceMapOnly() {
-        const message = 'Show and Transform Video Surface are map-only commands and cannot run in troop events.';
+        const message = 'Show and Transform Media Surface are map-only commands and cannot run in troop events.';
         if (typeof window !== 'undefined' && typeof window.alert === 'function') window.alert(message);
         else if (typeof alert === 'function') alert(message);
     }

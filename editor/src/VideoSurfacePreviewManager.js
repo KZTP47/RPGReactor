@@ -291,7 +291,7 @@ class VideoSurfacePreviewManager {
             context.font = `${Math.max(12, Math.round(canvas.width / 20))}px sans-serif`;
             context.textAlign = 'center';
             context.textBaseline = 'middle';
-            context.fillText(`Video Surface ${state.id || ''}`, canvas.width / 2, canvas.height / 2);
+            context.fillText(`Media Surface ${state.id || ''}`, canvas.width / 2, canvas.height / 2);
         }
         return canvas;
     }
