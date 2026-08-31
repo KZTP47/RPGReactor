@@ -5540,6 +5540,17 @@ Reactor3D.MapScene.prototype.freezeStaticMeshes = function() {
  */
 Reactor3D.roundLightTexture = function() {
     if (this._roundLight) return this._roundLight;
+    this._roundLight = new THREE.CanvasTexture(this.roundLightCanvas());
+    // Rows as drawn, not flipped: the cone below depends on which end of its
+    // picture is the source, and both are built the same way so they cannot
+    // drift apart.
+    this._roundLight.flipY = false;
+    return this._roundLight;
+};
+
+/** The falloff picture itself, shared with the flat renderer's sprites. */
+Reactor3D.roundLightCanvas = function() {
+    if (this._roundLightCanvas) return this._roundLightCanvas;
     // Generous, because one of these is stretched across hundreds of screen
     // pixels: at 128 the gradient banded and the rim came out as a visible
     // step rather than a fade.
@@ -5559,12 +5570,8 @@ Reactor3D.roundLightTexture = function() {
         }
     }
     context.putImageData(image, 0, 0);
-    this._roundLight = new THREE.CanvasTexture(canvas);
-    // Rows as drawn, not flipped: the cone below depends on which end of its
-    // picture is the source, and both are built the same way so they cannot
-    // drift apart.
-    this._roundLight.flipY = false;
-    return this._roundLight;
+    this._roundLightCanvas = canvas;
+    return canvas;
 };
 
 /**
@@ -5577,6 +5584,16 @@ Reactor3D.roundLightTexture = function() {
  */
 Reactor3D.coneLightTexture = function() {
     if (this._coneLight) return this._coneLight;
+    this._coneLight = new THREE.CanvasTexture(this.coneLightCanvas());
+    // Without this the picture arrives upside down and a torch shines out of
+    // the wall it is pointing at instead of out of the hand holding it.
+    this._coneLight.flipY = false;
+    return this._coneLight;
+};
+
+/** The cone's falloff picture, shared with the flat renderer's sprites. */
+Reactor3D.coneLightCanvas = function() {
+    if (this._coneLightCanvas) return this._coneLightCanvas;
     const size = 512;
     const canvas = document.createElement("canvas");
     canvas.width = canvas.height = size;
@@ -5620,11 +5637,8 @@ Reactor3D.coneLightTexture = function() {
         }
     }
     context.putImageData(image, 0, 0);
-    this._coneLight = new THREE.CanvasTexture(canvas);
-    // Without this the picture arrives upside down and a torch shines out of
-    // the wall it is pointing at instead of out of the hand holding it.
-    this._coneLight.flipY = false;
-    return this._coneLight;
+    this._coneLightCanvas = canvas;
+    return canvas;
 };
 
 /**
@@ -5794,7 +5808,7 @@ Reactor3D.MapScene.prototype.syncLights = function(focus) {
         // A lamp in the next room stays in the next room. The quads draw over
         // everything, so the wall between the camera and the light must be
         // honoured here or its glow floats on this side of the wall.
-        if (Reactor3D.LIGHT_OCCLUSION && camera) {
+        if (Reactor3D.LIGHT_OCCLUSION && light.occlude !== false && camera) {
             const eye = camera.getWorldPosition(Reactor3D._lightEye || (Reactor3D._lightEye = new THREE.Vector3()));
             if (Reactor3D.lightSegmentBlocked(eye.x - 0.5, eye.z - 1, eye.y, light.x, light.y, standsOn + 0.5)) {
                 pool.count--;
@@ -6639,6 +6653,9 @@ Reactor3D.wantsLights3D = function(mapData) {
     if (sidecar && sidecar.lighting && sidecar.lighting.enabled !== undefined) {
         return !!sidecar.lighting.enabled;
     }
+    // Native lights placed on the map are themselves the opt-in: an author
+    // who put a lamp somewhere wants to see it lit.
+    if (this.readMapLights(mapData).length) return true;
     return !!(mapData && mapData.meta && mapData.meta["3d lights"]);
 };
 
@@ -6661,6 +6678,16 @@ Reactor3D.ambientFor = function(mapData) {
  */
 Reactor3D.collectLights = function() {
     const found = [];
+    // The map's own lights first: native, no plugin involved.
+    try {
+        const native = this.nativeLights();
+        if (native.length) found.push(...native);
+    } catch (error) {
+        if (!this._nativeWarned) {
+            this._nativeWarned = true;
+            console.warn("Reactor3D: the map's native lights failed to resolve.", error);
+        }
+    }
     for (const name of Object.keys(this.LightShims)) {
         try {
             const lights = this.LightShims[name]();
@@ -6675,6 +6702,164 @@ Reactor3D.collectLights = function() {
         }
     }
     return found;
+};
+
+//-----------------------------------------------------------------------------
+// Native lights
+//
+// The lights a map carries itself: placed visually in the editor, stored in
+// the map's sidecar as `reactor3d.lights`, and fed to the same compositor the
+// plugin shims feed — but first-class. No plugin, no note tags, one schema
+// driving the 2D and 3D renderers both.
+//
+// An authored light:
+//   { id, type: "point"|"spot", x, y,      // fractional tiles (offsets when attached)
+//     height,                              // tiles off the ground
+//     yaw,                                 // degrees clockwise from south (facingYaw's convention)
+//     radius,                              // reach in tiles, for both shapes
+//     angle,                               // spot spread in degrees
+//     color, intensity, occlude, on, tag,
+//     attach: null | { event: id } | { player: true },
+//     flicker: 0..1,                       // candle jitter on intensity
+//     pulse: { min, max, period } }        // radius breathing, period in frames
+
+Reactor3D.readMapLights = function(mapData) {
+    const sidecar = mapData && mapData.reactor3d;
+    const raw = sidecar && Array.isArray(sidecar.lights) ? sidecar.lights : null;
+    if (!raw || !raw.length) return [];
+    if (this._nativeNorm && this._nativeNorm.source === raw) return this._nativeNorm.list;
+    const number = (value, fallback, min, max) => {
+        const n = Number(value);
+        if (!Number.isFinite(n)) return fallback;
+        return Math.min(max, Math.max(min, n));
+    };
+    const list = [];
+    for (let i = 0; i < raw.length; i++) {
+        const entry = raw[i];
+        if (!entry || typeof entry !== "object") continue;
+        list.push({
+            id: entry.id ? String(entry.id) : "light" + (i + 1),
+            type: entry.type === "spot" ? this.LIGHT_SPOT : this.LIGHT_POINT,
+            x: number(entry.x, 0, -10000, 10000),
+            y: number(entry.y, 0, -10000, 10000),
+            height: number(entry.height, 0, 0, 512),
+            yaw: number(entry.yaw, 0, -100000, 100000),
+            radius: number(entry.radius,
+                entry.type === "spot" ? this.DEFAULT_CONE_LENGTH : 3, 0.1, 200),
+            angle: number(entry.angle, this.DEFAULT_CONE_ANGLE, 1, 179),
+            color: this.parseColour(entry.color !== undefined ? entry.color : entry.colour),
+            intensity: number(entry.intensity, 1, 0, 4),
+            occlude: entry.occlude !== false,
+            on: entry.on !== false,
+            tag: entry.tag ? String(entry.tag) : "",
+            attach: entry.attach && typeof entry.attach === "object"
+                ? (entry.attach.player ? { player: true }
+                    : Number(entry.attach.event) > 0
+                        ? { event: Math.floor(Number(entry.attach.event)) } : null)
+                : null,
+            flicker: number(entry.flicker, 0, 0, 1),
+            pulse: entry.pulse && typeof entry.pulse === "object" ? {
+                min: number(entry.pulse.min, 0.6, 0, 10),
+                max: number(entry.pulse.max, 1, 0, 10),
+                period: number(entry.pulse.period, 90, 2, 100000)
+            } : null
+        });
+    }
+    this._nativeNorm = { source: raw, list };
+    return list;
+};
+
+/**
+ * Whether this map has native lighting at all, in either renderer.
+ *
+ * The sidecar's word is final when it says anything; otherwise placed lights
+ * mean yes, and the map notes can ask for it by hand.
+ */
+Reactor3D.lightingEnabled = function(mapData) {
+    const sidecar = mapData && mapData.reactor3d;
+    if (sidecar && sidecar.lighting && sidecar.lighting.enabled !== undefined) {
+        return !!sidecar.lighting.enabled;
+    }
+    if (this.readMapLights(mapData).length) return true;
+    const meta = mapData && mapData.meta;
+    return !!(meta && (meta["3d lights"] || meta.lighting));
+};
+
+/**
+ * Runtime on/off overrides, carried on Game_Map so a save keeps them.
+ * Stored sparsely — only lights a command has touched appear here. Keys are
+ * a light's id, or "#tag" to speak to every light sharing a tag.
+ */
+Reactor3D.setLightOn = function(key, on) {
+    if (typeof $gameMap === "undefined" || !$gameMap || !key) return;
+    if (!$gameMap._reactorLightStates) $gameMap._reactorLightStates = {};
+    $gameMap._reactorLightStates[String(key)] = !!on;
+};
+
+Reactor3D.lightIsOn = function(light) {
+    const states = typeof $gameMap !== "undefined" && $gameMap
+        && $gameMap._reactorLightStates;
+    if (states) {
+        if (states[light.id] !== undefined) return states[light.id];
+        if (light.tag && states["#" + light.tag] !== undefined) return states["#" + light.tag];
+    }
+    return light.on;
+};
+
+/**
+ * This frame's native lights, resolved into the compositor's shape.
+ *
+ * Animation is arithmetic on the frame counter — deterministic, allocation-
+ * light, identical in both renderers. A light attached to an event or the
+ * player rides its carrier, its x/y read as offsets in tiles. Yaw flips sign
+ * on the way out because the scene aims anticlockwise from south while the
+ * schema (and the screen) run clockwise — the same flip the shims make.
+ */
+Reactor3D.nativeLights = function(mapData) {
+    const map = mapData || (typeof $dataMap !== "undefined" ? $dataMap : null);
+    const authored = this.readMapLights(map);
+    if (!authored.length) return [];
+    const out = [];
+    const frame = typeof Graphics !== "undefined" && Graphics.frameCount
+        ? Graphics.frameCount : 0;
+    for (let i = 0; i < authored.length; i++) {
+        const light = authored[i];
+        if (!this.lightIsOn(light)) continue;
+        let x = light.x;
+        let y = light.y;
+        if (light.attach) {
+            let carrier = null;
+            if (light.attach.player) {
+                carrier = typeof $gamePlayer !== "undefined" ? $gamePlayer : null;
+            } else if (typeof $gameMap !== "undefined" && $gameMap && $gameMap.event) {
+                carrier = $gameMap.event(light.attach.event);
+            }
+            if (!carrier) continue;
+            x += carrier._realX + 0.5;
+            y += carrier._realY + 0.5;
+        }
+        let radius = light.radius;
+        let intensity = light.intensity;
+        if (light.pulse) {
+            const t = (frame % light.pulse.period) / light.pulse.period;
+            const breathe = 0.5 - 0.5 * Math.cos(t * Math.PI * 2);
+            radius *= light.pulse.min + (light.pulse.max - light.pulse.min) * breathe;
+        }
+        if (light.flicker) {
+            // Two incommensurate sines beat irregularly enough to read as
+            // flame without a random source, so a save replays identically.
+            const seed = i * 13.7;
+            const jitter = Math.sin(frame * 0.31 + seed) * Math.sin(frame * 0.127 + seed * 1.7);
+            intensity *= 1 - light.flicker * (0.25 + 0.25 * jitter);
+            radius *= 1 - light.flicker * 0.06 * jitter;
+        }
+        out.push({
+            type: light.type, x: x, y: y, height: light.height,
+            radius: radius, colour: light.color, intensity: intensity,
+            angle: light.angle, yaw: -light.yaw, occlude: light.occlude
+        });
+    }
+    return out;
 };
 
 //-----------------------------------------------------------------------------

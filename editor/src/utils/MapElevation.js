@@ -150,7 +150,9 @@
             && Object.keys(sidecar3d.eventPreviews).length);
         const roomed = !!(sidecar3d && sidecar3d.room);
         const propped = !!(sidecar3d && Array.isArray(sidecar3d.props) && sidecar3d.props.length);
-        if (isFlat(mapData) && !grouped && !modeled && !previewed && !roomed && !propped
+        const lit = !!(sidecar3d && ((Array.isArray(sidecar3d.lights) && sidecar3d.lights.length)
+            || sidecar3d.lighting));
+        if (isFlat(mapData) && !grouped && !modeled && !previewed && !roomed && !propped && !lit
             && !(sidecar3d && sidecar3d.camera)) {
             if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
             return true;

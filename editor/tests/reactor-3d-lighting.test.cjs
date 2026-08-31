@@ -508,6 +508,7 @@ test('a colour keeps its hue however bright the light is', () => {
 /** Run the cone texture and hand back the alpha channel it painted. */
 function coneAlpha() {
     delete Reactor3D._coneLight;
+    delete Reactor3D._coneLightCanvas;
     let painted = null;
     const canvas = {
         width: 0, height: 0,
@@ -521,6 +522,7 @@ function coneAlpha() {
         THREE: { CanvasTexture: function() { this.flipY = true; } }
     }, () => Reactor3D.coneLightTexture());
     delete Reactor3D._coneLight;
+    delete Reactor3D._coneLightCanvas;
 
     const size = painted.width;
     const alphaAt = (u, v) => painted.data[((Math.floor(v * (size - 1)) * size)
@@ -811,4 +813,109 @@ test('multi-cell foliage gap fill stays faint and owns no opaque depth', () => {
     assert.match(source, /material\.opacity = group\.underlay \? 0\.6 : 1/);
     assert.match(source, /opaqueCore\.opacity = group\.underlay \? 0\.6 : 1/,
         'the exact-opaque core rejects every underlay texel');
+});
+
+//-----------------------------------------------------------------------------
+// Native lights
+
+test('native lights normalize from the sidecar with bounded fields', () => {
+    const map = { reactor3d: { lights: [
+        { id: 'lamp', type: 'point', x: 3.5, y: 4.5, radius: 5, color: '#ff8800',
+          intensity: 0.8, tag: 'street' },
+        { type: 'spot', x: 1, y: 2, yaw: 90, angle: 60, radius: 8, height: 2 },
+        { type: 'point', x: 9999999, radius: 9999, intensity: 99 },
+        null, 'junk'
+    ] } };
+    const lights = Reactor3D.readMapLights(map);
+    assert.equal(lights.length, 3, 'junk entries drop, everything else survives');
+    assert.equal(lights[0].id, 'lamp');
+    assert.equal(lights[0].color, 0xff8800);
+    assert.equal(lights[0].tag, 'street');
+    assert.equal(lights[1].type, Reactor3D.LIGHT_SPOT);
+    assert.equal(lights[1].yaw, 90);
+    assert.equal(lights[2].x, 10000, 'positions clamp');
+    assert.equal(lights[2].radius, 200, 'reach clamps');
+    assert.equal(lights[2].intensity, 4, 'intensity clamps');
+    assert.equal(lights[2].id, 'light3', 'ids default by position');
+    // Normalization is cached against the raw array, so per-frame reads cost
+    // one identity check.
+    assert.equal(Reactor3D.readMapLights(map), lights);
+});
+
+test('placed lights are their own opt-in, and the sidecar word is final', () => {
+    const withLights = { reactor3d: { lights: [{ x: 1, y: 1 }] } };
+    assert.equal(Reactor3D.lightingEnabled(withLights), true);
+    assert.equal(Reactor3D.lightingEnabled({ meta: {} }), false);
+    assert.equal(Reactor3D.lightingEnabled({ meta: { lighting: true } }), true);
+    assert.equal(Reactor3D.lightingEnabled(
+        { reactor3d: { lights: [{ x: 1, y: 1 }], lighting: { enabled: false } } }),
+        false, 'an explicit off wins over placed lights');
+    // And a 3D map with placed lights wants the 3D pass without any note.
+    assert.equal(Reactor3D.wantsLights3D(Object.assign({ meta: { '3d': true } }, withLights)), true);
+});
+
+test('native lights resolve per frame: state, attachment, yaw flip', () => {
+    const map = { reactor3d: { lights: [
+        { id: 'torch', type: 'spot', x: 0.25, y: 0, yaw: 90, radius: 6,
+          attach: { event: 5 } },
+        { id: 'lamp', x: 2.5, y: 2.5, radius: 3 },
+        { id: 'dead', x: 1, y: 1, on: false }
+    ] } };
+    const lights = withGlobals({
+        $dataMap: map,
+        $gameMap: Object.assign({
+            event: id => id === 5 ? { _realX: 7, _realY: 9 } : null,
+            _reactorLightStates: {}
+        }, gameMap),
+        Graphics: { frameCount: 0 }
+    }, () => Reactor3D.nativeLights());
+    assert.equal(lights.length, 2, 'a light authored off stays off');
+    assert.equal(lights[0].x, 7.75, 'attached x is carrier centre plus offset');
+    assert.equal(lights[0].y, 9.5);
+    assert.equal(lights[0].yaw, -90, 'schema yaw flips into the scene convention');
+    assert.equal(lights[1].colour, 0xffffff);
+
+    // A runtime override flips a light without touching the authored data,
+    // and a tag speaks to every light wearing it.
+    const overridden = withGlobals({
+        $dataMap: map,
+        $gameMap: Object.assign({
+            event: () => null,
+            _reactorLightStates: { dead: true, lamp: false }
+        }, gameMap),
+        Graphics: { frameCount: 0 }
+    }, () => Reactor3D.nativeLights());
+    assert.deepEqual(overridden.map(l => l.radius > 3), [false],
+        'dead came on, lamp went off, torch lost its carrier');
+});
+
+test('flicker and pulse animate deterministically from the frame counter', () => {
+    const map = { reactor3d: { lights: [
+        { id: 'fire', x: 1, y: 1, radius: 4, flicker: 0.5,
+          pulse: { min: 0.5, max: 1, period: 60 } }
+    ] } };
+    const at = frame => withGlobals({
+        $dataMap: map, $gameMap: gameMap, Graphics: { frameCount: frame }
+    }, () => Reactor3D.nativeLights()[0]);
+    const a = at(0);
+    const b = at(17);
+    const again = at(17);
+    assert.notEqual(a.intensity, b.intensity, 'flicker moves');
+    assert.notEqual(a.radius, b.radius, 'pulse breathes');
+    assert.deepEqual(b, again, 'the same frame always looks the same');
+    assert.ok(b.intensity > 0 && b.intensity <= 1);
+});
+
+test('the flat compositor multiplies ambient and adds lights, never punches holes', () => {
+    const sprites = fs.readFileSync(
+        path.join(repoRoot, 'runtime', 'reactor_sprites.js'), 'utf8');
+    assert.match(sprites, /updateReactorLighting2D = function/);
+    assert.match(sprites, /modes\.MULTIPLY !== undefined \? modes\.MULTIPLY : "multiply"/);
+    assert.doesNotMatch(sprites, /destination-out/, 'no hole punching anywhere');
+    // Shared falloff pictures, pooled sprites, both parented to the spriteset
+    // so screen tone cannot dim the lights.
+    assert.match(sprites, /coneLightCanvas\(\) : Reactor3D\.roundLightCanvas\(\)/);
+    assert.match(sprites, /destroyReactorLighting2D\(\);\n    if \(this\._rrCullHolder\)/);
+    // The 3D pass owns the lights when it exists; the flat pass stands down.
+    assert.match(sprites, /!this\._reactor3dLights\n(.*\n)?.*lightingEnabled\(\$dataMap\)/);
 });

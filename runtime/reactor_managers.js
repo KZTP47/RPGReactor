@@ -244,7 +244,8 @@ DataManager.loadMapSidecar = function(mapData) {
         const path = require("path");
         const base = path.dirname(process.mainModule.filename);
         if (!fs.existsSync(path.join(base, url))) return;
-    } else if (!(mapData.meta && mapData.meta["3d"]) && !Reactor3D._databaseSidecar) {
+    } else if (!(mapData.meta && (mapData.meta["3d"] || mapData.meta.lighting))
+        && !Reactor3D._databaseSidecar) {
         return;
     }
     const xhr = new XMLHttpRequest();

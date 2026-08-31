@@ -4053,6 +4053,7 @@ Spriteset_Map.prototype.update = function() {
     this.updateTilemap();
     Spriteset_Base.prototype.update.call(this);
     this.updateReactor3D();
+    this.updateReactorLighting2D();
     this.updateTileset();
     this.updateParallax();
     this.updateShadow();
@@ -4236,6 +4237,7 @@ Spriteset_Map.prototype.destroy = function(options) {
             this._reactor3dLit = false;
         }
     }
+    this.destroyReactorLighting2D();
     if (this._rrCullHolder) {
         for (const child of this._rrCullHolder.children.slice()) {
             this.addChild(child);
@@ -4680,6 +4682,150 @@ Spriteset_Map.prototype.updateReactor3DLights = function(state) {
  * the lighting overlays: the plugin owns `visible` and rebuilds its layers
  * whenever it likes.
  */
+//-----------------------------------------------------------------------------
+// Flat lighting
+//
+// The same lighting model the 3D pass uses, composited in two dimensions: one
+// multiply sprite carrying the ambient level — darkness is a colour the world
+// is multiplied by, never a bitmap with holes punched through it — and a
+// container of additive light sprites above it, sharing the 3D pass's own
+// falloff pictures so a lamp reads the same in either renderer. Native lights
+// only: a lighting plugin's 2D overlay is its own and stays untouched.
+
+/** The falloff pictures as PIXI textures, shared across every spriteset. */
+function reactorFlatLightTexture(kind) {
+    const key = kind === "cone" ? "_coneLightPixi" : "_roundLightPixi";
+    if (!Reactor3D[key]) {
+        const canvas = kind === "cone"
+            ? Reactor3D.coneLightCanvas() : Reactor3D.roundLightCanvas();
+        Reactor3D[key] = PIXI.Texture.from(canvas);
+    }
+    return Reactor3D[key];
+}
+
+Spriteset_Map.prototype.updateReactorLighting2D = function() {
+    if (typeof Reactor3D === "undefined" || !Reactor3D.lightingEnabled) return;
+    // The 3D light pass renders these same lights when it exists; the flat
+    // composite covers every other case, including a 3D map that fell back.
+    const active = !this._reactor3dLights
+        && typeof $dataMap !== "undefined" && Reactor3D.lightingEnabled($dataMap);
+    if (!active) {
+        if (this._reactorFlatLights) this.destroyReactorLighting2D();
+        return;
+    }
+    if (!this._reactorFlatLights) this.createReactorLighting2D();
+    const state = this._reactorFlatLights;
+    if (!state) return;
+
+    const ambient = Reactor3D.ambientFor($dataMap);
+    const level = Math.max(0, Math.min(1, ambient.intensity));
+    const colour = ambient.colour;
+    const channel = shift =>
+        Math.round(Math.max(0, Math.min(255, ((colour >> shift) & 0xff) * level)));
+    state.darkness.tint = (channel(16) << 16) | (channel(8) << 8) | channel(0);
+    state.darkness.width = Graphics.width;
+    state.darkness.height = Graphics.height;
+
+    this.syncReactorFlatLights(state, Reactor3D.nativeLights($dataMap));
+    this.keepReactorLighting2DOnTop();
+};
+
+Spriteset_Map.prototype.createReactorLighting2D = function() {
+    if (typeof PIXI === "undefined") return;
+    const modes = PIXI.BLEND_MODES;
+    const darkness = new PIXI.Sprite(PIXI.Texture.WHITE);
+    // Native v8 blend funcs, set as values and NEVER registered as BlendMode
+    // extensions — registration forces the back-buffer filter path, which is
+    // off, and the overlay would draw as an opaque quad.
+    darkness.blendMode = modes && modes.MULTIPLY !== undefined ? modes.MULTIPLY : "multiply";
+    const glow = new PIXI.Container();
+    // On the spriteset, not the base sprite: the screen tone must not dim
+    // the lights along with the world — the same parent the 3D pass chose.
+    this.addChild(darkness);
+    this.addChild(glow);
+    this._reactorFlatLights = { darkness, glow, sprites: [] };
+};
+
+Spriteset_Map.prototype.destroyReactorLighting2D = function() {
+    const state = this._reactorFlatLights;
+    if (!state) return;
+    for (const part of [state.darkness, state.glow]) {
+        if (part.parent) part.parent.removeChild(part);
+        part.destroy({ children: true, texture: false, textureSource: false });
+    }
+    this._reactorFlatLights = null;
+};
+
+/**
+ * Pool the light sprites and place this frame's lights into them.
+ *
+ * Sprites are reused in order and the leftovers hidden, so a steady map
+ * allocates nothing per frame; every sprite shares one of two textures, so
+ * hundreds of lights batch into a couple of draws. A light whose reach cannot
+ * touch the screen is skipped before it costs a sprite at all.
+ */
+Spriteset_Map.prototype.syncReactorFlatLights = function(state, lights) {
+    const tw = $gameMap.tileWidth();
+    const th = $gameMap.tileHeight();
+    const margin = 96;
+    let used = 0;
+    for (const light of lights) {
+        const x = $gameMap.adjustX(light.x) * tw;
+        const y = ($gameMap.adjustY(light.y) - (light.height || 0)) * th;
+        const reach = Math.max(1, (light.radius || 0) * tw);
+        if (x < -reach - margin || x > Graphics.width + reach + margin
+            || y < -reach - margin || y > Graphics.height + reach + margin) continue;
+        let sprite = state.sprites[used];
+        if (!sprite) {
+            sprite = new PIXI.Sprite();
+            const modes = PIXI.BLEND_MODES;
+            sprite.blendMode = modes && modes.ADD !== undefined ? modes.ADD : "add";
+            state.glow.addChild(sprite);
+            state.sprites.push(sprite);
+        }
+        const spot = light.type === Reactor3D.LIGHT_SPOT;
+        sprite.texture = reactorFlatLightTexture(spot ? "cone" : "round");
+        sprite.visible = true;
+        if (spot) {
+            // Source at the anchor, beam extending up the texture; yaw
+            // arrives in the scene's anticlockwise convention, so the screen
+            // rotation is its negation past the flip that points south.
+            sprite.anchor.set(0.5, 1);
+            const spread = ((light.angle || 45) * Math.PI) / 360;
+            sprite.width = Math.max(2, 2 * Math.tan(spread) * reach);
+            sprite.height = Math.max(2, reach);
+            sprite.rotation = Math.PI - ((light.yaw || 0) * Math.PI) / 180;
+        } else {
+            sprite.anchor.set(0.5, 0.5);
+            sprite.rotation = 0;
+            sprite.width = sprite.height = Math.max(2, reach * 2);
+        }
+        sprite.position.set(x, y);
+        sprite.tint = light.colour !== undefined ? light.colour : 0xffffff;
+        sprite.alpha = Math.max(0, Math.min(1,
+            light.intensity === undefined ? 1 : light.intensity));
+        used++;
+    }
+    for (let i = used; i < state.sprites.length; i++) {
+        state.sprites[i].visible = false;
+    }
+};
+
+/**
+ * Keep the darkness and glow the last things drawn, in that order. Plugins
+ * add their own layers to the spriteset long after it is built; light is the
+ * one thing that belongs over all of it. An ordinary frame costs two
+ * comparisons.
+ */
+Spriteset_Map.prototype.keepReactorLighting2DOnTop = function() {
+    const state = this._reactorFlatLights;
+    if (!state || !state.glow.parent) return;
+    const last = this.children.length - 1;
+    if (this.children[last] === state.glow && this.children[last - 1] === state.darkness) return;
+    this.setChildIndex(state.darkness, this.children.length - 1);
+    this.setChildIndex(state.glow, this.children.length - 1);
+};
+
 Spriteset_Map.prototype.suppressReactor3DGroundParallaxes = function(hide) {
     if (!this._tilemap || typeof TilingSprite === "undefined") return;
     const taken = hide ? this.reactor3DGroundParallaxNames() : null;
