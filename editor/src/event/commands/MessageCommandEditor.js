@@ -690,13 +690,20 @@ class MessageCommandEditor {
         column.appendChild(hint);
 
         // A live miniature of the box being edited, drawn the way the game
-        // draws it — windowskin, face, name box, colours, icons resolved.
-        // With more lines than one box holds, it follows the caret: the box
-        // under the cursor is the one shown.
+        // draws it — windowskin, face, name box, colours, icons resolved —
+        // then played the way the game plays it: a glyph per frame, with the
+        // pauses where the timing codes put them. With more lines than one
+        // box holds, it follows the caret: the box under the cursor is the
+        // one shown.
+        const miniLabel = document.createElement('div');
+        miniLabel.textContent = this._t('Preview');
+        miniLabel.style.cssText = 'font-weight: bold; font-size: 13px; color: var(--color-text); margin-top: 6px;';
+        column.appendChild(miniLabel);
+
         const mini = document.createElement('canvas');
         mini.className = 'message-mini-preview';
-        mini.style.cssText = 'display:block; width:100%; max-width:560px; height:auto; ' +
-            'margin-top:6px; border:1px solid var(--color-border); border-radius:3px; background:#101018;';
+        mini.style.cssText = 'display:block; width:100%; height:auto; ' +
+            'border:1px solid var(--color-border); border-radius:3px; background:#101018;';
         column.appendChild(mini);
         this._textarea = textarea;
         // Input redraws through updateGuide; these cover pure caret moves.
@@ -875,8 +882,10 @@ class MessageCommandEditor {
         `;
         nameInput.addEventListener('input', (e) => {
             this.speakerName = e.target.value;
-            // The strip labels each box by its speaker, so it has to follow.
+            // The strip labels each box by its speaker, so it has to follow —
+            // and the miniature's name box and headroom follow too.
             this.renderBoxList();
+            this.renderMiniPreview();
         });
 
         // The name box takes control characters too - an actor's real name via
@@ -916,6 +925,8 @@ class MessageCommandEditor {
         bgSelect.value = this.background.toString();
         bgSelect.addEventListener('change', (e) => {
             this.background = parseInt(e.target.value);
+            // Dim and Transparent change what the miniature draws.
+            this.renderMiniPreview();
         });
         // The guide narrows when a face appears, so anything that can change
         // the window's text area re-measures it.
@@ -1624,18 +1635,223 @@ class MessageCommandEditor {
         const height = rows * metrics.LINE_HEIGHT + metrics.PADDING * 2;
         const width = window.RRTextCodes.messageTextWidth(this._pluginList(), false) + (4 + 8) * 2;
         const headroom = header.speakerName ? metrics.LINE_HEIGHT + metrics.PADDING * 2 : 0;
-        canvas.width = width;
-        canvas.height = height + headroom;
+
         // Bottom placement pins the window to the canvas floor, which leaves
         // exactly the headroom above it; the game's real Top/Middle/Bottom
         // placement is the full preview's business, not the miniature's.
-        this.drawPreview(canvas, {
+        const page = {
             header: Object.assign({}, header, { positionType: 2 }),
-            lines: chunks[chunk] || []
-        });
+            lines: (chunks[chunk] || []).map(line => this._resolveDataCodes(line))
+        };
+
+        // A caret move inside the same box changes nothing on screen; leave
+        // the running playback alone rather than restarting it. The skin and
+        // font arrive async, so they are part of "the same".
+        const key = JSON.stringify([page.lines, header.faceName, header.faceIndex,
+            header.speakerName, header.background, width, height + headroom,
+            Boolean(this._skin), this._previewFontFamily || '']);
+        if (this._miniAnim && this._miniAnim.key === key) return;
+        this._stopMiniAnimation();
+
+        canvas.width = width;
+        canvas.height = height + headroom;
+        // The full text first, so typing reads back instantly; playback at
+        // the game's own speed starts once the keys go quiet.
+        this.drawPreview(canvas, page);
+        this._miniAnim = { key, canvas, page };
+        this._miniAnimDelay = setTimeout(() => this._startMiniAnimation(), 600);
     }
 
-    drawPreview(canvas, page) {
+    /**
+     * Play the miniature the way the game plays the box: one glyph per frame
+     * at 60fps, the timing codes honoured, the pause sign blinking where the
+     * game would hold, looping with a beat at the end. Only frames whose
+     * picture actually changes are redrawn, so waits and holds cost nothing.
+     */
+    _startMiniAnimation() {
+        const anim = this._miniAnim;
+        if (!anim || !this.modal || this.modal.style.display === 'none') return;
+        anim.timeline = MessageCommandEditor.buildTimeline(anim.page.lines);
+        let origin = null;
+        let lastSignature = '';
+        const tick = now => {
+            if (this._miniAnim !== anim) return;
+            if (origin === null) origin = now;
+            let frame = Math.floor((now - origin) * 60 / 1000);
+            if (frame >= anim.timeline.totalFrames) {
+                origin = now;
+                frame = 0;
+            }
+            const lineUnits = anim.timeline.lineTimes.map(times => {
+                let count = 0;
+                while (count < times.length && times[count] <= frame) count++;
+                return count;
+            });
+            const held = anim.timeline.cursor.some(span => frame >= span.start && frame < span.end);
+            const signature = lineUnits.join(',') + (held ? ':' + (Math.floor(frame / 16) % 4) : '');
+            if (signature !== lastSignature) {
+                lastSignature = signature;
+                this.drawPreview(anim.canvas, anim.page, { lineUnits, cursorFrame: held ? frame : -1 });
+            }
+            anim.raf = requestAnimationFrame(tick);
+        };
+        anim.raf = requestAnimationFrame(tick);
+    }
+
+    _stopMiniAnimation() {
+        if (this._miniAnimDelay) {
+            clearTimeout(this._miniAnimDelay);
+            this._miniAnimDelay = null;
+        }
+        if (this._miniAnim) {
+            if (this._miniAnim.raf) cancelAnimationFrame(this._miniAnim.raf);
+            this._miniAnim = null;
+        }
+    }
+
+    /**
+     * Resolve the data codes whose value the editor does know — actor and
+     * party-member names and the currency unit, from the same sources the
+     * overflow scanner measures with. \V and plugin codes stay as written:
+     * their values live in a running game.
+     */
+    _resolveDataCodes(line) {
+        const data = window.reactor?.databaseManager?.data;
+        const system = data?.system;
+        return String(line || '')
+            .replace(/\\N\[(\d+)\]/gi, (_, id) => data?.actors?.[Number(id)]?.name || 'Name')
+            .replace(/\\P\[(\d+)\]/gi, (_, index) => {
+                const actorId = system?.partyMembers?.[Number(index) - 1];
+                return (actorId && data?.actors?.[actorId]?.name) || 'Name';
+            })
+            .replace(/\\G/g, (system && system.currencyUnit) || 'G');
+    }
+
+    /**
+     * Break one line into the units Window_Message processes: text glyphs,
+     * icons, style codes, timing codes. One tokenizer feeds both the draw
+     * and the timeline, so what is drawn and when it appears cannot disagree.
+     */
+    static tokenizeLine(line) {
+        const text = String(line || '');
+        const pattern = /\\([A-Za-z]+)\[(\d+)\]|\\([{}])|\\\\|\\([.|!^><$])/g;
+        const tokens = [];
+        const pushText = piece => { if (piece) tokens.push({ type: 'text', text: piece }); };
+        let lastIndex = 0;
+        let match;
+        while ((match = pattern.exec(text)) !== null) {
+            pushText(text.slice(lastIndex, match.index));
+            lastIndex = pattern.lastIndex;
+            const name = (match[1] || '').toUpperCase();
+            if (match[0] === '\\\\') {
+                pushText('\\');
+            } else if (match[3]) {
+                tokens.push({ type: 'grow', up: match[3] === '{' });
+            } else if (match[4]) {
+                const timing = {
+                    '.': { type: 'wait', frames: 15 },
+                    '|': { type: 'wait', frames: 60 },
+                    '!': { type: 'input' },
+                    '>': { type: 'fast', on: true },
+                    '<': { type: 'fast', on: false },
+                    '^': { type: 'skip' },
+                    '$': { type: 'gold' }
+                };
+                tokens.push(Object.assign({}, timing[match[4]]));
+            } else if (name === 'C') {
+                tokens.push({ type: 'color', value: Number(match[2]) });
+            } else if (name === 'FS') {
+                tokens.push({ type: 'fontSize', value: Number(match[2]) });
+            } else if (name === 'I') {
+                tokens.push({ type: 'icon', value: Number(match[2]) });
+            } else if (name === 'PX') {
+                tokens.push({ type: 'px', value: Number(match[2]) });
+            } else if (name === 'PY') {
+                // Consumed silently: PY would move the whole line, which a
+                // single-line draw cannot show.
+                tokens.push({ type: 'code' });
+            } else {
+                // \V and anything unknown resolve against live game state
+                // that does not exist in the editor. Keep the code as visible
+                // text rather than swallowing it - a blank gap reads as "this
+                // text disappears", a worse lie than showing the markup.
+                pushText(match[0]);
+            }
+        }
+        pushText(text.slice(lastIndex));
+        return tokens;
+    }
+
+    /**
+     * When each glyph of a box appears, in game frames, following
+     * Window_Message.updateMessage: one processed unit per frame, \. waits
+     * 15, \| waits 60, \! holds for input (stood in by a fixed hold, since
+     * no one is pressing OK in a preview), \> makes the rest of the line
+     * instant, \< restores it, and \^ skips the end-of-box pause. The \!
+     * holds and the end pause come back as cursor spans so the pause sign
+     * can blink through them.
+     */
+    static buildTimeline(lines) {
+        const INPUT_HOLD = 45;
+        const END_HOLD = 90;
+        const SKIP_HOLD = 30;
+        let frame = 0;
+        let lineFast = false;
+        let pauseSkip = false;
+        const cursor = [];
+        const lineTimes = [];
+        for (const line of lines) {
+            const times = [];
+            for (const token of MessageCommandEditor.tokenizeLine(line)) {
+                const step = lineFast ? 0 : 1;
+                switch (token.type) {
+                    case 'text': {
+                        const count = Array.from(token.text).length;
+                        for (let i = 0; i < count; i++) {
+                            frame += step;
+                            times.push(frame);
+                        }
+                        break;
+                    }
+                    case 'icon':
+                        frame += step;
+                        times.push(frame);
+                        break;
+                    case 'wait':
+                        frame += step + token.frames;
+                        break;
+                    case 'input':
+                        frame += step;
+                        cursor.push({ start: frame, end: frame + INPUT_HOLD });
+                        frame += INPUT_HOLD;
+                        break;
+                    case 'fast':
+                        // \> stops the per-character breaks, so it costs
+                        // nothing itself; \< brings them back.
+                        lineFast = token.on;
+                        if (!token.on) frame += 1;
+                        break;
+                    case 'skip':
+                        pauseSkip = true;
+                        frame += step;
+                        break;
+                    default:
+                        // color, fontSize, grow, px, gold, code: the escape
+                        // itself is processed like a character.
+                        frame += step;
+                        break;
+                }
+            }
+            lineTimes.push(times);
+            lineFast = false;
+            frame += 1; // the newline is processed like a character too
+        }
+        const hold = pauseSkip ? SKIP_HOLD : END_HOLD;
+        if (!pauseSkip) cursor.push({ start: frame, end: frame + hold });
+        return { lineTimes, totalFrames: frame + hold, cursor };
+    }
+
+    drawPreview(canvas, page, reveal) {
         const context = canvas.getContext('2d');
         context.clearRect(0, 0, canvas.width, canvas.height);
         context.fillStyle = '#101018';
@@ -1683,9 +1899,14 @@ class MessageCommandEditor {
         context.textBaseline = 'alphabetic';
 
         page.lines.forEach((line, index) => {
+            const budget = reveal ? { units: (reveal.lineUnits && reveal.lineUnits[index]) || 0 } : null;
             this.drawPreviewLine(context, String(line || ''), textLeft,
-                y + metrics.PADDING + index * metrics.LINE_HEIGHT, fontSize, family);
+                y + metrics.PADDING + index * metrics.LINE_HEIGHT, fontSize, family, budget);
         });
+
+        if (reveal && reveal.cursorFrame >= 0) {
+            this.drawPreviewPauseSign(context, rect, reveal.cursorFrame);
+        }
     }
 
     drawPreviewNameBox(context, name, windowX, windowY, windowHeight) {
@@ -1752,25 +1973,22 @@ class MessageCommandEditor {
     }
 
     /**
-     * Draw one line, resolving the codes that change how it looks.
+     * Draw one line, resolving the codes that change how it looks - colour,
+     * icons, font size, the literal backslash. The timing codes (\., \|, \!,
+     * \>, \<, \^, \$) draw nothing: their job belongs to the playback, which
+     * shows the pauses where they happen instead of leaving markup on screen.
      *
-     * This is deliberately a subset: colour, icons, font size and the literal
-     * backslash - the codes that change what the line *looks like*. Codes that
-     * only affect timing or flow (\., \|, \!, \^) are stripped, because a still
-     * image cannot show a pause, and leaving their markup on screen would be a
-     * worse lie than omitting it.
+     * `budget`, when given, is the playback's reveal: a mutable count of
+     * glyph units (characters and icons) still allowed on this line, counted
+     * exactly as buildTimeline counts them.
      */
-    drawPreviewLine(context, line, x, y, fontSize, family) {
+    drawPreviewLine(context, line, x, y, fontSize, family, budget) {
         const iconSize = 32;
         let cursorX = x;
         let size = fontSize;
         context.fillStyle = window.RRWindowskin
             ? window.RRWindowskin.normalColor(this._skin)
             : '#ffffff';
-
-        const pattern = /\\([A-Za-z]+)\[(\d+)\]|\\([{}])|\\\\|\\[.|!^><$]/g;
-        let lastIndex = 0;
-        let match;
 
         const write = text => {
             if (!text) return;
@@ -1779,43 +1997,58 @@ class MessageCommandEditor {
             cursorX += context.measureText(text).width;
         };
 
-        while ((match = pattern.exec(line)) !== null) {
-            write(line.slice(lastIndex, match.index));
-            lastIndex = pattern.lastIndex;
-
-            const name = (match[1] || '').toUpperCase();
-            const value = Number(match[2]);
-
-            if (match[0] === '\\\\') {
-                write('\\');
-            } else if (match[3] === '{') {
-                size += 12;
-            } else if (match[3] === '}') {
-                size = Math.max(12, size - 12);
-            } else if (name === 'C') {
-                context.fillStyle = window.RRWindowskin
-                    ? window.RRWindowskin.textColor(this._skin, value)
-                    : '#ffffff';
-            } else if (name === 'FS') {
-                size = value || fontSize;
-            } else if (name === 'I') {
-                this.drawPreviewIcon(context, value, cursorX, y + (size - iconSize) / 2 + 4);
-                cursorX += iconSize + 4;
-            } else if (name === 'PX') {
-                cursorX = x + value;
-            } else if (name === 'PY' || name === 'FS') {
-                // FS is handled above; PY would move the whole line and is not
-                // meaningful for a single-line draw.
-            } else {
-                // \V, \N, \P and anything else resolve against live game state
-                // that does not exist in the editor. Draw the code as written
-                // rather than swallowing it - a blank gap reads as "this text
-                // disappears", which is a worse lie than showing the markup.
-                write(match[0]);
+        for (const token of MessageCommandEditor.tokenizeLine(line)) {
+            if (budget && budget.units <= 0) return;
+            switch (token.type) {
+                case 'text': {
+                    let piece = token.text;
+                    if (budget) {
+                        const glyphs = Array.from(piece);
+                        if (glyphs.length > budget.units) piece = glyphs.slice(0, budget.units).join('');
+                        budget.units -= Array.from(piece).length;
+                    }
+                    write(piece);
+                    break;
+                }
+                case 'icon':
+                    this.drawPreviewIcon(context, token.value, cursorX, y + (size - iconSize) / 2 + 4);
+                    cursorX += iconSize + 4;
+                    if (budget) budget.units -= 1;
+                    break;
+                case 'color':
+                    context.fillStyle = window.RRWindowskin
+                        ? window.RRWindowskin.textColor(this._skin, token.value)
+                        : '#ffffff';
+                    break;
+                case 'fontSize':
+                    size = token.value || fontSize;
+                    break;
+                case 'grow':
+                    size = token.up ? size + 12 : Math.max(12, size - 12);
+                    break;
+                case 'px':
+                    cursorX = x + token.value;
+                    break;
+                default:
+                    // wait, input, fast, skip, gold, code: timing and flow,
+                    // nothing to draw.
+                    break;
             }
         }
+    }
 
-        write(line.slice(lastIndex));
+    /**
+     * The window's blinking pause sign: four 24x24 frames in a 2x2 block at
+     * (144, 96) on the skin sheet, drawn at the bottom centre of the window
+     * while the playback holds where the game would wait for input.
+     */
+    drawPreviewPauseSign(context, rect, frame) {
+        const image = this._skin && this._skin.image;
+        if (!image) return;
+        const step = Math.floor(frame / 16) % 4;
+        context.drawImage(image,
+            144 + (step % 2) * 24, 96 + Math.floor(step / 2) * 24, 24, 24,
+            rect.x + Math.floor(rect.w / 2) - 12, rect.y + rect.h - 24, 24, 24);
     }
 
     drawPreviewIcon(context, index, x, y) {
@@ -1883,6 +2116,7 @@ class MessageCommandEditor {
      * Close modal
      */
     close() {
+        this._stopMiniAnimation();
         for (const detach of this._detachMenus) detach();
         this._detachMenus = [];
         if (window.RRTextCodeMenu) window.RRTextCodeMenu.closeMenu();

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased - 0.98.5]
 
+### Fixed
+- The Show Text miniature no longer prints the timing codes (`\.` `\|` `\!` `\>` `\<` `\^` `\$`) as literal text — instead it plays the box the way the game plays it: one glyph per frame, waits and instant-line codes honoured, the pause sign blinking where the game would hold for input, looping once typing goes quiet. `\N`, `\P` and `\G` resolve to real actor names and the currency unit. The miniature is labelled Preview, spans the full column, and follows the Background (Dim/Transparent) and Name controls the moment they change.
+
 ## [0.98.4] - 2026-08-31
 
 ### Fixed

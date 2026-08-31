@@ -629,3 +629,56 @@ test('the message editor keeps a live miniature under the text field', () => {
     // Pinned to the bottom so the name-box headroom is the only empty band.
     assert.match(source, /positionType: 2/);
 });
+
+test('the miniature draws no timing codes and times them like the game', () => {
+    const MessageCommandEditor = require(
+        path.join(srcRoot, 'event', 'commands', 'MessageCommandEditor.js'));
+    const tokens = MessageCommandEditor.tokenizeLine('Hi\\.\\|\\!\\>\\<\\^\\$ there');
+    const drawn = tokens.filter(t => t.type === 'text').map(t => t.text).join('');
+    assert.equal(drawn, 'Hi there', 'timing codes never reach the canvas');
+
+    // Window_Message costs one frame per processed unit; \. adds 15 on top,
+    // \| adds 60. 'A' lands on frame 1, the wait spans 2..17, 'B' on 18.
+    const timeline = MessageCommandEditor.buildTimeline(['A\\.B']);
+    assert.deepEqual(timeline.lineTimes, [[1, 18]]);
+});
+
+test('reveal timing follows instant lines and pause skip', () => {
+    const MessageCommandEditor = require(
+        path.join(srcRoot, 'event', 'commands', 'MessageCommandEditor.js'));
+    // \> shows the rest of the line in the same frame.
+    const fast = MessageCommandEditor.buildTimeline(['\\>ABC']);
+    assert.deepEqual(fast.lineTimes, [[0, 0, 0]]);
+    // \^ skips the end-of-box pause: shorter loop, no pause sign.
+    const skipped = MessageCommandEditor.buildTimeline(['A\\^']);
+    const held = MessageCommandEditor.buildTimeline(['A']);
+    assert.ok(skipped.totalFrames < held.totalFrames);
+    assert.equal(skipped.cursor.length, 0);
+    assert.equal(held.cursor.length, 1, 'the end pause blinks the pause sign');
+});
+
+test('draw units and timeline units agree, icons included', () => {
+    const MessageCommandEditor = require(
+        path.join(srcRoot, 'event', 'commands', 'MessageCommandEditor.js'));
+    const line = '\\C[2]Hi \\I[5]!';
+    const units = MessageCommandEditor.tokenizeLine(line).reduce((sum, t) =>
+        sum + (t.type === 'text' ? Array.from(t.text).length : t.type === 'icon' ? 1 : 0), 0);
+    const timeline = MessageCommandEditor.buildTimeline([line]);
+    assert.equal(timeline.lineTimes[0].length, units,
+        'every drawn unit has exactly one reveal frame');
+    // \C costs a frame but draws nothing: the first glyph lands on frame 2.
+    assert.equal(timeline.lineTimes[0][0], 2);
+});
+
+test('the miniature follows the background and name controls', () => {
+    const fs = require('node:fs');
+    const source = fs.readFileSync(
+        path.join(srcRoot, 'event', 'commands', 'MessageCommandEditor.js'), 'utf8');
+    // Dim/Transparent and the speaker name redraw the miniature the moment
+    // they change, and the canvas carries a labelled full-width strip.
+    assert.match(source, /this\.background = parseInt\(e\.target\.value\);\n[^]{0,120}renderMiniPreview/);
+    assert.match(source, /this\.speakerName = e\.target\.value;\n[^]{0,220}renderMiniPreview/);
+    assert.match(source, /_t\('Preview'\)[^]{0,400}message-mini-preview/);
+    // Closing the dialog stops the playback loop.
+    assert.match(source, /close\(\) \{\n        this\._stopMiniAnimation\(\);/);
+});
