@@ -747,33 +747,48 @@ class VideoSurfaceEditor {
         this._buildEventField(identityGrid);
 
         if (this.operation === 'ShowVideoSurface') {
-            const movieGroup = this._el('label', 'vs-field');
+            // Video and image live in different folders with different
+            // previews, so the choice is two steps: pick the kind, then
+            // browse that folder in the shared picker — playing movies from
+            // movies/, picture previews from img/pictures.
+            const movieGroup = this._el('div', 'vs-field');
             movieGroup.style.cssText = 'display:flex;flex-direction:column;gap:4px;grid-column:1/-1;color:var(--color-text-muted);font-size:11px;';
             movieGroup.appendChild(this._el('span', '', this._t('Media file')));
-            const movie = this._el('select', 'vs-input');
-            movie.style.cssText = 'width:100%;padding:6px 7px;border:1px solid var(--color-border-input);border-radius:3px;background:var(--color-bg-input);color:var(--color-text);';
-            const none = this._el('option', '', this._t('(Select a movie or image)'));
-            none.value = '';
-            movie.appendChild(none);
-            for (const file of this.movies) {
-                const option = this._el('option', '', file.relativePath);
-                option.value = file.relativePath;
-                movie.appendChild(option);
+            const mediaRow = this._el('div');
+            mediaRow.style.cssText = 'display:flex;gap:6px;align-items:stretch;';
+            const kind = this._el('select', 'vs-input vs-media-kind');
+            kind.style.cssText = 'flex:0 0 auto;padding:6px 7px;border:1px solid var(--color-border-input);border-radius:3px;background:var(--color-bg-input);color:var(--color-text);';
+            for (const [value, text] of [['video', 'Video'], ['image', 'Image']]) {
+                const option = this._el('option', '', this._t(text));
+                option.value = value;
+                kind.appendChild(option);
             }
-            if (this.data.movie && !this.movies.some(file => file.relativePath === this.data.movie)) {
-                const unavailable = this._el('option', '', `${this.data.movie} (${this._t('Unavailable')})`);
-                unavailable.value = this.data.movie;
-                movie.appendChild(unavailable);
-            }
-            movie.value = this.data.movie;
-            this.fields.movie = movie;
-            this._listen(movie, 'change', () => {
-                this.data.movie = movie.value;
+            kind.value = VideoSurfaceEditor.isImageFile(this.data.movie) ? 'image' : 'video';
+            const current = this._el('div', 'vs-media-current');
+            current.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'
+                + 'padding:6px 7px;border:1px solid var(--color-border-input);border-radius:3px;'
+                + 'background:var(--color-bg-input);align-self:center;';
+            const missing = () => this.data.movie
+                && !this.movies.some(file => file.relativePath === this.data.movie);
+            const syncCurrent = () => {
+                current.textContent = this.data.movie
+                    ? this.data.movie + (missing() ? ` (${this._t('Unavailable')})` : '')
+                    : this._t('(Select a movie or image)');
+                current.style.color = this.data.movie ? 'var(--color-text)' : 'var(--color-text-muted)';
+            };
+            syncCurrent();
+            const browse = this._button('Browse…');
+            this._listen(browse, 'click', () => this._browseMedia(kind.value, name => {
+                this.data.movie = name;
+                this._markChanged('movie');
+                syncCurrent();
                 this._setMovie();
                 this._syncMediaFields();
                 this._updatePreviews();
-            });
-            movieGroup.appendChild(movie);
+            }));
+            mediaRow.append(kind, current, browse);
+            this.fields.movie = kind;
+            movieGroup.appendChild(mediaRow);
             identityGrid.appendChild(movieGroup);
         }
 
@@ -845,6 +860,40 @@ class VideoSurfaceEditor {
         this._field(transformGrid, 'Scale X', 'scaleX', { min: -1000, max: 1000, step: 0.01 });
         this._field(transformGrid, 'Scale Y', 'scaleY', { min: -1000, max: 1000, step: 0.01 });
         this._syncMediaFields();
+    }
+
+    /**
+     * The shared file picker for the chosen media kind: the movies folder
+     * with playing video previews, or img/pictures with image previews.
+     */
+    _browseMedia(kind, onPick) {
+        const project = this._project();
+        const files = kind === 'image' ? this.imageFiles(project) : this.movieFiles(project);
+        const picker = typeof window !== 'undefined' ? window.reactor?.databaseEditorUI : null;
+        if (!files.length) {
+            alert(typeof window !== 'undefined' && window.I18n?.t
+                ? window.I18n.t('r3dfx.noVideos')
+                : 'No videos in the movies folder or images in img/pictures.');
+            return;
+        }
+        if (!picker || typeof picker.showImagePicker !== 'function') return;
+        let assets = typeof RRAssetFiles !== 'undefined' ? RRAssetFiles : null;
+        if (!assets && typeof require === 'function') {
+            try { assets = require('../../utils/AssetFiles.js'); } catch (_) {}
+        }
+        const urlFor = name => {
+            const file = files.find(entry => entry.relativePath === name);
+            if (!file) return '';
+            return assets?.toUrl ? assets.toUrl(file.absolutePath) : 'file://' + file.absolutePath;
+        };
+        picker.showImagePicker(this._t('Media file'), files.map(file => file.relativePath),
+            name => { if (name) onPick(name); }, urlFor, this.data.movie || undefined, {
+                allowNone: false,
+                // The picker previews per file; only real movies get <video>.
+                mediaType: kind === 'image' ? undefined : 'video',
+                // Above this dialog's own overlay (21000).
+                zIndex: 21050
+            });
     }
 
     /** Playback-only controls disappear when the chosen file is a still. */

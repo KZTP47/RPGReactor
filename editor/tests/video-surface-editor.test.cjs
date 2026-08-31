@@ -778,3 +778,18 @@ test('the dialog hides playback-only controls for a still', () => {
     assert.match(preview, /img', 'pictures'/);
     assert.match(preview, /tagName === 'IMG'/);
 });
+
+test('the media file is chosen through the shared picker, per kind', () => {
+    const fs = require('node:fs');
+    const source = fs.readFileSync(
+        path.join(editorRoot, 'src', 'event', 'commands', 'VideoSurfaceEditor.js'), 'utf8');
+    // A kind selector (Video / Image) and a Browse button replace the flat
+    // mixed list; each kind opens the shared picker on its own folder.
+    assert.match(source, /vs-media-kind/);
+    assert.match(source, /_browseMedia\(kind, onPick\) \{/);
+    assert.match(source, /kind === 'image' \? this\.imageFiles\(project\) : this\.movieFiles\(project\)/);
+    // The picker must stack above the dialog's own overlay (21000).
+    assert.match(source, /zIndex: 21050/);
+    // Movies keep the playing-video preview; pictures preview as images.
+    assert.match(source, /mediaType: kind === 'image' \? undefined : 'video'/);
+});
