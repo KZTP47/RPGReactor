@@ -798,3 +798,32 @@ test('Conditional Branch summaries cover variable RHS and MZ types through Vehic
     assert.match(summary([11, 'pageup', 1]), /Page Up.*Triggered/);
     assert.match(summary([13, 2]), /Vehicle.*Airship/);
 });
+
+test('a bare continuation index still opens the right editor', () => {
+    // The context menu's Edit hands editCommand whatever row was under the
+    // right click; before the remap, a 401 text row reached no editor and
+    // fell to the placeholder alert.
+    const page = { list: [cmd(111, 0), cmd(101, 2), cmd(401, 2, ['Old']), cmd(412, 0), cmd(0, 0)] };
+    const ecl = Object.create(EventCommandList.prototype);
+    ecl.refreshCommandList = () => {};
+    let shown = null;
+    ecl.messageEditor = {
+        show: (message, callback) => {
+            shown = message;
+            callback([cmd(101, 0), cmd(401, 0, ['New'])]);
+        }
+    };
+    ecl.editCommand(2, page, 0);
+    assert.ok(shown, 'the 401 index resolved to its 101 and opened the message editor');
+    assert.equal(shown.boxes.length, 1);
+    assert.deepEqual(page.list.slice(1, 3), [cmd(101, 2), cmd(401, 2, ['New'])]);
+});
+
+test('right-click selects a continuation row through its parent', () => {
+    const fs = require('node:fs');
+    const source = fs.readFileSync(
+        path.join(editorRoot, 'src', 'event', 'EventCommandList.js'), 'utf8');
+    // The contextmenu handler remaps 401/408/657 to the authored parent the
+    // same way click and dblclick do, so Edit lands on a real editor.
+    assert.match(source, /addEventListener\('contextmenu'[^]{0,600}findParentCommandIndex/);
+});

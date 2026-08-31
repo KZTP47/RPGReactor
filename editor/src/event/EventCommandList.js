@@ -911,7 +911,15 @@ class EventCommandList {
         div.addEventListener('contextmenu', (e) => {
             e.preventDefault();
             if (!isRowSelected()) {
-                this.selectSingle(index);
+                // Continuation rows select their authored parent, exactly as
+                // a left click does. Selecting the raw 401/408/657 here sent
+                // the menu's Edit to a code no editor owns - the placeholder
+                // alert - while left-click-then-right-click worked.
+                let targetIndex = index;
+                if (command.code === 401 || command.code === 408 || command.code === 657) {
+                    targetIndex = this.findParentCommandIndex(index, page);
+                }
+                this.selectSingle(targetIndex);
                 this.updateSelectionStyles(page);
             }
             this.showContextMenu(e.clientX, e.clientY, page, pageIndex);
@@ -4207,6 +4215,16 @@ class EventCommandList {
             if (!range) return;
             index = range.start;
             command = page.list[index];
+        }
+
+        // A continuation row edits its authored parent. Callers remap too,
+        // but editCommand is the single door every path goes through, so a
+        // bare 401/405/408 index handed straight in still opens the right
+        // editor instead of the placeholder alert.
+        if (command.code === 401 || command.code === 405 || command.code === 408) {
+            index = this.findParentCommandIndex(index, page);
+            command = page.list[index];
+            if (!command) return;
         }
 
         const code = command.code;
