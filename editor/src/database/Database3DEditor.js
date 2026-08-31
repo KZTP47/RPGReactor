@@ -3335,12 +3335,28 @@ class Database3DEditor {
             return;
         }
         if (picker && typeof picker.showImagePicker === 'function') {
+            // A real URL per file so the picker can actually play the movie
+            // in its preview pane; an empty path drew a dead <img> before.
+            const path = require('path');
+            const urlFor = name => {
+                const file = files.find(entry => entry.relativePath === name);
+                const absolute = file ? file.absolutePath
+                    : path.join(this._project().path, 'movies', name);
+                return typeof RRAssetFiles !== 'undefined' && RRAssetFiles.toUrl
+                    ? RRAssetFiles.toUrl(absolute) : 'file://' + absolute;
+            };
             picker.showImagePicker(this._k('r3dfx.video'), names, name => {
                 if (!name) return;
                 work.video.file = name;
                 this._stopEffectPreview();
                 this.renderEffectForm();
-            }, () => '', work.video.file || undefined, { allowNone: false });
+            }, urlFor, work.video.file || undefined,
+            {
+                allowNone: false,
+                mediaType: 'video',
+                // "Select This Image" would be a lie on a movie file.
+                selectButtonLabel: this._k('r3dfx.chooseVideo')
+            });
             return;
         }
         const chosen = prompt(this._k('r3dfx.video'), work.video.file || names[0]);

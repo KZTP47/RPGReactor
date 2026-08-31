@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased - 0.98.5]
 
 ### Fixed
+- Database 3D Models: picking a video surface's movie now plays the video in the picker's preview pane (muted, looping, with controls) instead of showing nothing — the picker was handed an empty path and drew a dead image element. The confirm button reads "Choose a video…" rather than "Select This Image".
 - Right-clicking a message's text row and choosing Edit no longer shows the "will be implemented" placeholder: the context menu now selects a continuation row's authored parent the way a left click always did, and editCommand resolves a bare 401/405/408 index to its parent command as a backstop.
 - The Show Text miniature no longer prints the timing codes (`\.` `\|` `\!` `\>` `\<` `\^` `\$`) as literal text — instead it plays the box the way the game plays it: one glyph per frame, waits and instant-line codes honoured, the pause sign blinking where the game would hold for input, looping once typing goes quiet. `\N`, `\P` and `\G` resolve to real actor names and the currency unit. The miniature is labelled Preview, spans the full column, and follows the Background (Dim/Transparent) and Name controls the moment they change.
 

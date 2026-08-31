@@ -224,3 +224,46 @@ test('all twelve missing image controls route through the shared browser', () =>
     assert.match(sharedPicker, /openFolderBtn\.className = 'rr-btn-secondary'/);
     assert.doesNotMatch(sharedPicker, /openFolderBtn\.style\.cssText/);
 });
+
+test('a video picker previews the movie itself, playing and muted', () => {
+    const created = [];
+    const nodes = {
+        'image-picker-modal': Object.assign(fakeElement(), { style: { zIndex: '10001', display: 'none' } }),
+        'image-picker-title': fakeElement(),
+        'image-picker-list': fakeElement(),
+        'image-picker-preview': fakeElement(),
+        'image-picker-close-btn': fakeElement()
+    };
+    global.document = {
+        getElementById: id => nodes[id] || null,
+        createElement: tag => {
+            const el = Object.assign(fakeElement(), { tagName: String(tag).toUpperCase() });
+            created.push(el);
+            return el;
+        }
+    };
+    global.window = { I18n: null };
+    global.RRPickerIndex = { createBrowser: () => ({ element: fakeElement(), scrollTo() {} }) };
+
+    const ui = Object.create(DatabaseEditorUI.prototype);
+    ui.showImagePicker('Video', ['Intro.webm'], () => {},
+        name => `asset://movies/${name}`, 'Intro.webm', { mediaType: 'video' });
+
+    const video = created.find(el => el.tagName === 'VIDEO');
+    assert.ok(video, 'the preview pane holds a <video>, not a dead <img>');
+    assert.equal(video.src, 'asset://movies/Intro.webm');
+    assert.equal(video.muted, true);
+    assert.equal(video.loop, true);
+    assert.equal(video.autoplay, true);
+    assert.ok(!created.some(el => el.tagName === 'IMG'),
+        'no image element is built for a movie');
+});
+
+test('the 3D models video picker hands over real URLs and the video mode', () => {
+    const editorSource = source(path.join('src', 'database', 'Database3DEditor.js'));
+    const picker = editorSource.slice(editorSource.indexOf('_pickEffectVideo() {'));
+    const call = picker.slice(0, picker.indexOf('prompt('));
+    assert.match(call, /mediaType: 'video'/);
+    assert.match(call, /selectButtonLabel/);
+    assert.doesNotMatch(call, /\(\) => ''/, 'the empty path callback is gone');
+});

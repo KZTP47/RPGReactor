@@ -2658,9 +2658,13 @@ class DatabaseEditorUI {
         previewEl.innerHTML = `<p style="color: var(--color-text-muted); text-align: center;">${tt('Select an image to preview')}</p>`;
 
         const clearPreview = () => {
-            for (const image of previewEl.querySelectorAll?.('img') || []) {
-                image.removeAttribute?.('src');
-                image.src = '';
+            for (const media of previewEl.querySelectorAll?.('img, video') || []) {
+                media.pause?.();
+                media.removeAttribute?.('src');
+                media.src = '';
+                // A <video> keeps its decoder until told to reload the
+                // (now empty) source; an <img> ignores load().
+                media.load?.();
             }
             previewEl.innerHTML = '';
         };
@@ -2702,8 +2706,21 @@ class DatabaseEditorUI {
                 const imageWrap = document.createElement('div');
                 imageWrap.style.cssText = 'position: relative; display: inline-block; line-height: 0;';
 
-                const img = document.createElement('img');
-                img.style.cssText = 'image-rendering: pixelated; image-rendering: -moz-crisp-edges; image-rendering: crisp-edges; max-width: 100%; display: block;';
+                // A video file previews as a playing video, not a dead <img>.
+                // Sheet selection never applies to videos, so the overlay
+                // logic below only ever sees the image element.
+                const isVideoPreview = options.mediaType === 'video';
+                const img = document.createElement(isVideoPreview ? 'video' : 'img');
+                if (isVideoPreview) {
+                    img.muted = true;
+                    img.loop = true;
+                    img.autoplay = true;
+                    img.playsInline = true;
+                    img.controls = true;
+                    img.style.cssText = 'max-width: 100%; max-height: 420px; display: block; background: #000;';
+                } else {
+                    img.style.cssText = 'image-rendering: pixelated; image-rendering: -moz-crisp-edges; image-rendering: crisp-edges; max-width: 100%; display: block;';
+                }
                 imageWrap.appendChild(img);
 
                 let selectedInfo = null;
