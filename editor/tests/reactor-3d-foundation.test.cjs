@@ -103,7 +103,9 @@ test('every map on disk asks for its sidecar; the web asks only when 3D is in pl
     const body = managersSource.slice(at, managersSource.indexOf('\n};', at));
     assert.doesNotMatch(body, /!mapData\.meta\["3d"\]\) return;/, 'flat maps fetch their sidecar too (event models, previews)');
     assert.match(body, /if \(!fs\.existsSync\(path\.join\(base, url\)\)\) return;/, 'on disk: only when the file exists');
-    assert.match(body, /else if \(!\(mapData\.meta && mapData\.meta\["3d"\]\) && !Reactor3D\._databaseSidecar\) \{/, 'on the web: only a <3d> map or a project with 3D bindings');
+    assert.match(body,
+        /else if \(!\(mapData\.meta && \(mapData\.meta\["3d"\] \|\| mapData\.meta\.lighting\)\)[\s\S]{0,40}&& !Reactor3D\._databaseSidecar\) \{/,
+        'on the web: a <3d> or <lighting> map, or a project with 3D bindings');
     assert.match(body, /typeof Reactor3D === "undefined"/,
         'and it degrades if the namespace is somehow absent');
 });

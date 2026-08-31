@@ -646,7 +646,9 @@ test('the map note is the 3D switch, the sidecar always loads on disk, and flat-
     assert.equal(Reactor3D.mapMode({ note: '<3d>' }), '3d');
     assert.equal(Reactor3D.mapMode({ meta: { '3d': true } }), '3d');
     assert.doesNotMatch(managers, /if \(!mapData \|\| !mapData\.meta \|\| !mapData\.meta\["3d"\]\) return;/, 'the sidecar is fetched for flat maps too');
-    assert.match(managers, /else if \(!\(mapData\.meta && mapData\.meta\["3d"\]\) && !Reactor3D\._databaseSidecar\) \{/, 'on the web only when the project uses 3D at all');
+    assert.match(managers,
+        /else if \(!\(mapData\.meta && \(mapData\.meta\["3d"\] \|\| mapData\.meta\.lighting\)\)[\s\S]{0,40}&& !Reactor3D\._databaseSidecar\) \{/,
+        'on the web only when the project uses 3D or native lighting at all');
     assert.match(r3d, /this\.applyEventModelPose\(state\.object, spec, this\.characterModelDir8\(character\)\);/, 'sprite-mode pose matches the scene');
     assert.match(r3d, /dashing: typeof Game_Follower !== "undefined" && character instanceof Game_Follower\n\s+\? \$gamePlayer\.isDashing\(\)\n\s+: !!\(character\.isDashing && character\.isDashing\(\)\),\n\s+distance,\n\s+scale: state\.scale,/, 'and so does the animation driver');
     assert.match(video, /if \(this\.video\.readyState >= 1 && this\.video\.videoWidth > 0\) loadSource\(\);/, 'PIXI never restarts a load the element already started');
