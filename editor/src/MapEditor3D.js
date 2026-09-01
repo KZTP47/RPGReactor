@@ -2091,8 +2091,8 @@ class MapEditor3D {
             ((clientX - rect.left) / rect.width) * 2 - 1,
             -((clientY - rect.top) / rect.height) * 2 + 1
         ), this.camera);
-        const hits = this._raycaster.intersectObjects(this.mapScene._meshes, false);
-        let point = hits.length ? hits[0].point : null;
+        const hit = this.raycastMapMeshes();
+        let point = hit ? hit.point : null;
         if (!point) {
             const ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
             point = this._raycaster.ray.intersectPlane(ground, new THREE.Vector3());
@@ -2485,9 +2485,9 @@ class MapEditor3D {
             -((clientY - rect.top) / rect.height) * 2 + 1
         ), this.camera);
 
-        const hits = this._raycaster.intersectObjects(this.mapScene._meshes, false);
-        if (!hits.length) return null;
-        const point = hits[0].point;
+        const hit = this.raycastMapMeshes();
+        if (!hit) return null;
+        const point = hit.point;
         const x = Math.floor(point.x);
         const y = Math.floor(point.z);
         if (x < 0 || y < 0 || x >= mapData.width || y >= mapData.height) return null;
@@ -2499,6 +2499,24 @@ class MapEditor3D {
             localX: (point.x - x) * this.tilePixels(),
             localY: (point.z - y) * this.tilePixels()
         };
+    }
+
+    /**
+     * The nearest point where the raycaster's current ray meets the map's
+     * sheet meshes, through a bounding-volume tree per geometry (built on
+     * first ask, kept with the geometry). three's own test visits every
+     * triangle of every sheet, which on a large map was milliseconds per
+     * pointer move, twice a move. Falls back to three when the tree helper
+     * is missing.
+     */
+    raycastMapMeshes() {
+        const meshes = this.mapScene && this.mapScene._meshes;
+        if (!meshes || !this._raycaster) return null;
+        if (typeof RRMeshBvh !== 'undefined' && RRMeshBvh.raycastMeshes) {
+            return RRMeshBvh.raycastMeshes(this._raycaster.ray, meshes, THREE);
+        }
+        const hits = this._raycaster.intersectObjects(meshes, false);
+        return hits.length ? { point: hits[0].point, distance: hits[0].distance, object: hits[0].object } : null;
     }
 
     /** Mark a mesh as the selected one, or clear the selection with null. */
@@ -3196,8 +3214,8 @@ class MapEditor3D {
         this._raycaster = this._raycaster || new THREE.Raycaster();
         this._raycaster.setFromCamera(new THREE.Vector2(0, 0), this.camera);
 
-        const hits = this._raycaster.intersectObjects(this.mapScene._meshes, false);
-        let point = hits.length ? hits[0].point : null;
+        const hit = this.raycastMapMeshes();
+        let point = hit ? hit.point : null;
         if (!point) {
             // Looking at the sky, or off the edge of the map. The ground plane
             // still says something, and is better than a stale number.

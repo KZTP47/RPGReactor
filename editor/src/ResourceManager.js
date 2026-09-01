@@ -437,6 +437,8 @@ class ResourceManager {
         let sourceIdentity = null;
         let texturesIdentity = null;
         let stagedMesh = null;
+        const stagedExtras = [];
+        let stagedSidecar = null;
         let destinationLock = null;
         let destinationLockFd = null;
         let destinationReservationIdentity = null;
@@ -511,6 +513,21 @@ class ResourceManager {
             if (meshStat.isSymbolicLink?.() || !meshStat.isFile()) {
                 throw new Error('The staged model mesh is not an ordinary file.');
             }
+            // Companion files publish in the same rename: distance levels
+            // beside the source, and a sidecar naming them at the root.
+            for (const extra of options.extraSourceFiles || []) {
+                const extraName = String(extra.name || '');
+                if (!extraName || extraName !== path.basename(extraName) || extraName === sourceName) {
+                    throw new Error('A companion model file has an invalid name.');
+                }
+                const stagedExtra = path.join(sourceDirectory, extraName);
+                options.writeAtomic(fs, stagedExtra, Buffer.from(extra.bytes));
+                stagedExtras.push(stagedExtra);
+            }
+            if (options.sidecar && typeof options.sidecar === 'object') {
+                stagedSidecar = path.join(stagingDirectory, 'model.json');
+                options.writeAtomic(fs, stagedSidecar, Buffer.from(JSON.stringify(options.sidecar, null, 2) + '\n'));
+            }
 
             options.verifyOwnership?.();
             const verifiedParent = ResourceManager.safeDirectory(fs, path, projectRoot, parentRelative, false);
@@ -575,8 +592,9 @@ class ResourceManager {
                         requireDirectoryIdentity(path.join(stagingDirectory, 'textures'), texturesIdentity,
                             'The model texture staging directory changed before rollback.');
                     }
-                    if (stagedMesh) {
-                        try { fs.unlinkSync(stagedMesh); } catch (unlinkError) {
+                    for (const staged of [stagedMesh, stagedSidecar].concat(stagedExtras)) {
+                        if (!staged) continue;
+                        try { fs.unlinkSync(staged); } catch (unlinkError) {
                             if (unlinkError?.code !== 'ENOENT') throw unlinkError;
                         }
                     }
@@ -1451,6 +1469,11 @@ class ResourceManager {
                     // validateModelBytes still gates whatever comes out.
                     let importBytes = bytes;
                     let shrunkNote = '';
+                    // Distance levels: geometry-only copies at coarser weld
+                    // grids, written beside the source and listed in the
+                    // model's sidecar so the runtime swaps them in by distance.
+                    const extraSourceFiles = [];
+                    let sidecar = null;
                     if (/\.glb$/i.test(file.name) && window.RRGlbOptimizer &&
                         typeof this.uiManager?.showModelOptimizeDialog === 'function') {
                         const analysis = window.RRGlbOptimizer.analyze(bytes);
@@ -1468,6 +1491,19 @@ class ResourceManager {
                                     shrunkNote = ` (${(bytes.length / 1048576).toFixed(1)}MB → ` +
                                         `${(importBytes.length / 1048576).toFixed(1)}MB)`;
                                 }
+                                if (typeof window.RRGlbOptimizer.lods === 'function') {
+                                    this.setStatus(`Building distance levels for ${file.name}…`);
+                                    const levels = await (window.RRGlbOptimizer.lodsAsync || window.RRGlbOptimizer.lods)(importBytes);
+                                    if (generation !== this.operationGeneration) return;
+                                    const stem = file.name.replace(/\.glb$/i, '');
+                                    for (const level of levels) {
+                                        extraSourceFiles.push({ name: `${stem}.${level.suffix}.glb`, bytes: level.bytes });
+                                    }
+                                    if (extraSourceFiles.length) {
+                                        sidecar = { lods: extraSourceFiles.map(extra => extra.name) };
+                                        shrunkNote += ` + ${extraSourceFiles.length} distance level${extraSourceFiles.length === 1 ? '' : 's'}`;
+                                    }
+                                }
                             }
                         }
                     }
@@ -1478,6 +1514,8 @@ class ResourceManager {
                         modelName,
                         sourceName: file.name,
                         sourceBytes: importBytes,
+                        extraSourceFiles,
+                        sidecar,
                         reactor3D: window.Reactor3D,
                         writeAtomic: window.RRWriteFileAtomicSync,
                         verifyOwnership: () => this.projectController.verifyProjectOwnership(

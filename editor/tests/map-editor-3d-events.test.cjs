@@ -389,7 +389,7 @@ test('the pivot sits on what is being looked at', () => {
     const body = methodBody('seatPivot');
     assert.match(body, /setFromCamera\(new THREE\.Vector2\(0, 0\), this\.camera\)/,
         'the centre of the screen, in normalised device coordinates');
-    assert.match(body, /intersectObjects\(this\.mapScene\._meshes, false\)/);
+    assert.match(body, /this\.raycastMapMeshes\(\)/, 'through the bounding-volume tree, like every map pick');
     assert.match(body, /this\.view\.distance = Math\.min\(400, Math\.max\(3, distance\)\)/,
         'the distance is corrected to the surface actually being looked at');
     assert.match(body, /x: point\.x - 0\.5, y: point\.y, z: point\.z - 0\.5/,

@@ -40,9 +40,38 @@
 
     /** Import-dialog presets. `meshCells` is the cluster grid across the model's largest axis (0 = leave geometry alone). */
     const PRESETS = {
-        optimize: { textureSize: 2048, textureQuality: 0.85, dropTangents: true, quantizeWeights: true, meshCells: 1600 },
-        aggressive: { textureSize: 2048, textureQuality: 0.85, dropTangents: true, quantizeWeights: true, meshCells: 700 }
+        optimize: { textureSize: 2048, textureQuality: 0.85, dropTangents: true, quantizeWeights: true, meshCells: 1600, cacheOrder: true },
+        aggressive: { textureSize: 2048, textureQuality: 0.85, dropTangents: true, quantizeWeights: true, meshCells: 700, cacheOrder: true }
     };
+
+    /**
+     * Distance levels generated beside an imported model: geometry-only GLBs
+     * at coarser weld grids, swapped in by the runtime as a model recedes.
+     * Measured on a 1.9M-triangle prop: 300 cells keeps a quarter of the
+     * triangles, 120 about a twentieth. Skipped below `minTriangles`, where
+     * the full mesh is already cheap.
+     */
+    const LOD_LEVELS = [
+        { suffix: 'lod1', ratio: 0.25, meshCells: 300 },
+        { suffix: 'lod2', ratio: 0.05, meshCells: 120 }
+    ];
+    const LOD_MIN_TRIANGLES = 20000;
+
+    function vertexCacheOrder() {
+        if (root.RRVertexCacheOrder) return root.RRVertexCacheOrder;
+        if (typeof require === 'function') {
+            try { return require('./VertexCacheOrder.js'); } catch (error) { return null; }
+        }
+        return null;
+    }
+
+    function quadricDecimator() {
+        if (root.RRQuadricDecimator) return root.RRQuadricDecimator;
+        if (typeof require === 'function') {
+            try { return require('./QuadricDecimator.js'); } catch (error) { return null; }
+        }
+        return null;
+    }
 
     function parseGlb(bytes) {
         const data = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
@@ -346,7 +375,16 @@
             }
         }
         if (!removed) return;
+        collectGarbage(json, replacements);
+        notes.push('dropped unused tangent data');
+    }
 
+    /**
+     * Drop every accessor nothing references and every bufferView nothing
+     * uses, remapping all references (primitives, morph targets, animation
+     * samplers, skin bind matrices, images) and any staged replacements.
+     */
+    function collectGarbage(json, replacements) {
         const usedAccessors = new Set();
         const eachAccessorRef = visit => {
             for (const mesh of json.meshes || []) {
@@ -392,7 +430,160 @@
         }
         for (const accessor of json.accessors) if (accessor.bufferView != null) accessor.bufferView = viewRemap.get(accessor.bufferView);
         for (const image of json.images || []) if (image.bufferView != null) image.bufferView = viewRemap.get(image.bufferView);
-        notes.push('dropped unused tangent data');
+    }
+
+    /**
+     * Reorder every triangle list for the GPU's vertex cache (Tipsify, see
+     * VertexCacheOrder.js). Lossless: the same triangles in a friendlier
+     * order. An AI or scan export shades each vertex two to three times;
+     * reordered it shades it well under once per triangle.
+     */
+    function reorderForCache(json, bin, replacements, notes) {
+        const order = vertexCacheOrder();
+        if (!order) return;
+        let reordered = 0;
+        const handled = new Set();
+        for (const mesh of json.meshes || []) {
+            for (const prim of mesh.primitives || []) {
+                if (prim.indices == null || handled.has(prim.indices)) continue;
+                if (prim.mode != null && prim.mode !== 4) continue;
+                if (!prim.attributes || prim.attributes.POSITION == null) continue;
+                if (!ownsView(json, prim.indices)) continue;
+                handled.add(prim.indices);
+                const indices = accessorArray(json, bin, replacements, prim.indices);
+                if (indices.length < 3 * 64) continue;
+                const vertexCount = json.accessors[prim.attributes.POSITION].count;
+                const before = order.acmr(indices);
+                if (before < 0.75) continue;   // already well ordered
+                const sorted = order.tipsify(indices, vertexCount);
+                const accessor = json.accessors[prim.indices];
+                substitute(json, replacements, prim.indices, sorted, 'SCALAR', accessor.componentType);
+                reordered++;
+            }
+        }
+        if (reordered) notes.push(`reordered ${reordered} triangle list${reordered === 1 ? '' : 's'} for the vertex cache`);
+    }
+
+    /**
+     * Collapse a primitive's edges under the quadric error metric down to
+     * `target` triangles (see QuadricDecimator.js). Same guards as the weld.
+     * Returns true when the geometry was rewritten.
+     */
+    function decimatePrimitive(json, bin, replacements, prim, target, notes) {
+        const decimator = quadricDecimator();
+        if (!decimator) return false;
+        const attrs = prim.attributes || {};
+        if (prim.indices == null || attrs.POSITION == null) return false;
+        if (prim.mode != null && prim.mode !== 4) return false;
+        if (prim.targets && prim.targets.length) return false;
+        const handled = ['POSITION', 'NORMAL', 'TEXCOORD_0'];
+        if (Object.keys(attrs).some(name => handled.indexOf(name) < 0)) {
+            notes.push('extra vertex attributes present; geometry left alone');
+            return false;
+        }
+        const owned = Object.values(attrs).concat([prim.indices]);
+        if (owned.some(index => !ownsView(json, index))) { notes.push('mesh attributes share buffer views; geometry left alone'); return false; }
+        const positions = accessorArray(json, bin, replacements, attrs.POSITION);
+        const normals = attrs.NORMAL != null ? accessorArray(json, bin, replacements, attrs.NORMAL) : null;
+        const uvs = attrs.TEXCOORD_0 != null ? accessorArray(json, bin, replacements, attrs.TEXCOORD_0) : null;
+        const indices = accessorArray(json, bin, replacements, prim.indices);
+        const before = Math.floor(indices.length / 3);
+        if (before <= target) return false;
+        const result = decimator.decimate({ positions, normals, uvs, indices }, target);
+        if (!result || !result.triangles || result.triangles >= before) return false;
+        substitute(json, replacements, attrs.POSITION, result.positions, 'VEC3', 5126);
+        if (normals && result.normals) substitute(json, replacements, attrs.NORMAL, result.normals, 'VEC3', 5126);
+        if (uvs && result.uvs) substitute(json, replacements, attrs.TEXCOORD_0, result.uvs, 'VEC2', 5126);
+        substitute(json, replacements, prim.indices, result.indices, 'SCALAR', result.indices instanceof Uint16Array ? 5123 : 5125);
+        // Bounds are required on POSITION; the compacted set has new ones.
+        const accessor = json.accessors[attrs.POSITION];
+        const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+        for (let i = 0; i < result.positions.length; i += 3) {
+            for (let k = 0; k < 3; k++) {
+                if (result.positions[i + k] < min[k]) min[k] = result.positions[i + k];
+                if (result.positions[i + k] > max[k]) max[k] = result.positions[i + k];
+            }
+        }
+        accessor.min = min;
+        accessor.max = max;
+        notes.push(`mesh ${before} -> ${result.triangles} triangles (quadric collapse)`);
+        return true;
+    }
+
+    /**
+     * Geometry-only copies at reduced detail, for distance swapping. Each
+     * level keeps the node hierarchy, mesh order and primitive count of the
+     * source, so the runtime can pair meshes by position and swap only
+     * their geometry — textures, materials and recentring stay the base
+     * model's. Detail is reduced by quadric edge collapse to a `ratio` of
+     * the source's triangles (each level built from the one above it, which
+     * is far quicker than from the source), falling back to the weld grid
+     * (`meshCells`) for a primitive the collapse cannot take. Skinned or
+     * animated models get no levels (their skeleton is the cost, not their
+     * triangles), nor do models already under `LOD_MIN_TRIANGLES`. Returns
+     * [{ suffix, ratio, meshCells, triangles, bytes }].
+     */
+    async function lods(bytes, options) {
+        const settings = options || {};
+        const levels = settings.levels || LOD_LEVELS;
+        const probe = parseGlb(bytes);
+        if (!probe) return [];
+        if (Array.isArray(probe.json.extensionsRequired) && probe.json.extensionsRequired.length) return [];
+        if ((probe.json.accessors || []).some(a => a.sparse)) return [];
+        if ((probe.json.animations || []).length || (probe.json.skins || []).length) return [];
+        const minTriangles = settings.minTriangles === undefined ? LOD_MIN_TRIANGLES : settings.minTriangles;
+        const triangleCount = json => {
+            let total = 0;
+            for (const mesh of json.meshes || []) {
+                for (const prim of mesh.primitives || []) {
+                    if (prim.indices != null) total += json.accessors[prim.indices].count / 3;
+                    else if (prim.attributes && prim.attributes.POSITION != null) total += json.accessors[prim.attributes.POSITION].count / 3;
+                }
+            }
+            return Math.floor(total);
+        };
+        const baseTriangles = triangleCount(probe.json);
+        if (baseTriangles < minTriangles) return [];
+        const out = [];
+        let previous = baseTriangles;
+        let current = bytes;
+        for (const level of levels) {
+            const { json, bin } = parseGlb(current);
+            const replacements = new Map();
+            const notes = [];
+            dropTangents(json, replacements, notes);
+            // Each primitive's share of the level's triangle budget.
+            const currentTriangles = triangleCount(json);
+            const budget = level.ratio > 0 ? Math.max(4, Math.round(baseTriangles * level.ratio)) : 0;
+            for (const mesh of json.meshes || []) {
+                for (const prim of mesh.primitives || []) {
+                    let done = false;
+                    if (budget > 0 && prim.indices != null) {
+                        const share = json.accessors[prim.indices].count / 3 / Math.max(1, currentTriangles);
+                        done = decimatePrimitive(json, bin, replacements, prim, Math.max(4, Math.round(budget * share)), notes);
+                    }
+                    if (!done && level.meshCells > 0) clusterPrimitive(json, bin, replacements, prim, level.meshCells, notes);
+                    delete prim.material;
+                }
+            }
+            // Geometry only: the base model's textures and materials serve.
+            delete json.images;
+            delete json.textures;
+            delete json.materials;
+            delete json.samplers;
+            delete json.animations;
+            delete json.skins;
+            collectGarbage(json, replacements);
+            reorderForCache(json, bin, replacements, notes);
+            const triangles = triangleCount(json);
+            const built = rebuildGlb(json, bin, replacements);
+            // A level that barely reduces the one above it is not worth a file.
+            if (triangles > previous * 0.7) continue;
+            previous = triangles;
+            current = built;
+            out.push({ suffix: level.suffix, ratio: level.ratio, meshCells: level.meshCells, triangles, bytes: built });
+        }
+        return out;
     }
 
     function rebuildGlb(json, bin, replacements) {
@@ -467,6 +658,7 @@
             }
         }
         if (settings.quantizeWeights) quantizeWeights(json, bin, replacements, notes);
+        if (settings.cacheOrder) reorderForCache(json, bin, replacements, notes);
         if (settings.textureSize > 0 && typeof settings.encodeImage === 'function') {
             for (const image of json.images || []) {
                 const data = imageData(json, bin, image);
@@ -534,7 +726,49 @@
         };
     }
 
-    const api = { PRESETS, analyze, optimize, canvasEncoder, parseGlb };
+    /**
+     * `lods` off the main thread when the page can spawn a worker: the
+     * quadric collapse takes ten seconds and more on a million-triangle
+     * model, which is not a freeze an import dialog should own. The worker
+     * is assembled from the same three script files this page loaded
+     * (found by their tags), so it runs exactly this code. Falls back to
+     * the main thread when a worker cannot be built, and rejects only when
+     * the work itself fails.
+     */
+    function lodsAsync(bytes, options) {
+        const canWorker = typeof Worker !== 'undefined' && typeof Blob !== 'undefined' && typeof URL !== 'undefined'
+            && typeof document !== 'undefined' && typeof fetch === 'function';
+        if (!canWorker) return lods(bytes, options);
+        const names = ['VertexCacheOrder.js', 'QuadricDecimator.js', 'GlbOptimizer.js'];
+        const urls = names.map(name => {
+            const tag = Array.from(document.scripts).find(script => script.src && script.src.endsWith('/' + name));
+            return tag ? tag.src : null;
+        });
+        if (urls.some(url => !url)) return lods(bytes, options);
+        return Promise.all(urls.map(url => fetch(url).then(response => (response.ok ? response.text() : Promise.reject(new Error(url))))))
+            .then(sources => new Promise((resolve, reject) => {
+                const body = sources.join('\n;\n') + '\nself.onmessage = function(event) {\n'
+                    + '\tRRGlbOptimizer.lods(event.data.bytes, event.data.options).then(function(levels) {\n'
+                    + '\t\tself.postMessage({ levels: levels }, levels.map(function(level) { return level.bytes.buffer; }));\n'
+                    + '\t}, function(error) { self.postMessage({ error: String(error && error.message || error) }); });\n'
+                    + '};\n';
+                const blobUrl = URL.createObjectURL(new Blob([body], { type: 'text/javascript' }));
+                let worker;
+                try { worker = new Worker(blobUrl); } catch (error) { URL.revokeObjectURL(blobUrl); reject(error); return; }
+                const finish = () => { worker.terminate(); URL.revokeObjectURL(blobUrl); };
+                worker.onmessage = event => {
+                    finish();
+                    if (event.data && event.data.error) reject(new Error(event.data.error));
+                    else resolve((event.data && event.data.levels) || []);
+                };
+                worker.onerror = event => { finish(); reject(new Error(event.message || 'LOD worker failed')); };
+                const copy = bytes instanceof Uint8Array ? bytes.slice() : new Uint8Array(bytes).slice();
+                worker.postMessage({ bytes: copy, options: options || null }, [copy.buffer]);
+            }))
+            .catch(() => lods(bytes, options));
+    }
+
+    const api = { PRESETS, LOD_LEVELS, LOD_MIN_TRIANGLES, analyze, optimize, lods, lodsAsync, canvasEncoder, parseGlb };
 
     root.RRGlbOptimizer = api;
 
