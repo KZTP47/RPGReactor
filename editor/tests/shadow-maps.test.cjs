@@ -286,6 +286,9 @@ test('both viewports render the maps once a frame before the first pass, and the
     assert.match(three, /const object = new THREE\.Mesh\(geometry, material\);\n\s*group\.add\(object\);\n[\s\S]{0,300}?Reactor3D\.Shadows\.markCaster\(object, true\);/);
     assert.match(three, /if \(level !== current\) this\._lodSwaps\+\+;/);
     assert.match(three, /Reactor3D\.Shadows\._renderer === this\._renderer\) Reactor3D\.Shadows\.dispose\(\);/);
+    // The picture a map stands on (a pinned parallax as ground) is lit like
+    // the tiles over it: it is the whole floor of a parallax room.
+    assert.match(three, /geometry\.translate\(width \/ 2, lift, height \/ 2\);[\s\S]{0,2600}?material\.__reactorShaded = true;\n\s*Reactor3D\.litMaterial\(material\);\n\s*this\._materials\.push\(material\);\n\n\s*const mesh = new THREE\.Mesh\(geometry, material\);\n\s*\/\/ Beneath the tile geometry/);
     // The static pass draws models at their coarsest level.
     assert.match(three, /this\._atCoarsestLod\(\(\) => shadowMap\.render\(statics, scene, this\._cameras\.static\)\);/);
 

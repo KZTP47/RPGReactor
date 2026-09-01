@@ -4719,8 +4719,12 @@ Reactor3D.MapScene.prototype.addParallaxGround = function(bitmap, tileSize, inde
         opacity: opacity === undefined ? 1 : Math.max(0, Math.min(1, opacity / 255))
     });
     // Lit like everything else, so an unlit corner of a parallax room is as
-    // dark as an unlit corner of a tiled one.
+    // dark as an unlit corner of a tiled one — and, since the lights became a
+    // field, lit by that field: without this the picture a room stands on
+    // took only the ambient, and a lamp pooled on it through its haze alone,
+    // with nothing standing in the lamp able to shade it.
     material.__reactorShaded = true;
+    Reactor3D.litMaterial(material);
     this._materials.push(material);
 
     const mesh = new THREE.Mesh(geometry, material);

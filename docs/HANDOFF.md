@@ -88,6 +88,30 @@ issues." `Reactor3D.Shadows` in reactor_3d.js, after `litMaterial`.
   per-slot `rrShadowPos`; the shader measures `d` from it, the light term
   from the light) — the floor is then below the equator and a floor lamp
   streaks a passer-by across it.
+- Owner: "I see the shadows on the characters, but nothing on the ground
+  from the character's shape." Root cause after a long chase:
+  `addParallaxGround` (a `!` parallax laid down as the map's ground —
+  the Reactor Room's entire visible floor) set `__reactorShaded` but
+  never called `litMaterial`, so that floor took only the ambient
+  multiply: no light field, no shadow term, and the "pools" on it were
+  the additive haze bodies. Shadows had only ever landed on painted
+  tiles, room pieces and models. One line fixes it; the room now reads
+  a good deal brighter under its lights (owner may want to re-tune
+  ambient). Harness lessons that cost most of the chase, now baked in:
+  MZ's `SceneManager.isGameActive()` (`window.top.document.hasFocus()`)
+  gates `Scene.update` — an unfocused harness window keeps its frame
+  counter running but updates nothing, and since the 3D passes render
+  from `updateReactor3D`, every screenshot was a stale frame from the
+  last moment the window had focus. `nw-game-profile.cjs` now forces
+  `isGameActive = () => true` and passes Chromium's
+  `disable-backgrounding-occluded-windows` / `-renderer-backgrounding` /
+  `-background-timer-throttling` (both harnesses). The Demo's start map
+  also runs an autorun intro (EV001) a few seconds in, with a fade and a
+  reload that drops anything pushed into `$dataMap.reactor3d.lights`:
+  a `--setup` should `eraseEvent` every trigger ≥ 3 page, clear the
+  interpreter/fade, and hook `Reactor3D.readMapLights` rather than push.
+  Pixel-sample screenshots (PIL) rather than eyeball dark floors; the
+  in-page `canvas.toDataURL` is black (no preserveDrawingBuffer).
 - Not done: the map's own sheet meshes and room walls do not cast (a
   wall still lets light through);
   in-shader tile billboards (foliage/upright cut-outs) cannot cast

@@ -42,7 +42,9 @@ async function main() {
         await driver.createSession({
             browserName: "chrome",
             "goog:chromeOptions": {
-                args: [`nwapp=${projectRoot}`, `user-data-dir=${path.join(tempRoot, "profile")}`, "no-first-run", "no-default-browser-check"],
+                args: [`nwapp=${projectRoot}`, `user-data-dir=${path.join(tempRoot, "profile")}`, "no-first-run", "no-default-browser-check",
+                    // An occluded window stops getting animation frames, and the owner's editor is usually in front of this one.
+                    "disable-backgrounding-occluded-windows", "disable-renderer-backgrounding", "disable-background-timer-throttling"],
             },
         });
         await driver.setScriptTimeout(120000);
@@ -54,6 +56,8 @@ async function main() {
             const pixelRatio = arguments[0]; const done = arguments[arguments.length - 1];
             (async () => {
                 if (pixelRatio !== null) Graphics.maxCanvasPixelRatio = Number(pixelRatio);
+                // The scene only updates while the window has focus, and this window rarely does.
+                SceneManager.isGameActive = () => true;
                 DataManager.setupNewGame();
                 SceneManager.goto(Scene_Map);
                 const t0 = Date.now();
