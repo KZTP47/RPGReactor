@@ -107,7 +107,9 @@ test('idle previews repaint ten times a second; anything active keeps the refres
     const picker = fs.readFileSync(path.join(repoRoot, 'src', 'event', 'ModelGraphicPicker.js'), 'utf8');
     assert.match(picker, /if \(!active && this\._lastRenderAt > 0 && now - this\._lastRenderAt < 100\) \{\s*this\._raf = requestAnimationFrame\(tick\);\s*return;/);
     const map = fs.readFileSync(path.join(repoRoot, 'src', 'MapEditor3D.js'), 'utf8');
-    assert.match(map, /this\.stepFly\(now\);\s*if \(MapEditor3D\.shouldRender\(\{ now, active: this\.previewActive\(now\), lastRenderAt: this\._lastRenderAt \}\)\) \{/);
+    // Animated placed lights count as activity: flicker keeps breathing in an
+    // otherwise idle viewport, and a still lit map falls back to idle cadence.
+    assert.match(map, /this\.stepFly\(now\);\s*const lightsLive = !!window\.reactor\?\.lightingManager\?\.wants3DFrames\?\.\(\);\s*if \(MapEditor3D\.shouldRender\(\{ now, active: this\.previewActive\(now\) \|\| lightsLive, lastRenderAt: this\._lastRenderAt \}\)\) \{/);
     for (const name of ['_onPointerDown', '_onPointerMove', '_onPointerUp', '_onWheel', '_onFlyDown']) {
         assert.match(map, new RegExp(`this\\.${name} = event => \\{\\s*this\\._lastActiveAt = performance\\.now\\(\\);`), `${name} marks activity`);
     }

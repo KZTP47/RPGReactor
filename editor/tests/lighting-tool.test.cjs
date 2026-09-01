@@ -91,7 +91,20 @@ test('the lighting manager composites the way the runtime does', () => {
     // into the scene convention exactly as the runtime flips it.
     assert.match(manager, /yaw: -light\.yaw/);
     assert.match(manager, /scene\.syncLights\?\.\(focus\)/);
-    assert.match(manager, /lightGroup\(\)\.visible = true/);
+    // The 3D view composites the light group as its own additive pass, the
+    // way the game does. setPass hides that group in every other pass, so
+    // without this pass the lights were fully computed and never drawn —
+    // the "Lighting · 10 but a bright, lightless room" the tool shipped
+    // with, caught only by looking at the rendered pixels.
+    assert.match(manager, /feed3D\(\) \{/);
+    assert.match(manager, /wants3DFrames\(\) \{/);
+    const editor3d = read('src/MapEditor3D.js');
+    assert.match(editor3d, /renderLightsPass\(scene\) \{/);
+    assert.match(editor3d, /setPass\('lights'\)/);
+    assert.match(editor3d, /lightingManager\?\.feed3D\?\.\(\)/);
+    assert.match(editor3d, /wants3DFrames\?\.\(\)/);
+    const passCalls = editor3d.match(/this\.renderLightsPass\(scene\);/g) || [];
+    assert.equal(passCalls.length, 2, 'the world branch and the split-pass chain both draw lights');
     // Deterministic animation, identical constants to the runtime.
     assert.match(manager, /Math\.sin\(frame \* 0\.31 \+ seed\) \* Math\.sin\(frame \* 0\.127 \+ seed \* 1\.7\)/);
     // Undo is whole-state snapshots through the store.

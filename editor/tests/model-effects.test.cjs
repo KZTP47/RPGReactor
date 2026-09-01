@@ -404,7 +404,7 @@ test('a map with models is drawn under one depth buffer, in the editor and the g
     assert.match(runtime, /this\.modelsInWorld \? world : \(which === "above" \|\| which === "overlay"\)/, 'the overlay joins the world pass on a model map');
     assert.match(fs.readFileSync(path.join(repoRoot, 'runtime', 'reactor_sprites.js'), 'utf8'), /state\.scene\.modelsInWorld = !!modelsInWorld;/);
     const editor = fs.readFileSync(path.join(editorRoot, 'src', 'MapEditor3D.js'), 'utf8');
-    assert.match(editor, /if \(modelsInWorld\) \{\n\s+this\.mapScene\.setPass\('world'\);\n\s+this\.renderer\.autoClear = true;\n\s+this\.renderer\.render\(scene, this\.camera\);\n\s+return;/, 'the editor skips the depth-clearing passes on a model map');
+    assert.match(editor, /if \(modelsInWorld\) \{\n\s+this\.mapScene\.setPass\('world'\);\n\s+this\.renderer\.autoClear = true;\n\s+this\.renderer\.render\(scene, this\.camera\);\n\s+this\.renderLightsPass\(scene\);\n\s+return;/, 'the editor skips the depth-clearing passes on a model map, then composites the lights');
     assert.match(editor, /Reactor3D\.EffekseerScene\.quadFor\(layer\.fxCanvas\)/, 'and shows Effekseer effects on depth quads');
     const layer = fs.readFileSync(path.join(editorRoot, 'src', 'utils', 'AnimationPreviewLayer.js'), 'utf8');
     assert.match(layer, /setWorld\(world\)/);

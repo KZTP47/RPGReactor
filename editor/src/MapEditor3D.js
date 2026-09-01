@@ -3410,7 +3410,8 @@ class MapEditor3D {
             this.frame = null;
             try {
                 this.stepFly(now);
-                if (MapEditor3D.shouldRender({ now, active: this.previewActive(now), lastRenderAt: this._lastRenderAt })) {
+                const lightsLive = !!window.reactor?.lightingManager?.wants3DFrames?.();
+                if (MapEditor3D.shouldRender({ now, active: this.previewActive(now) || lightsLive, lastRenderAt: this._lastRenderAt })) {
                     this._lastRenderAt = now;
                     this.render(now);
                 }
@@ -3468,6 +3469,9 @@ class MapEditor3D {
         this.animateAutotiles(now);
         this.animateEventPreviews(now);
         this.projectController?.videoSurfacePreviewManager?.updateThree?.();
+        // Lights are map content: feed the compositor on every drawn frame,
+        // whether or not the Lighting panel is open.
+        window.reactor?.lightingManager?.feed3D?.();
         const scene = this.mapScene.scene();
         const background = scene.background;
         const autoClear = this.renderer.autoClear;
@@ -3490,6 +3494,7 @@ class MapEditor3D {
                 this.mapScene.setPass('world');
                 this.renderer.autoClear = true;
                 this.renderer.render(scene, this.camera);
+                this.renderLightsPass(scene);
                 return;
             }
             this.mapScene.setPass('below');
@@ -3525,6 +3530,7 @@ class MapEditor3D {
                 this.renderer.render(scene, this.camera);
             }
             if (overlay && overlayVisible !== null) overlay.visible = overlayVisible;
+            this.renderLightsPass(scene);
         } finally {
             scene.background = background;
             this.renderer.autoClear = autoClear;
@@ -3532,6 +3538,40 @@ class MapEditor3D {
             if (this.grid && gridVisible !== null) this.grid.visible = gridVisible;
             if (this.hoverCell && hoverVisible !== null) this.hoverCell.visible = hoverVisible;
             this.mapScene.setPass('all');
+        }
+    }
+
+    /**
+     * Composite the placed lights over the frame, the way the game does: a
+     * pass of their own, drawn last, blended by addition. `setPass` hides the
+     * light group in every other pass on purpose — without this pass the
+     * pools filled and the materials dimmed every frame, and the viewport
+     * showed none of it.
+     */
+    renderLightsPass(scene) {
+        const mapScene = this.mapScene;
+        if (!mapScene || typeof mapScene.setPass !== 'function') return;
+        if (!mapScene.hasLights || !mapScene.hasLights()) return;
+        const background = scene.background;
+        const autoClear = this.renderer.autoClear;
+        const eventVisible = this.eventGroup ? this.eventGroup.visible : null;
+        const gridVisible = this.grid ? this.grid.visible : null;
+        const hoverVisible = this.hoverCell ? this.hoverCell.visible : null;
+        try {
+            if (this.eventGroup) this.eventGroup.visible = false;
+            if (this.grid) this.grid.visible = false;
+            if (this.hoverCell) this.hoverCell.visible = false;
+            scene.background = null;
+            this.renderer.autoClear = false;
+            this.renderer.clearDepth();
+            mapScene.setPass('lights');
+            this.renderer.render(scene, this.camera);
+        } finally {
+            scene.background = background;
+            this.renderer.autoClear = autoClear;
+            if (this.eventGroup && eventVisible !== null) this.eventGroup.visible = eventVisible;
+            if (this.grid && gridVisible !== null) this.grid.visible = gridVisible;
+            if (this.hoverCell && hoverVisible !== null) this.hoverCell.visible = hoverVisible;
         }
     }
 

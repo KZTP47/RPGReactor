@@ -14,7 +14,7 @@
  */
 class LightingManager {
     /** Bumped with every Lighting change; shown at the panel's foot. */
-    static BUILD = 'r8 · 2026-08-31';
+    static BUILD = 'r9 · 2026-08-31';
 
     constructor(projectController) {
         this.projectController = projectController;
@@ -943,7 +943,6 @@ class LightingManager {
             }
             const animated = this.resolvedLights(this._frame).some(light => light.animated);
             if (animated || this.drag) this.render(this._frame);
-            if (animated) this._sync3D(this._frame);
         };
         this._raf = requestAnimationFrame(tick);
     }
@@ -956,16 +955,31 @@ class LightingManager {
     //-------------------------------------------------------------------------
     // 3D preview: the real compositor, fed the same resolved lights.
 
-    _sync3D(frame = this._frame) {
+    /**
+     * Feed the map's lights into the shared 3D compositor. The 3D view calls
+     * this on every frame it draws and then composites the light group as its
+     * own additive pass — the same shape as the game's render. A lit map
+     * looks lit whenever the 3D view is open, whether or not this panel is:
+     * the lights are authored map content, like the props.
+     */
+    feed3D() {
         const map3d = this.mapEditor3D();
         const scene = map3d?.mapScene;
         if (!map3d?.isEnabled?.() || !scene || typeof Reactor3D === 'undefined') return;
         const ambient = this.ambient();
+        if (!this.lights().length && ambient.ambient === undefined) {
+            // Nothing placed and no ambient block: leave the compositor
+            // untouched so an unlit map never even builds the light pools.
+            Reactor3D.setLights([]);
+            Reactor3D.setAmbient(null);
+            return;
+        }
+        if (!this.active) this._frame++;
         Reactor3D.setAmbient({
             intensity: ambient.ambient,
             colour: this._colourNumber(ambient.ambientColour)
         });
-        Reactor3D.setLights(this.resolvedLights(frame).map(light => ({
+        Reactor3D.setLights(this.resolvedLights(this._frame).map(light => ({
             type: light.type, x: light.x, y: light.y, height: light.height,
             radius: light.radius, colour: light.colour, intensity: light.intensity,
             angle: light.angle, yaw: -light.yaw, occlude: light.occlude
@@ -973,10 +987,21 @@ class LightingManager {
         const map = this.map();
         const focus = map ? { x: map.width / 2, y: map.height / 2 } : null;
         scene.syncLights?.(focus);
-        // The editor renders one pass, so the light group joins it instead of
-        // waiting for a "lights" pass that never comes.
-        if (scene.lightGroup) scene.lightGroup().visible = true;
         this._update3DRing(scene);
+    }
+
+    /**
+     * Whether the 3D view should keep drawing frames for lighting's sake:
+     * always while the panel works, and while any placed light animates.
+     */
+    wants3DFrames() {
+        if (this.active) return true;
+        if (!this.map()?.reactor3d?.lights?.length) return false;
+        return this.resolvedLights(this._frame).some(light => light.animated);
+    }
+
+    _sync3D() {
+        this.feed3D();
     }
 
     /**
