@@ -76,6 +76,7 @@ class LightingManager {
         this._buildPanel();
         this._buildOverlay();
         this._bindPointer();
+        this._bind3DPointer();
         document.addEventListener('keydown', this._onKeyDown);
         this.render();
         this._startTicking();
@@ -87,6 +88,7 @@ class LightingManager {
         this.drag = null;
         this._stopTicking();
         this._unbindPointer();
+        this._unbind3DPointer();
         document.removeEventListener('keydown', this._onKeyDown);
         this._destroyOverlay();
         this._destroyPanel();
@@ -434,6 +436,112 @@ class LightingManager {
         this._listeners = [];
     }
 
+    //-------------------------------------------------------------------------
+    // 3D-view pointer: a 3D-authored map opens in the 3D view, so placement
+    // has to land there too. Capture phase on the 3D input surface, consuming
+    // only what belongs to the tool — orbiting, painting and prop picking
+    // keep working underneath.
+
+    _surface3D() {
+        const m3d = this.mapEditor3D();
+        if (!m3d || !m3d.isEnabled || !m3d.isEnabled()) return null;
+        return m3d.inputSurface || m3d.canvas || null;
+    }
+
+    _bind3DPointer() {
+        const surface = this._surface3D();
+        this._bound3D = surface;
+        if (!surface) return;
+        this._on3DDown = event => this._pointer3DDown(event);
+        surface.addEventListener('pointerdown', this._on3DDown, true);
+    }
+
+    _unbind3DPointer() {
+        if (this._bound3D && this._on3DDown) {
+            this._bound3D.removeEventListener('pointerdown', this._on3DDown, true);
+        }
+        this._bound3D = null;
+        this._on3DDown = null;
+        this._end3DDrag();
+    }
+
+    _pointer3DDown(event) {
+        if (!this.active || event.button !== 0) return;
+        const m3d = this.mapEditor3D();
+        if (!m3d || !m3d.groundPointAt) return;
+        const at = m3d.groundPointAt(event.clientX, event.clientY);
+        if (!at) return;
+        if (this.placing) {
+            const type = this.placing;
+            if (!event.shiftKey) this.placing = null;
+            this._syncAddButtons();
+            this.place(type, at.x, at.y);
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            return;
+        }
+        const hit = this._lightNear(at, 0.75);
+        if (!hit) return; // not ours: the orbit and the props keep the click
+        if (hit.id !== this.selectedId) this.select(hit.id);
+        this.pushUndo();
+        const anchor = this._lightAnchor(hit) || at;
+        this._drag3d = { id: hit.id, offsetX: at.x - anchor.x, offsetY: at.y - anchor.y };
+        this._on3DMove = e => this._pointer3DMove(e);
+        this._on3DUp = () => this._end3DDrag();
+        window.addEventListener('pointermove', this._on3DMove, true);
+        window.addEventListener('pointerup', this._on3DUp, true);
+        event.preventDefault();
+        event.stopImmediatePropagation();
+    }
+
+    _pointer3DMove(event) {
+        const drag = this._drag3d;
+        const map = this.map();
+        const m3d = this.mapEditor3D();
+        if (!drag || !map || !m3d || typeof RRMapLights === 'undefined') return;
+        const at = m3d.groundPointAt(event.clientX, event.clientY);
+        if (!at) return;
+        const light = RRMapLights.get(map, drag.id);
+        if (!light) return;
+        const base = light.attach && light.attach.event
+            ? this._carrierBase(light) : { x: 0, y: 0 };
+        RRMapLights.update(map, drag.id, {
+            x: Math.round((at.x - drag.offsetX - base.x) * 100) / 100,
+            y: Math.round((at.y - drag.offsetY - base.y) * 100) / 100
+        });
+        this._changed();
+    }
+
+    _end3DDrag() {
+        if (this._on3DMove) window.removeEventListener('pointermove', this._on3DMove, true);
+        if (this._on3DUp) window.removeEventListener('pointerup', this._on3DUp, true);
+        this._on3DMove = null;
+        this._on3DUp = null;
+        if (this._drag3d) {
+            this._drag3d = null;
+            this._syncPanel();
+        }
+    }
+
+    /** The nearest light whose anchor sits within `grip` tiles of a point. */
+    _lightNear(at, grip) {
+        const map = this.map();
+        if (!map || typeof RRMapLights === 'undefined') return null;
+        let best = null;
+        let bestDistance = grip;
+        for (const raw of RRMapLights.list(map)) {
+            const light = RRMapLights.normalize(raw, raw.id || 'light');
+            const anchor = this._lightAnchor(light);
+            if (!anchor) continue;
+            const distance = Math.hypot(at.x - anchor.x, at.y - anchor.y);
+            if (distance <= bestDistance) {
+                best = light;
+                bestDistance = distance;
+            }
+        }
+        return best;
+    }
+
     _tilePoint(event, container) {
         const pos = event.data.getLocalPosition(container);
         const tw = this.tileSize();
@@ -587,6 +695,13 @@ class LightingManager {
                 this._destroyOverlay();
                 this._buildOverlay();
                 this._syncPanel();
+            }
+            // The 3D view toggles and rebuilds its canvas underneath the
+            // open panel; follow it so placement clicks always land.
+            if (this._surface3D() !== this._bound3D) {
+                this._unbind3DPointer();
+                this._bind3DPointer();
+                this._sync3D();
             }
             const animated = this.resolvedLights(this._frame).some(light => light.animated);
             if (animated || this.drag) this.render(this._frame);

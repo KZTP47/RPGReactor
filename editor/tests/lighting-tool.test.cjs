@@ -125,6 +125,23 @@ test('the panel docks in the workspace and player lights stay off tile 0,0', () 
     assert.match(manager, /if \(!light\.attach\.event\) continue;/);
 });
 
+test('the 3D view places and drags lights too', () => {
+    // A 3D-authored map opens in the 3D view by default, so a tool that only
+    // listened on the 2D container placed nothing there — verified broken and
+    // then fixed with a real CDP click on map-3d-input (2026-08-31). Capture
+    // phase, consuming only the tool's own clicks: orbiting and prop picking
+    // keep working underneath.
+    const manager = read('src/LightingManager.js');
+    assert.match(manager, /_bind3DPointer\(\) \{/);
+    assert.match(manager, /m3d\.inputSurface \|\| m3d\.canvas/);
+    assert.match(manager, /m3d\.groundPointAt\(event\.clientX, event\.clientY\)/);
+    assert.match(manager, /addEventListener\('pointerdown', this\._on3DDown, true\)/);
+    assert.match(manager, /if \(!hit\) return; \/\/ not ours/);
+    assert.match(manager, /stopImmediatePropagation/);
+    // And the binding follows the 3D canvas through toggles and rebuilds.
+    assert.match(manager, /this\._surface3D\(\) !== this\._bound3D/);
+});
+
 test('every panel string is a lit.* key present in the locale tables', () => {
     const manager = read('src/LightingManager.js');
     const used = new Set([...manager.matchAll(/'(lit\.[A-Za-z]+)'/g)].map(match => match[1]));
