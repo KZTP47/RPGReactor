@@ -204,14 +204,25 @@ Reactor3D.MODE_3D = "3d";
  */
 Reactor3D.mapMode = function(mapData) {
     if (!mapData) return this.MODE_2D;
+    // Asked three times per character sprite per frame (position, scale,
+    // visibility), each a regex over the map note. Remembered per map
+    // object against the three inputs that decide it, so an edited note
+    // or sidecar in the editor is still honoured on the next call.
+    const note = mapData.note || "";
+    const meta = !!(mapData.meta && mapData.meta["3d"]);
+    const sidecar = mapData.reactor3d;
+    const sidecarMode = sidecar && typeof sidecar.mode === "string" ? sidecar.mode : null;
+    const memo = this._mapModeMemo || (this._mapModeMemo = new WeakMap());
+    const known = memo.get(mapData);
+    if (known && known.note === note && known.meta === meta && known.sidecarMode === sidecarMode) return known.mode;
     // The note is the switch: without <3d> a map is flat however much its
     // sidecar carries (elevation, event models, previews all still load).
     // With it, the sidecar may still say 2d.
-    const noted = !!(mapData.meta && mapData.meta["3d"]) || /<3d>/i.test(mapData.note || "");
-    if (!noted) return this.MODE_2D;
-    const sidecar = mapData.reactor3d;
-    if (sidecar && typeof sidecar.mode === "string" && sidecar.mode !== this.MODE_3D) return this.MODE_2D;
-    return this.MODE_3D;
+    let mode = this.MODE_2D;
+    const noted = meta || /<3d>/i.test(note);
+    if (noted && !(sidecarMode !== null && sidecarMode !== this.MODE_3D)) mode = this.MODE_3D;
+    memo.set(mapData, { note, meta, sidecarMode, mode });
+    return mode;
 };
 
 Reactor3D.isMap3D = function(mapData) {
@@ -975,6 +986,20 @@ Reactor3D.Viewport.prototype.render = function(slot) {
  */
 Reactor3D.Viewport.prototype.renderPass = function(mapScene, which, slot) {
     if (!mapScene || !mapScene.setPass) return this.render(slot);
+    // World matrices once a frame, not once a pass. three recomposes every
+    // object's matrix inside `render`, and a map with two or three passes
+    // paid for the whole graph — every bone of every skinned model
+    // included — two or three times over. Everything that moves has been
+    // synced by the time the first pass is asked for.
+    const scene = mapScene.scene ? mapScene.scene() : null;
+    const frame = typeof Graphics !== "undefined" ? Graphics.frameCount : -1;
+    if (scene) {
+        if (scene.matrixWorldAutoUpdate !== false) scene.matrixWorldAutoUpdate = false;
+        if (this._matrixFrame !== frame) {
+            this._matrixFrame = frame;
+            scene.updateMatrixWorld();
+        }
+    }
     mapScene.setPass(which);
     // Anchored effects belong with the world's depth, not over the overlay.
     if (Reactor3D.EffekseerScene) Reactor3D.EffekseerScene.setPass(which);
@@ -3971,9 +3996,12 @@ Reactor3D.footward = function(camera) {
 
 /** The up axis a cut-out is built on: world up, leaned by the tilt. */
 Reactor3D.billboardUp = function(camera) {
-    const up = new THREE.Vector3(0, 1, 0);
+    // One shared vector: asked twice per character sprite per frame, and
+    // every caller reads it on the spot. Nobody keeps it.
+    const up = (this._billboardUpScratch || (this._billboardUpScratch = new THREE.Vector3())).set(0, 1, 0);
     if (camera && this.BILLBOARD_TILT) {
-        const leaning = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
+        const leaning = (this._billboardLeanScratch || (this._billboardLeanScratch = new THREE.Vector3()))
+            .set(0, 1, 0).applyQuaternion(camera.quaternion);
         up.lerp(leaning, this.BILLBOARD_TILT).normalize();
     }
     return up;
@@ -4845,6 +4873,13 @@ Reactor3D.MapScene.prototype.addRoomPiece = function(piece, bitmap, roomHeight, 
         texture.wrapS = THREE.RepeatWrapping;
         texture.wrapT = THREE.RepeatWrapping;
         texture.repeat.set(surface.repeat[0], surface.repeat[1]);
+        // A room picture is one image, not a tile atlas: nothing bleeds
+        // across a tile edge, so it can carry mipmaps. The Demo's are
+        // 2400px square and mostly seen far away; sampling that at one
+        // level shimmers and thrashes the texture cache, and WebGL2 takes
+        // a non-power-of-two size in its stride.
+        texture.generateMipmaps = true;
+        texture.minFilter = THREE.LinearMipmapLinearFilter;
         texture.needsUpdate = true;
         const material = new THREE.MeshBasicMaterial({
             map: texture,
@@ -4856,6 +4891,7 @@ Reactor3D.MapScene.prototype.addRoomPiece = function(piece, bitmap, roomHeight, 
         });
         // Lit like the ground, so a dark corner of the room is dark.
         material.__reactorShaded = true;
+        Reactor3D.litMaterial(material);
         this._materials.push(material);
         const mesh = new THREE.Mesh(surface.geometry, material);
         // Behind the parallax grounds, which are behind the tiles.
@@ -4924,6 +4960,9 @@ Reactor3D.MapScene.prototype.setPass = function(which) {
     // they hang off the scene directly, and left untoggled they re-rendered
     // over the star-flagged tiles in the above pass.
     if (this._modelsGroup) this._modelsGroup.visible = all || world || which === "below";
+    // The lights' glowing bodies stand in the world with the models: walls
+    // hide them, and they are added into the frame like any other glow.
+    if (this._lightBodyGroup) this._lightBodyGroup.visible = all || world || which === "below";
     // Above-characters events stay a composite overlay — MZ's z=5 draws over
     // characters and star tiles alike, which no depth buffer can express —
     // on a map of 2D sprites. With models in the world everything is a
@@ -5451,6 +5490,7 @@ Reactor3D.MapScene.prototype.build = function(mapData, bitmaps, options) {
         // flat one does not and they must not share a compiled program.
         Reactor3D.clampToTile(material,
             group.billboard ? "reactor3d-billboard-clamped" : "reactor3d-tile-clamped");
+        Reactor3D.litMaterial(material);
 
         const target = group.above ? this.aboveGroup() : this.belowGroup();
 
@@ -5477,6 +5517,7 @@ Reactor3D.MapScene.prototype.build = function(mapData, bitmaps, options) {
         opaqueCore.__reactorShaded = true;
         Reactor3D.clampToTile(opaqueCore,
             group.billboard ? "reactor3d-billboard-clamped" : "reactor3d-tile-clamped");
+        Reactor3D.litMaterial(opaqueCore);
         const coreMesh = new THREE.Mesh(geometry, opaqueCore);
         coreMesh.renderOrder = -20 + (group.layer || 0);
         target.add(coreMesh);
@@ -5735,7 +5776,14 @@ Reactor3D.MapScene.prototype.syncLights = function(focus) {
         const r = (((colour >> 16) & 255) / 255) * level;
         const g = (((colour >> 8) & 255) / 255) * level;
         const b = ((colour & 255) / 255) * level;
+        // Lit materials read the ambient from the shared uniform and keep
+        // their base colour; the multiply below is for anything unlit.
+        const shared = Reactor3D.lightUniforms().rrAmbient.value;
+        shared[0] = r;
+        shared[1] = g;
+        shared[2] = b;
         for (const material of this._materials) {
+            if (material.__reactorLit) continue;
             if (material.__reactorModel) {
                 const base = material.userData.baseColor;
                 if (base) material.color.setRGB(base.r * r, base.g * g, base.b * b);
@@ -5762,6 +5810,13 @@ Reactor3D.MapScene.prototype.syncLights = function(focus) {
     const up = new THREE.Vector3(0, 0, -1);
 
     const declared = Reactor3D.nearestLights(Reactor3D.lights(), focus);
+    if (Reactor3D.lightModeFor() === "volume") {
+        this.syncVolumeLights(declared, focus);
+        return;
+    }
+    // Flat quads: the lit materials see no lights, only the ambient.
+    Reactor3D.lightUniforms().rrLightCount.value = 0;
+    if (this._lightBodies) this._lightBodies.trim(0);
     const round = this.lightPool("round");
     const cone = this.lightPool("cone");
     round.count = 0;
@@ -5910,6 +5965,245 @@ Reactor3D.MapScene.prototype.syncLights = function(focus) {
     }
 };
 
+/**
+ * This frame's lights as a field: the nearest `SHADER_LIGHTS` to the focus
+ * written into the shared uniforms every lit material reads, and a glowing
+ * body stood at each source. No pass, no quads, no buffer upload — three
+ * small arrays and a handful of transforms.
+ *
+ * A light's world position is where the flat pool was centred (the middle
+ * across, the southern edge along, on the facade it hangs on) plus its
+ * authored height straight up — the one number the quads had to discard.
+ */
+Reactor3D.MapScene.prototype.syncVolumeLights = function(declared, focus) {
+    const uniforms = Reactor3D.lightUniforms();
+    const max = Reactor3D.SHADER_LIGHTS;
+    let list = declared || [];
+    if (list.length > max) {
+        // Nearest first, by how far short of the focus its reach stops.
+        const fx = focus ? focus.x : 0;
+        const fy = focus ? focus.y : 0;
+        const gap = light => Math.hypot((light.x || 0) - fx, (light.y || 0) - fy) - (light.radius || 0);
+        list = list.slice().sort((a, b) => gap(a) - gap(b)).slice(0, max);
+    }
+    const pos = uniforms.rrLightPos.value;
+    const col = uniforms.rrLightColor.value;
+    const aim = uniforms.rrLightAim.value;
+    const bodies = this.lightBodies();
+    const mapData = typeof $dataMap !== "undefined" ? $dataMap : null;
+    let count = 0;
+    for (const light of list) {
+        const radius = light.radius > 0 ? light.radius : 0;
+        if (!(radius > 0) || count >= max) continue;
+        const spot = light.type === Reactor3D.LIGHT_SPOT;
+        const facade = Reactor3D.facadeAt(Math.round(light.x), Math.round(light.y));
+        const standsOn = light.groundY !== undefined
+            ? light.groundY
+            : (facade ? facade.height
+                : Reactor3D.surfaceHeightAt(mapData, Math.round(light.x), Math.round(light.y)));
+        const lift = facade ? facade.lift : 0;
+        const height = light.height === undefined ? Reactor3D.PLUGIN_LIGHT_HEIGHT : light.height;
+        const x = light.x + 0.5;
+        const y = standsOn + lift + height;
+        const z = facade ? facade.z : light.y + 1;
+
+        const rgb = light.colour === undefined ? 0xffffff : light.colour;
+        const intensity = (light.intensity === undefined ? 1 : light.intensity) * Reactor3D.LIGHT_GAIN;
+        const r = ((rgb >> 16) & 255) / 255;
+        const g = ((rgb >> 8) & 255) / 255;
+        const b = (rgb & 255) / 255;
+        const gain = intensity * Reactor3D.VOLUME_LIGHT_GAIN;
+
+        let ax = 0, ay = -1, az = 0, cosHalf = -1;
+        let angle = 0;
+        if (spot) {
+            const yaw = ((light.yaw || 0) * Math.PI) / 180;
+            const pitch = ((light.pitch || 0) * Math.PI) / 180;
+            const level = Math.cos(pitch);
+            ax = Math.sin(yaw) * level;
+            ay = Math.sin(pitch);
+            az = Math.cos(yaw) * level;
+            angle = (light.angle === undefined ? Reactor3D.DEFAULT_CONE_ANGLE : light.angle);
+            cosHalf = Math.cos((Math.min(angle, 178) * Math.PI) / 360);
+        }
+
+        const at = count * 4;
+        pos[at] = x; pos[at + 1] = y; pos[at + 2] = z; pos[at + 3] = radius;
+        col[at] = r * gain; col[at + 1] = g * gain; col[at + 2] = b * gain; col[at + 3] = spot ? 1 : 0;
+        aim[at] = ax; aim[at + 1] = ay; aim[at + 2] = az; aim[at + 3] = cosHalf;
+        bodies.place(count, {
+            x, y, z, radius, spot, r, g, b, angle, ax, ay, az,
+            intensity: light.intensity === undefined ? 1 : light.intensity
+        });
+        count++;
+    }
+    uniforms.rrLightCount.value = count;
+    bodies.trim(count);
+};
+
+/**
+ * The glowing bodies of the lights: a soft sphere at a point light, the cone
+ * of a spotlight, and a bright core at either source. Additive, depth-tested
+ * and never depth-written, so a wall hides the lamp behind it and two glows
+ * pass through each other. Kept in the world's own pass, because they are
+ * things standing in the world.
+ */
+Reactor3D.MapScene.prototype.lightBodies = function() {
+    if (this._lightBodies) return this._lightBodies;
+    const group = new THREE.Group();
+    group.name = "light-bodies";
+    this._scene.add(group);
+    this._lightBodyGroup = group;
+    const down = new THREE.Vector3(0, -1, 0);
+    const aimVector = new THREE.Vector3();
+    const glows = [];
+    const cores = [];
+    const cones = [];
+    const bodies = {
+        group, glows, cores, cones,
+        place(index, light) {
+            let core = cores[index];
+            if (!core) {
+                core = new THREE.Sprite(new THREE.SpriteMaterial({
+                    map: Reactor3D.roundLightTexture(),
+                    blending: THREE.AdditiveBlending,
+                    transparent: true,
+                    depthWrite: false,
+                    depthTest: true,
+                    fog: false
+                }));
+                core.renderOrder = 13;
+                group.add(core);
+                cores[index] = core;
+            }
+            core.visible = true;
+            core.position.set(light.x, light.y, light.z);
+            const coreSize = Math.min(light.radius, light.spot ? 0.9 : 0.7);
+            core.scale.set(coreSize, coreSize, 1);
+            core.material.color.setRGB(light.r, light.g, light.b);
+            core.material.opacity = Math.min(1, Reactor3D.VOLUME_GLOW * light.intensity);
+
+            let glow = glows[index];
+            if (!glow) {
+                glow = new THREE.Mesh(Reactor3D.sphereBodyGeometry(), Reactor3D.lightBodyMaterial());
+                glow.renderOrder = 11;
+                group.add(glow);
+                glows[index] = glow;
+            }
+            let cone = cones[index];
+            if (light.spot) {
+                glow.visible = false;
+                if (!cone) {
+                    cone = new THREE.Mesh(Reactor3D.coneBodyGeometry(), Reactor3D.lightBodyMaterial());
+                    cone.renderOrder = 12;
+                    group.add(cone);
+                    cones[index] = cone;
+                }
+                cone.visible = true;
+                cone.position.set(light.x, light.y, light.z);
+                const spread = Math.tan((Math.min(light.angle, 178) * Math.PI) / 360) * light.radius;
+                cone.scale.set(spread, light.radius, spread);
+                aimVector.set(light.ax, light.ay, light.az).normalize();
+                cone.quaternion.setFromUnitVectors(down, aimVector);
+                cone.material.uniforms.colour.value.setRGB(light.r, light.g, light.b);
+                cone.material.uniforms.strength.value = Reactor3D.VOLUME_GLOW * 0.5 * light.intensity;
+            } else {
+                if (cone) cone.visible = false;
+                glow.visible = true;
+                glow.position.set(light.x, light.y, light.z);
+                // The haze is smaller than the reach: the reach is where the
+                // light stops falling on things, not a ball of fog that size.
+                const haze = light.radius * 0.45;
+                glow.scale.set(haze, haze, haze);
+                glow.material.uniforms.colour.value.setRGB(light.r, light.g, light.b);
+                glow.material.uniforms.strength.value = Reactor3D.VOLUME_GLOW * 0.6 * light.intensity;
+            }
+        },
+        trim(count) {
+            for (let i = count; i < cores.length; i++) cores[i].visible = false;
+            for (let i = count; i < glows.length; i++) glows[i].visible = false;
+            for (let i = count; i < cones.length; i++) if (cones[i]) cones[i].visible = false;
+        },
+        dispose() {
+            for (const list of [cores, glows, cones]) {
+                for (const body of list) {
+                    if (!body) continue;
+                    if (body.parent) body.parent.remove(body);
+                    if (body.material) body.material.dispose();
+                }
+                list.length = 0;
+            }
+            if (group.parent) group.parent.remove(group);
+        }
+    };
+    this._lightBodies = bodies;
+    return bodies;
+};
+
+/** A unit sphere, scaled per light. */
+Reactor3D.sphereBodyGeometry = function() {
+    if (!this._sphereBody) this._sphereBody = new THREE.SphereGeometry(1, 24, 16);
+    return this._sphereBody;
+};
+
+/** A unit cone with its apex at the origin, opening along -Y; scaled and aimed per light. */
+Reactor3D.coneBodyGeometry = function() {
+    if (!this._coneBody) {
+        const cone = new THREE.ConeGeometry(1, 1, 32, 1, true);
+        cone.translate(0, -0.5, 0);
+        this._coneBody = cone;
+    }
+    return this._coneBody;
+};
+
+/**
+ * The haze of a light's body: brightest where its surface faces the eye and
+ * fading to nothing at the silhouette, so a sphere reads as a soft ball and
+ * a cone as a beam rather than a solid; a cone also fades along its length,
+ * squared, like the falloff of the light it shows. One material per body,
+ * since each carries its own colour.
+ */
+Reactor3D.lightBodyMaterial = function() {
+    return new THREE.ShaderMaterial({
+        uniforms: {
+            colour: { value: new THREE.Color(1, 1, 1) },
+            strength: { value: 0.3 }
+        },
+        vertexShader: [
+            "varying float vAlong;",
+            "varying vec3 vNormalW;",
+            "varying vec3 vToEye;",
+            "void main() {",
+            "\tvAlong = clamp(-position.y, 0.0, 1.0);",
+            "\tvec4 world = modelMatrix * vec4(position, 1.0);",
+            "\tvNormalW = normalize(mat3(modelMatrix) * normal);",
+            "\tvToEye = cameraPosition - world.xyz;",
+            "\tgl_Position = projectionMatrix * viewMatrix * world;",
+            "}"
+        ].join("\n"),
+        fragmentShader: [
+            "uniform vec3 colour;",
+            "uniform float strength;",
+            "varying float vAlong;",
+            "varying vec3 vNormalW;",
+            "varying vec3 vToEye;",
+            "void main() {",
+            "\tfloat facing = abs(dot(normalize(vNormalW), normalize(vToEye)));",
+            "\tfloat soft = pow(facing, 1.6);",
+            "\tfloat along = 1.0 - vAlong;",
+            "\tfloat a = strength * soft * along * along;",
+            "\tgl_FragColor = vec4(colour * a, a);",
+            "}"
+        ].join("\n"),
+        blending: THREE.AdditiveBlending,
+        transparent: true,
+        depthWrite: false,
+        depthTest: true,
+        side: THREE.DoubleSide,
+        fog: false
+    });
+};
+
 Reactor3D.MapScene.prototype.clear = function() {
     this._animated = [];
     this._frame = -1;
@@ -5928,6 +6222,11 @@ Reactor3D.MapScene.prototype.clear = function() {
         pool.geometry.dispose();
     }
     this._pools = {};
+    if (this._lightBodies) {
+        this._lightBodies.dispose();
+        this._lightBodies = null;
+        this._lightBodyGroup = null;
+    }
     for (const mesh of this._meshes) {
         // Meshes live in one of the two pass groups now, so removing them from
         // the scene itself would leave every one of them behind.
@@ -6211,6 +6510,150 @@ Reactor3D.DEFAULT_CONE_LENGTH = 6;
 
 /** How many light quads the pool can hold. Far past any real map. */
 Reactor3D.MAX_LIGHTS = 512;
+
+/*
+ * Lights in volume.
+ *
+ * The ground quads above are a picture of a pool of light: a disc on the
+ * floor, a wedge along it, drawn in a pass of their own and added over the
+ * frame. Seen from a ground camera the disc is a slice, a wall beside a lamp
+ * stays dark, a lamp on a ceiling lights nothing, and the light's own height
+ * has nowhere to go. "Volume" mode makes the light a field instead: every map
+ * material — tiles, cut-outs, room walls, models, characters — takes the
+ * map's lights as shader uniforms and lights each pixel by its distance from
+ * every source, in three dimensions. A point light is a sphere of reach that
+ * falls on the floor below it, the wall beside it and the ceiling above; a
+ * spotlight is a cone with a yaw *and a pitch*. The source itself is shown
+ * as a faint glowing body (a sphere, or the cone) that walls hide, because it
+ * is geometry in the world like everything else.
+ *
+ * The uniform-budget argument against `THREE.PointLight` still holds, so the
+ * list is capped per shader: the nearest `SHADER_LIGHTS` to the focus are
+ * uploaded each frame, once, into value objects every lit material shares.
+ * A map can keep the flat quads with `lighting.mode = "flat"` in its sidecar,
+ * and `Reactor3D.LIGHT_MODE = "flat"` restores them everywhere.
+ */
+Reactor3D.LIGHT_MODE = "volume";
+
+/** How many lights one material's shader loops over. */
+Reactor3D.SHADER_LIGHTS = 32;
+
+/**
+ * The flat quads were added to the frame twice (see `lightPool`), so an
+ * authored intensity of one brought a channel to full from nothing. A field
+ * that multiplies a texel adds `colour * intensity * gain` to the ambient it
+ * is read against; two keeps the Demo's rig at about the brightness it was
+ * tuned to.
+ */
+Reactor3D.VOLUME_LIGHT_GAIN = 2;
+
+/** How strongly a light's own body glows, before its intensity. */
+Reactor3D.VOLUME_GLOW = 0.55;
+
+/** A plugin light says nothing about height: carried at waist level. */
+Reactor3D.PLUGIN_LIGHT_HEIGHT = 0.5;
+
+Reactor3D.lightModeFor = function(mapData) {
+    const map = mapData || (typeof $dataMap !== "undefined" ? $dataMap : null);
+    const lighting = map && map.reactor3d && map.reactor3d.lighting;
+    if (lighting && lighting.mode === "flat") return "flat";
+    return this.LIGHT_MODE === "flat" ? "flat" : "volume";
+};
+
+/**
+ * The uniform values every lit material shares. One set of typed arrays,
+ * written once a frame by `syncVolumeLights`; three uploads them per program.
+ * Plain arrays rather than THREE vectors so they exist before three loads.
+ */
+Reactor3D.lightUniforms = function() {
+    if (this._lightUniforms) return this._lightUniforms;
+    const n = this.SHADER_LIGHTS;
+    this._lightUniforms = {
+        rrLightCount: { value: 0 },
+        rrLightPos: { value: new Float32Array(n * 4) },     // x, y, z, reach
+        rrLightColor: { value: new Float32Array(n * 4) },   // r, g, b (× intensity × gain), spot flag
+        rrLightAim: { value: new Float32Array(n * 4) },     // aim x, y, z, cos(half angle)
+        rrAmbient: { value: new Float32Array([1, 1, 1]) }
+    };
+    return this._lightUniforms;
+};
+
+Reactor3D.LIGHT_GLSL = [
+    "uniform int rrLightCount;",
+    "uniform vec4 rrLightPos[" + Reactor3D.SHADER_LIGHTS + "];",
+    "uniform vec4 rrLightColor[" + Reactor3D.SHADER_LIGHTS + "];",
+    "uniform vec4 rrLightAim[" + Reactor3D.SHADER_LIGHTS + "];",
+    "uniform vec3 rrAmbient;",
+    "varying vec3 vRRWorldPos;",
+    "vec3 rrLight(vec3 p) {",
+    "\tvec3 sum = rrAmbient;",
+    "\tfor (int i = 0; i < " + Reactor3D.SHADER_LIGHTS + "; i++) {",
+    "\t\tif (i >= rrLightCount) break;",
+    "\t\tvec4 lp = rrLightPos[i];",
+    "\t\tvec3 d = p - lp.xyz;",
+    "\t\tfloat dist = length(d);",
+    // The same falloff the flat pool's picture carries: (1 - d/r)^2.
+    "\t\tfloat fall = 1.0 - dist / max(lp.w, 0.001);",
+    "\t\tif (fall <= 0.0) continue;",
+    "\t\tfall *= fall;",
+    "\t\tvec4 lc = rrLightColor[i];",
+    "\t\tif (lc.w > 0.5) {",
+    "\t\t\tvec4 aim = rrLightAim[i];",
+    "\t\t\tfloat c = dot(d / max(dist, 0.0001), aim.xyz);",
+    // Soft at the rim rather than a cut-out cone: full inside the inner
+    // third of the spread, fading to nothing at the authored edge.
+    "\t\t\tfall *= smoothstep(aim.w, mix(aim.w, 1.0, 0.35), c);",
+    "\t\t}",
+    "\t\tsum += lc.rgb * fall;",
+    "\t}",
+    "\treturn sum;",
+    "}"
+].join("\n") + "\n";
+
+/**
+ * Teach a compiled program about the map's lights: the world position of
+ * every fragment, and the diffuse colour multiplied by ambient plus every
+ * light in reach — before the texel, so `texel * base * (ambient + lights)`.
+ */
+Reactor3D.injectLightShader = function(shader) {
+    const uniforms = this.lightUniforms();
+    for (const key of Object.keys(uniforms)) shader.uniforms[key] = uniforms[key];
+    // After projection, where `transformed` is final: skinned, billboarded,
+    // or plain. (Anchored on the include, which every three material has;
+    // the billboard's own patch keeps the include inside its replacement.)
+    shader.vertexShader = "varying vec3 vRRWorldPos;\n"
+        + shader.vertexShader.replace(
+            "#include <project_vertex>",
+            "#include <project_vertex>\n\tvRRWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;"
+        );
+    shader.fragmentShader = this.LIGHT_GLSL
+        + shader.fragmentShader.replace(
+            "vec4 diffuseColor = vec4( diffuse, opacity );",
+            "vec4 diffuseColor = vec4( diffuse * rrLight(vRRWorldPos), opacity );"
+        );
+};
+
+/**
+ * Make a map material take the lights. Composes with whatever the material
+ * already injects (UV clamps, billboard quads, straightened depth), and
+ * extends its program cache key so a lit program is never shared with an
+ * unlit one. A lit material's `color` stays its base colour: ambient reaches
+ * it through the uniform, not through `syncLights`'s multiply.
+ */
+Reactor3D.litMaterial = function(material) {
+    if (!material || material.__reactorLit) return material;
+    material.__reactorLit = true;
+    const earlier = material.onBeforeCompile;
+    material.onBeforeCompile = function(shader, renderer) {
+        if (typeof earlier === "function") earlier.call(this, shader, renderer);
+        Reactor3D.injectLightShader(shader);
+    };
+    const earlierKey = material.customProgramCacheKey;
+    material.customProgramCacheKey = function() {
+        return (typeof earlierKey === "function" ? earlierKey.call(this) : "") + "|reactor3d-lit";
+    };
+    return material;
+};
 
 /**
  * How strongly a light reads, over and above the alpha the plugin gave it.
@@ -6776,6 +7219,8 @@ Reactor3D.readMapLights = function(mapData) {
             y: number(entry.y, 0, -10000, 10000),
             height: number(entry.height, 0, 0, 512),
             yaw: number(entry.yaw, 0, -100000, 100000),
+            // Degrees above level: a spot on a ceiling aims down at -90.
+            pitch: number(entry.pitch, 0, -90, 90),
             radius: number(entry.radius,
                 entry.type === "spot" ? this.DEFAULT_CONE_LENGTH : 3, 0.1, 200),
             angle: number(entry.angle, this.DEFAULT_CONE_ANGLE, 1, 179),
@@ -6888,7 +7333,7 @@ Reactor3D.nativeLights = function(mapData) {
         out.push({
             type: light.type, x: x, y: y, height: light.height,
             radius: radius, colour: light.color, intensity: intensity,
-            angle: light.angle, yaw: -light.yaw, occlude: light.occlude
+            angle: light.angle, yaw: -light.yaw, pitch: light.pitch, occlude: light.occlude
         });
     }
     return out;
@@ -8030,14 +8475,20 @@ Reactor3D.eventModelWouldOverlapEvents = function(character, x, y, direction) {
 
 Reactor3D.aimCharacterBillboard = function(object, camera) {
     if (!object || !camera || typeof THREE === "undefined") return;
-    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+    // Scratch objects: this runs once per billboard per frame, and six
+    // fresh allocations per call was a steady garbage-collector tax.
+    const scratch = this._aimScratch || (this._aimScratch = {
+        right: new THREE.Vector3(), forward: new THREE.Vector3(),
+        trueUp: new THREE.Vector3(), basis: new THREE.Matrix4()
+    });
+    const right = scratch.right.set(1, 0, 0).applyQuaternion(camera.quaternion);
     right.y = 0;
     if (right.lengthSq() < 1e-8) right.set(1, 0, 0);
     else right.normalize();
     const up = this.billboardUp(camera);
-    const forward = new THREE.Vector3().crossVectors(right, up).normalize();
-    const trueUp = new THREE.Vector3().crossVectors(forward, right).normalize();
-    object.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(right, trueUp, forward));
+    const forward = scratch.forward.crossVectors(right, up).normalize();
+    const trueUp = scratch.trueUp.crossVectors(forward, right).normalize();
+    object.quaternion.setFromRotationMatrix(scratch.basis.makeBasis(right, trueUp, forward));
 };
 
 Reactor3D.characterIsBehindModel = function(character, event) {
@@ -8204,6 +8655,11 @@ Reactor3D.loadModel = function(name, ext, file, texture) {
                         if (parsed && parsed.json) {
                             buildFrom(() => this.buildGlbTemplate(
                                 parsed.json, parsed.bin, baseUrl, parsed.bitmaps));
+                            // Distance levels, if the import wrote any: listed
+                            // in the sidecar, so nothing is probed for.
+                            if (entry.template && !entry.template.userData.animated) {
+                                this.loadLodLevels(entry.template, key, name, baseUrl);
+                            }
                         } else {
                             const buffer = (parsed && parsed.buffer) || xhr.response;
                             buildFrom(() => this.readModel(buffer, job.ext, baseUrl, texture));
@@ -8833,6 +9289,7 @@ Reactor3D.buildMeshTemplate = function(mesh, baseUrl, textureFile) {
     const material = new THREE.MeshBasicMaterial(map
         ? { color: 0xffffff, map, side: THREE.FrontSide, fog: false }
         : { color: 0x888888, side: THREE.FrontSide, fog: false });
+    Reactor3D.litMaterial(material);
     material.__reactorModel = true;
     const root = new THREE.Group();
     root.name = "model";
@@ -9062,6 +9519,7 @@ Reactor3D.buildGlbTemplate = function(json, bin, baseUrl, bitmaps) {
         if (def.alphaMode === "MASK") mat.alphaTest = def.alphaCutoff != null ? def.alphaCutoff : 0.5;
         mat.__reactorModel = true;
         mat.userData.baseColor = mat.color.clone();
+        Reactor3D.litMaterial(mat);
         const texInfo = pbr.baseColorTexture || (specgloss && specgloss.diffuseTexture);
         const map = this._loadGlbTexture(
             json, bin, texInfo, baseUrl, textures, bitmaps, usedBitmaps);
@@ -9081,6 +9539,7 @@ Reactor3D.buildGlbTemplate = function(json, bin, baseUrl, bitmaps) {
     }
     const defaultMat = new THREE.MeshBasicMaterial({ color: 0xcccccc, side: THREE.FrontSide, fog: false });
     defaultMat.__reactorModel = true;
+    Reactor3D.litMaterial(defaultMat);
     defaultMat.userData.baseColor = defaultMat.color.clone();
     const meshes = (json.meshes || []).map(mesh => {
         const group = new THREE.Group();
@@ -9118,6 +9577,7 @@ Reactor3D.buildGlbTemplate = function(json, bin, baseUrl, bitmaps) {
                 material = material.clone();
                 material.vertexColors = true;
                 material.__reactorModel = true;
+                Reactor3D.litMaterial(material);
             }
             group.add(new THREE.Mesh(geometry, material));
         }
@@ -9175,9 +9635,123 @@ Reactor3D.buildGlbTemplate = function(json, bin, baseUrl, bitmaps) {
         child.position.y -= box.min.y;
         child.position.z -= center.z;
     }
+    // Each mesh remembers its place in the flattened order, so a distance
+    // level built from the same file (same nodes, same order) can hand it
+    // a coarser geometry by index. A number, so clones keep it.
+    root.children.forEach((child, index) => { if (child.isMesh) child.userData.lodIndex = index; });
     root.userData.glbSize = { x: size.x, y: size.y, z: size.z };
     root.userData.glbTextures = textures;
     return root;
+};
+
+//-----------------------------------------------------------------------------
+// Distance levels
+//
+// A heavy model far from the camera covers a few pixels and still costs
+// every one of its triangles. The import optimizer writes geometry-only
+// copies at coarser weld grids beside the source (`<name>.lod1.glb`,
+// `.lod2.glb`, listed in model.json `lods`), and here each placed instance
+// swaps its meshes' geometry by distance — the object, its materials,
+// textures, recentring and collision stay the base model's, so a swap
+// never moves or re-lights anything. Geometry is shared per level across
+// every instance of the model.
+
+/**
+ * Switch to level N when the camera is further than this many times the
+ * model's size. At four spans away a model covers about a quarter of the
+ * view's height; a quarter of its triangles is not a visible change there,
+ * and at ten spans a twentieth is not.
+ */
+Reactor3D.LOD_DISTANCES = [4, 10];
+/** Come back a level only once this much nearer than the switch, so a hovering distance does not flicker. */
+Reactor3D.LOD_HYSTERESIS = 0.85;
+
+/**
+ * Attach distance levels to a base template: `buffers` are the LOD GLBs'
+ * bytes in level order. Levels whose flattened mesh count differs from the
+ * base are refused. Idempotent per cache key.
+ */
+Reactor3D.attachLodLevels = function(template, key, buffers) {
+    if (!template || !key || !buffers || !buffers.length || typeof THREE === "undefined") return null;
+    if (template.userData.animated) return null;
+    if (!this._lodCache) this._lodCache = Object.create(null);
+    if (this._lodCache[key]) return this._lodCache[key];
+    const base = template.children.filter(child => child.isMesh && child.userData.lodIndex !== undefined);
+    if (!base.length) return null;
+    const levels = [base.map(mesh => mesh.geometry)];
+    for (const buffer of buffers) {
+        let built = null;
+        try {
+            const parsed = this.readGlb(buffer);
+            if (!parsed || !parsed.json) continue;
+            built = this.buildGlbTemplate(parsed.json, parsed.bin, "", {});
+        } catch (error) {
+            console.warn("Reactor3D: a distance level of " + key + " could not be built.", error);
+            continue;
+        }
+        const meshes = built.children.filter(child => child.isMesh);
+        if (meshes.length !== base.length) {
+            console.warn("Reactor3D: a distance level of " + key + " has " + meshes.length
+                + " meshes where the model has " + base.length + "; ignored.");
+            continue;
+        }
+        // The level's own materials are throwaway; its geometry is in the
+        // same flattened space as the base (same nodes, same bake).
+        for (const mesh of meshes) { if (mesh.material && mesh.material.dispose) mesh.material.dispose(); }
+        levels.push(meshes.map(mesh => mesh.geometry));
+    }
+    if (levels.length < 2) return null;
+    template.userData.lodKey = key;
+    const entry = { levels };
+    this._lodCache[key] = entry;
+    return entry;
+};
+
+/**
+ * Pick an instance's level from its distance to the camera and swap its
+ * meshes' geometry. `size` is the model's size in tiles (its largest span
+ * after scaling); `eye` the camera's world position.
+ */
+Reactor3D.pickLod = function(object, size, eye, cacheKey) {
+    if (!object || !eye) return;
+    // The levels may arrive after an instance was cloned from its template
+    // (they load behind the model in the game), so a caller that knows the
+    // model's cache key passes it; the template's own mark serves otherwise.
+    const key = cacheKey || object.userData.lodKey;
+    const entry = key && this._lodCache && this._lodCache[key];
+    if (!entry) return;
+    const levels = entry.levels;
+    const dx = object.position.x - eye.x;
+    const dy = object.position.y - eye.y;
+    const dz = object.position.z - eye.z;
+    const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    const span = Math.max(size || 0, 0.5);
+    const current = object.userData.lodLevel || 0;
+    let level = 0;
+    for (let i = 0; i < this.LOD_DISTANCES.length && i + 1 < levels.length; i++) {
+        // Going further out switches at the threshold; coming back needs
+        // to be clearly inside it.
+        const threshold = this.LOD_DISTANCES[i] * span * (current > i ? this.LOD_HYSTERESIS : 1);
+        if (distance > threshold) level = i + 1;
+    }
+    if (level === current && object.userData.lodApplied) return;
+    object.userData.lodLevel = level;
+    object.userData.lodApplied = true;
+    const geometries = levels[level];
+    object.traverse(child => {
+        if (!child.isMesh) return;
+        const index = child.userData.lodIndex;
+        if (index === undefined) return;
+        const geometry = geometries[index];
+        if (geometry && child.geometry !== geometry) child.geometry = geometry;
+    });
+};
+
+/** The size, in tiles, a placed instance stands at: its largest span times its scale. */
+Reactor3D.instanceSpan = function(object) {
+    const extent = object && object.userData.glbSize;
+    if (!extent) return 2;
+    return Math.max(extent.x, extent.y, extent.z, 0.0001) * Math.max(object.scale.x, object.scale.y, object.scale.z);
 };
 
 /**
@@ -9361,6 +9935,9 @@ Reactor3D.cloneModelTemplate = function(template) {
     const instanceMaterial = mat => {
         const cloned = mat.clone();
         cloned.__reactorModel = mat.__reactorModel;
+        // Nor the light injection, which lives in onBeforeCompile and the
+        // program cache key — neither of which clone copies.
+        if (mat.__reactorLit) Reactor3D.litMaterial(cloned);
         // Material.clone copies userData through JSON, which degrades a
         // stored base colour to its hex number; rebuild it as a Colour or
         // every later read of .r comes back undefined.
@@ -10021,6 +10598,32 @@ Reactor3D.decodeRigWeightsBinary = function(buffer) {
         at += span * 2;
     }
     return out;
+};
+
+/**
+ * Fetch the distance levels model.json lists for a loaded static template
+ * and attach them. Absent list, absent files: nothing is asked for, nothing
+ * is logged. Instances pick the levels up on their next frame.
+ */
+Reactor3D.loadLodLevels = function(template, key, name, baseUrl) {
+    if (!template || !key || typeof XMLHttpRequest === "undefined") return;
+    this.loadModelSidecar(name).then(sidecar => {
+        const files = sidecar && Array.isArray(sidecar.lods) ? sidecar.lods : null;
+        if (!files || !files.length || (this._lodCache && this._lodCache[key])) return;
+        const safe = files.filter(file => typeof file === "string" && file && !/[\\/]/.test(file) && file.indexOf("..") < 0);
+        if (!safe.length) return;
+        Promise.all(safe.map(file => new Promise(resolve => {
+            const xhr = new XMLHttpRequest();
+            xhr.open("GET", baseUrl + file);
+            xhr.responseType = "arraybuffer";
+            xhr.onload = () => resolve(xhr.status < 400 ? xhr.response : null);
+            xhr.onerror = () => resolve(null);
+            xhr.send();
+        }))).then(buffers => {
+            const loaded = buffers.filter(Boolean);
+            if (loaded.length) this.attachLodLevels(template, key, loaded);
+        });
+    });
 };
 
 Reactor3D.loadModelSidecar = function(name) {
@@ -11979,7 +12582,12 @@ Reactor3D.EffekseerScene = {
     shouldMeasure(frames, track) {
         if (frames === 3) return true;
         const settled = track && track.history && track.history.length >= this.MEASURE_HISTORY;
-        return frames % (settled ? this.MEASURE_EVERY * 3 : this.MEASURE_EVERY) === 0;
+        // A settled look is a whole-overlay drawImage plus a readback — a
+        // GPU sync of about ten milliseconds, which at every thirtieth frame
+        // was a visible hitch twice a second on a map with an always-on
+        // effect. Every three hundred frames keeps a slowly growing effect
+        // honest and costs a hitch every five seconds instead.
+        return frames % (settled ? this.MEASURE_EVERY * 30 : this.MEASURE_EVERY) === 0;
     },
 
     setPass(which) {
@@ -12038,6 +12646,7 @@ Reactor3D.EffekseerScene = {
                 efx.beginDraw();
                 efx.drawHandle(handle);
                 efx.endDraw();
+                if (typeof Graphics !== "undefined" && Graphics.settleEffekseerState) Graphics.settleEffekseerState();
                 gl.disable(gl.SCISSOR_TEST);
                 // The box, copied out before the next play draws over it: the
                 // GL origin is the bottom left, the canvas's the top left.
@@ -12615,6 +13224,11 @@ Reactor3D.MapScene.prototype.syncCharacterModels = function(characters) {
     const group = this.modelsGroup();
     if (!this._modelInstances) this._modelInstances = new Map();
     const live = new Set();
+    // The camera is aimed for this frame before the models are synced;
+    // distance levels are picked against where it stands.
+    const lodViewport = Reactor3D.viewport();
+    const lodCamera = lodViewport && lodViewport.camera ? lodViewport.camera() : null;
+    const lodEye = lodCamera ? lodCamera.position : null;
     for (const character of characters || []) {
         const spec = Reactor3D.characterModelSpec(character);
         if (!spec) continue;
@@ -12658,6 +13272,9 @@ Reactor3D.MapScene.prototype.syncCharacterModels = function(characters) {
                         mat.__reactorModel = true;
                         mat.fog = false;
                         if (!mat.userData.baseColor) mat.userData.baseColor = mat.color.clone();
+                        // Whatever loader or clone it came through, a model
+                        // standing on a lit map takes the lights.
+                        Reactor3D.litMaterial(mat);
                         if (this._materials.indexOf(mat) < 0) this._materials.push(mat);
                     }
                 });
@@ -12678,6 +13295,7 @@ Reactor3D.MapScene.prototype.syncCharacterModels = function(characters) {
             Math.round(character._realY)
         );
         object.scale.set(scale * stretch[0], scale * stretch[1], scale * stretch[2]);
+        if (lodEye) Reactor3D.pickLod(object, Reactor3D.instanceSpan(object), lodEye, holder.spec);
         Reactor3D.applyEventModelPose(object, spec, Reactor3D.characterModelDir8(character));
         // Facing is discrete, so the pose above pivots a long model 90 degrees
         // in one frame — the ends of a nine-tile vehicle teleport sideways.
@@ -12871,6 +13489,7 @@ Reactor3D.MapScene.prototype.syncCharacterBillboards = function(sprites) {
             // front and behind settle per pixel against any mesh while the
             // drawn shape keeps its lean.
             Reactor3D.straightenBillboardDepth(material);
+            Reactor3D.litMaterial(material);
             const object = new THREE.Mesh(geometry, material);
             group.add(object);
             holder = { texture, geometry, object, stamp: "", view: null, above: false };

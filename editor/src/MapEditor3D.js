@@ -3468,6 +3468,7 @@ class MapEditor3D {
         if (!this.renderer || !this.camera || !this.mapScene) return;
         this.animateAutotiles(now);
         this.animateEventPreviews(now);
+        this.pickPropLods();
         this.projectController?.videoSurfacePreviewManager?.updateThree?.();
         // Lights are map content: feed the compositor on every drawn frame,
         // whether or not the Lighting panel is open.
@@ -3538,6 +3539,21 @@ class MapEditor3D {
             if (this.grid && gridVisible !== null) this.grid.visible = gridVisible;
             if (this.hoverCell && hoverVisible !== null) this.hoverCell.visible = hoverVisible;
             this.mapScene.setPass('all');
+        }
+    }
+
+    /**
+     * Distance levels for the placed props, from this view's camera — the
+     * same swap the game makes, so a far prop costs what it costs in play.
+     */
+    pickPropLods() {
+        const group = this.propGroup;
+        if (!group || !this.camera || typeof Reactor3D === 'undefined' || !Reactor3D.pickLod) return;
+        const eye = this.camera.position;
+        for (const object of group.children) {
+            if (object.userData && object.userData.lodKey) {
+                Reactor3D.pickLod(object, Reactor3D.instanceSpan(object), eye);
+            }
         }
     }
 

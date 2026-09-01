@@ -1454,6 +1454,42 @@ Graphics.canvasPixelRatio = function() {
  */
 Graphics.maxCanvasPixelRatio = 4;
 
+/**
+ * The GPU's class, read once from the renderer string when the app is
+ * created: "weak" for integrated and software renderers, "full" otherwise,
+ * "unknown" when the string cannot be read. A weak GPU keeps the 3D passes
+ * at one backing pixel per screen pixel and two-sample antialiasing: on an
+ * Intel UHD or a phone GPU the stretched-window defaults meant three
+ * multisampled render targets at up to sixteen times the pixel area, which
+ * is the difference between a playable map and a slideshow. A capable GPU
+ * keeps sharp-first exactly as before. `Graphics.gpuTierOverride = "full"`
+ * (or "weak") in a plugin pins the choice.
+ */
+Graphics.gpuTier = "unknown";
+Graphics.gpuTierOverride = null;
+Graphics.weakGpuPattern = /\b(Intel|UHD|Iris|HD Graphics|Mali|Adreno|PowerVR|VideoCore|SwiftShader|llvmpipe|Software|Microsoft Basic Render|Mesa)\b/i;
+
+Graphics._sampleGpuTier = function(renderer) {
+    let description = "";
+    try {
+        const gl = renderer && (renderer.gl || (renderer.context && renderer.context.gl));
+        if (gl) {
+            const info = gl.getExtension("WEBGL_debug_renderer_info");
+            description = String((info && gl.getParameter(info.UNMASKED_RENDERER_WEBGL)) || gl.getParameter(gl.RENDERER) || "");
+        }
+    } catch (e) {
+        description = "";
+    }
+    this.gpuDescription = description;
+    const tier = this.gpuTierOverride || (!description ? "unknown" : (this.weakGpuPattern.test(description) ? "weak" : "full"));
+    this.gpuTier = tier;
+    if (tier === "weak") {
+        this.maxCanvasPixelRatio = Math.min(this.maxCanvasPixelRatio, 1);
+        if (typeof Reactor3D !== "undefined" && Reactor3D.renderTargetSamples > 2) Reactor3D.renderTargetSamples = 2;
+    }
+    return tier;
+};
+
 Graphics._updateRealScale = function() {
     if (this._stretchEnabled && this._width > 0 && this._height > 0) {
         const h = this._stretchWidth() / this._width;
@@ -1745,6 +1781,7 @@ Graphics._createPixiApp = async function() {
             if (typeof window.installLegacyRendererStubs === "function") {
                 window.installLegacyRendererStubs(app.renderer);
             }
+            if (typeof this._sampleGpuTier === "function") this._sampleGpuTier(app.renderer);
             // Opaque again: the alpha channel exists now, and only a 3D map
             // asks for it to be used.
             if (app.renderer && app.renderer.background) app.renderer.background.alpha = 1;
@@ -1841,6 +1878,7 @@ window.testEffekseerOverlay = function(effectName) {
         efx.beginDraw();
         if (handle.exists) efx.drawHandle(handle);
         efx.endDraw();
+        Graphics.settleEffekseerState();
         // Count changed pixels
         if (frameCount === 5 || frameCount === 30 || frameCount === 60) {
             const post = new Uint8Array(overlay.width * overlay.height * 4);
@@ -1979,11 +2017,42 @@ Graphics._createEffekseerContext = function() {
         this._effekseer = effekseer.createContext();
         if (this._effekseer) {
             this._effekseer.init(efxGL);
-            this._effekseer.setRestorationOfStatesFlag(true);
+            // ...but only until the first draw has re-asserted it. Reading
+            // the state back is a synchronous round trip to the GPU process
+            // per draw (15 ms a frame measured beside a 3D map), and this
+            // context is Effekseer's alone. Re-armed on focus/visibility,
+            // the events behind the reset that made the flag necessary.
+            this.rearmEffekseerState();
+            this._listenEffekseerStateResets();
         }
     } catch (e) {
         console.error("Graphics._createEffekseerContext failed:", e);
     }
+};
+
+/** Make the next Effekseer draw read back and restore the context's GL state. */
+Graphics.rearmEffekseerState = function() {
+    if (!this._effekseer) return;
+    this._effekseerRestorePending = true;
+    try { this._effekseer.setRestorationOfStatesFlag(true); } catch (e) {}
+};
+
+/** After `endDraw()`: the restoring draw has happened, stop paying for it. */
+Graphics.settleEffekseerState = function() {
+    if (!this._effekseerRestorePending || !this._effekseer) return;
+    this._effekseerRestorePending = false;
+    try { this._effekseer.setRestorationOfStatesFlag(false); } catch (e) {}
+};
+
+Graphics._listenEffekseerStateResets = function() {
+    if (this._effekseerStateListening) return;
+    this._effekseerStateListening = true;
+    window.addEventListener("focus", () => this.rearmEffekseerState());
+    document.addEventListener("visibilitychange", () => {
+        if (!document.hidden) this.rearmEffekseerState();
+    });
+    const overlay = this._effekseerCanvas;
+    if (overlay) overlay.addEventListener("webglcontextrestored", () => this.rearmEffekseerState());
 };
 
 //:::::::::::::::::::::::::::::::::::::::::::::::::::::::::
@@ -4032,9 +4101,20 @@ Tilemap.prototype._isOverpassPosition = function(/*mx, my*/) {
 };
 
 Tilemap.prototype._sortChildren = function() {
-    const before = PIXI.TextureSource ? this.children.slice() : null;
-    this.children.sort(this._compareChildOrder.bind(this));
-    if (before && before.some((child, index) => child !== this.children[index])) {
+    // Every frame, for every child: an already-sorted list costs one
+    // comparison pass and no allocation. Only a list that is out of order
+    // is sorted — and then its order has changed by definition, so v8's
+    // render group is told without copying the list to find out.
+    const children = this.children;
+    const compare = this._boundCompareChildOrder
+        || (this._boundCompareChildOrder = this._compareChildOrder.bind(this));
+    let sorted = true;
+    for (let i = 1; i < children.length; i++) {
+        if (compare(children[i - 1], children[i]) > 0) { sorted = false; break; }
+    }
+    if (sorted) return;
+    children.sort(compare);
+    if (PIXI.TextureSource) {
         const renderGroup = this.renderGroup || this.parentRenderGroup;
         if (renderGroup) renderGroup.structureDidChange = true;
     }

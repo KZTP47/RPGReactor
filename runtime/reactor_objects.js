@@ -6415,8 +6415,42 @@ Game_Map.prototype.refreshCommonEventTriggerCache = function() {
     }
 };
 
+// The live event list, rebuilt at most once a frame.
+//
+// `_events` is indexed by event id, and model props stand in the map as
+// synthetic events from id 10000 up (Reactor3D.PROP_EVENT_BASE), so on a
+// map with props the array is ten thousand slots long and almost entirely
+// holes. Stock MZ filters it on every call — and `isEventRunning`,
+// `isAnyEventStarting`, `canMove`, `setupStartingMapEvent`, the 3D sync
+// and every plugin that asks call it hundreds of times a frame. On the
+// Demo's start map that was 5 ms of the frame walking holes. The memo
+// lives in a WeakMap rather than on the map object, so JsonEx never
+// serializes a second copy of every event into a save. It is keyed on the
+// array, its length and the frame counter: a spawner that assigns into an
+// existing hole mid-frame is seen from the next frame on.
+const reactorEventLists = new WeakMap();
 Game_Map.prototype.events = function() {
-    return this._events.filter(event => !!event);
+    const events = this._events;
+    if (!events) return [];
+    const frame = typeof Graphics !== "undefined" ? Graphics.frameCount : -1;
+    const memo = reactorEventLists.get(events);
+    if (memo && memo.length === events.length && memo.frame === frame) return memo.list;
+    const list = [];
+    if (events.length > 512) {
+        // Sparse: visit the slots that exist, in index order, not the holes.
+        const keys = Object.keys(events);
+        for (let i = 0; i < keys.length; i++) {
+            const event = events[keys[i]];
+            if (event) list.push(event);
+        }
+    } else {
+        for (let i = 0; i < events.length; i++) {
+            const event = events[i];
+            if (event) list.push(event);
+        }
+    }
+    reactorEventLists.set(events, { length: events.length, frame, list });
+    return list;
 };
 
 Game_Map.prototype.event = function(eventId) {

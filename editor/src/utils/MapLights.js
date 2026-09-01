@@ -55,6 +55,7 @@
             y: number(raw.y, 0, -10000, 10000),
             height: number(raw.height, 0, 0, 512),
             yaw: number(raw.yaw, 0, -100000, 100000),
+            pitch: number(raw.pitch, 0, -90, 90),
             radius: number(raw.radius, type === 'spot' ? DEFAULT_CONE_LENGTH : 3, 0.1, 200),
             angle: number(raw.angle, DEFAULT_CONE_ANGLE, 1, 179),
             color: colour(raw.color !== undefined ? raw.color : raw.colour),

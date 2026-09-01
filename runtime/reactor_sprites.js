@@ -1713,6 +1713,7 @@ Sprite_Animation.prototype._render = function(renderer) {
         Graphics.effekseer.beginDraw();
         Graphics.effekseer.drawHandle(this._handle);
         Graphics.effekseer.endDraw();
+        Graphics.settleEffekseerState();
         this.resetViewport(renderer);
         this.onAfterRender(renderer);
     }
@@ -1750,6 +1751,7 @@ Sprite_Animation.prototype._doEffekseerDraw = function(renderer, composited) {
     Graphics.effekseer.beginDraw();
     Graphics.effekseer.drawHandle(this._handle);
     Graphics.effekseer.endDraw();
+    Graphics.settleEffekseerState();
     this.resetViewport(renderer);
 };
 
@@ -4481,7 +4483,11 @@ Spriteset_Map.prototype.createReactor3DSprite = function(viewport, scene) {
     // cover what is beneath it, and fog and weather are things light falls on.
     // On the spriteset itself rather than the base sprite, so the screen tone
     // does not dim the lights along with the world.
+    // Only for the flat quads: in volume mode the lights are in the world's
+    // own materials and bodies, and an extra full-screen pass would add
+    // nothing to the frame but its cost.
     this._reactor3dLights = Reactor3D.wantsLights3D($dataMap)
+        && Reactor3D.lightModeFor($dataMap) === "flat"
         ? make(this, this.children.length, "lights")
         : null;
     if (this._reactor3dLights) {
@@ -4708,6 +4714,7 @@ Spriteset_Map.prototype.updateReactorLighting2D = function() {
     // The 3D light pass renders these same lights when it exists; the flat
     // composite covers every other case, including a 3D map that fell back.
     const active = !this._reactor3dLights
+        && !(this._reactor3dBelow && Reactor3D.lightModeFor($dataMap) === "volume")
         && typeof $dataMap !== "undefined" && Reactor3D.lightingEnabled($dataMap);
     if (!active) {
         if (this._reactorFlatLights) this.destroyReactorLighting2D();

@@ -36,5 +36,9 @@
       0.8638193291004209,
       0.27448648788509394
     ]
-  }
+  },
+  "lods": [
+    "Meshy_AI_Aether_Core_Tower_0829202342_texture.lod1.glb",
+    "Meshy_AI_Aether_Core_Tower_0829202342_texture.lod2.glb"
+  ]
 }

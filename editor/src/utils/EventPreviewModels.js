@@ -55,6 +55,18 @@
                         const sidecar = JSON.parse(fs.readFileSync(path.join(project.path, '3d', ...spec.name.split('/'), 'model.json'), 'utf8'));
                         loaded.userData.reactorTransform = Reactor3D.readModelTransform(sidecar);
                         loaded.userData.reactorSidecar = sidecar;
+                        // Distance levels the import wrote beside the source.
+                        if (Array.isArray(sidecar.lods) && Reactor3D.attachLodLevels && !loaded.userData.animated) {
+                            const buffers = [];
+                            for (const name of sidecar.lods) {
+                                if (typeof name !== 'string' || !name || /[\\/]/.test(name) || name.includes('..')) continue;
+                                const lodPath = path.join(path.dirname(filePath), name);
+                                if (!fs.existsSync(lodPath)) continue;
+                                const lodData = fs.readFileSync(lodPath);
+                                buffers.push(lodData.buffer.slice(lodData.byteOffset, lodData.byteOffset + lodData.byteLength));
+                            }
+                            if (buffers.length) Reactor3D.attachLodLevels(loaded, key, buffers);
+                        }
                     } catch (error) {
                         loaded.userData.reactorTransform = null;
                         loaded.userData.reactorSidecar = null;
