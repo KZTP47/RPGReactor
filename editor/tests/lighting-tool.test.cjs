@@ -158,9 +158,29 @@ test('a light is clickable across its whole glow, at any zoom, with feedback', (
     assert.match(manager, /new THREE\.RingGeometry\(0\.42, 0\.55, 40\)/);
 });
 
+test('the tray drags whole lights onto the map, presets and compounds alike', () => {
+    // The interaction the tool is built around now: glowing preset chips
+    // dragged out of the tray, the ghost riding the cursor, templates that
+    // carry flicker/pulse/colour, and a compound that drops a whole fixture
+    // under one fresh group tag. CDP-verified: the Neon chip dragged onto
+    // the 3D map placed #ff2d95 (2026-08-31).
+    const manager = read('src/LightingManager.js');
+    assert.match(manager, /_presets\(\) \{/);
+    assert.match(manager, /_chipDown\(event, preset\)/);
+    assert.match(manager, /_tileFromClient\(clientX, clientY\)/);
+    assert.match(manager, /_presetIcon\(preset\)/);
+    assert.match(manager, /_presetSvg\(preset\.key, preset\.template\.color\)/);
+    assert.match(manager, /Array\.isArray\(template\.compound\)/);
+    assert.match(manager, /Object\.assign\(\{\}, part, at, \{ tag \}\)/);
+    // Placement is self-arming on an unlit map and always narrated.
+    assert.match(manager, /if \(!this\.lights\(\)\.length\) this\.armPlacement\('point'\);/);
+    assert.match(manager, /lit\.placing/);
+    assert.match(manager, /_moveGhost\(at\)/);
+});
+
 test('every panel string is a lit.* key present in the locale tables', () => {
     const manager = read('src/LightingManager.js');
-    const used = new Set([...manager.matchAll(/'(lit\.[A-Za-z]+)'/g)].map(match => match[1]));
+    const used = new Set([...manager.matchAll(/'(lit\.[A-Za-z.]+[A-Za-z])'/g)].map(match => match[1]));
     assert.ok(used.size >= 25, 'the panel is fully keyed (' + used.size + ' keys)');
     const i18n = read('src/I18nManager.js');
     for (const key of used) {
