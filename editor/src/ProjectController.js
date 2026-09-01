@@ -391,6 +391,16 @@ class ProjectController {
         return mapDirty || this.isProjectDirty() || !!this.databaseManager?.isDirty?.();
     }
 
+    /** A themed save-problem alert; the native one only with no UI at all. */
+    async _alertSaveProblem(message) {
+        const text = this._tt(message);
+        if (this.uiManager?.showAlert) {
+            await this.uiManager.showAlert(this._tt('Save'), text);
+        } else if (typeof alert === 'function') {
+            alert(text);
+        }
+    }
+
     async confirmUnsavedChanges(scope = 'project') {
         if (!this.hasUnsavedChanges(scope)) return true;
 
@@ -409,7 +419,7 @@ class ProjectController {
         if (decision === 'save') {
             if (scope === 'map') {
                 const saved = this.tilemapManager?.saveMap?.() === true;
-                if (!saved) alert(this._tt('The map could not be saved. The current view will remain open.'));
+                if (!saved) await this._alertSaveProblem('The map could not be saved. The current view will remain open.');
                 return saved;
             }
             return await this.saveAll();
@@ -1339,21 +1349,21 @@ class ProjectController {
         if (this.tilemapManager?.currentMap && this.tilemapManager.saveMap() !== true) {
             restoreSavedState();
             this.uiManager.updateStatus('Error saving current map');
-            alert(this._tt('The current map could not be saved.'));
+            await this._alertSaveProblem('The current map could not be saved.');
             return false;
         }
 
         if (!await this.databaseManager.saveAllData(this.currentProject.path)) {
             restoreSavedState();
             this.uiManager.updateStatus('Error saving database');
-            alert(this._tt('One or more database files could not be saved.'));
+            await this._alertSaveProblem('One or more database files could not be saved.');
             return false;
         }
 
         if (!await this.projectManager.saveProject(this.currentProject)) {
             restoreSavedState();
             this.uiManager.updateStatus('Error saving project');
-            alert(this._tt('The project metadata or map list could not be saved.'));
+            await this._alertSaveProblem('The project metadata or map list could not be saved.');
             return false;
         }
 
@@ -1365,7 +1375,7 @@ class ProjectController {
                 restoreSavedState();
                 console.error('Error saving to browser storage:', error);
                 this.uiManager.updateStatus('Error saving to browser storage');
-                alert(this._tt('The project could not be saved to browser storage.'));
+                await this._alertSaveProblem('The project could not be saved to browser storage.');
                 return false;
             }
         }
