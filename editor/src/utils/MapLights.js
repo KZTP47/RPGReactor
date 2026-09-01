@@ -61,6 +61,7 @@
             color: colour(raw.color !== undefined ? raw.color : raw.colour),
             intensity: number(raw.intensity, 1, 0, 4),
             occlude: raw.occlude !== false,
+            shadow: raw.shadow !== false,
             on: raw.on !== false,
             tag: raw.tag ? String(raw.tag) : '',
             attach: raw.attach && typeof raw.attach === 'object'

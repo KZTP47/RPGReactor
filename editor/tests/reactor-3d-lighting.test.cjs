@@ -363,7 +363,9 @@ test('lights are geometry, not simulated lights', () => {
     // Nothing per-light — and, since the ambient is a plain multiplier on the
     // material colour, no three light of any kind.
     assert.doesNotMatch(three, /new THREE\.AmbientLight/);
-    assert.doesNotMatch(three, /new THREE\.PointLight/,
+    // The one point light is the shadow rig's: off-scene, at zero intensity,
+    // there only to render a depth cube (see Reactor3D.Shadows).
+    assert.deepEqual(three.match(/new THREE\.PointLight\([^)]*\)/g), ['new THREE.PointLight(0xffffff, 0, 1)'],
         'a light per lantern is what broke the shader');
     assert.doesNotMatch(three, /new THREE\.SpotLight/);
 

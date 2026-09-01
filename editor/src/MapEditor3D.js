@@ -1027,6 +1027,8 @@ class MapEditor3D {
         mesh.userData.event = event;
         mesh.userData.height = height;
         this.eventGroup.add(mesh);
+        // A sprite casts its cut-out; the placeholder cube casts nothing.
+        if (sprite && Reactor3D.Shadows) Reactor3D.Shadows.markCaster(mesh, false);
         this.pickables.push(mesh);
 
         /*
@@ -1525,6 +1527,8 @@ class MapEditor3D {
             object.userData.event = event;
             object.userData.modelPreview = true;
             group.add(object);
+            // An animated preview changes shape each frame; a still one is cached.
+            if (Reactor3D.Shadows) Reactor3D.Shadows.markCaster(object, !!template.userData.animated);
             // Clickable by its box, like a prop: a raycast through a heavy
             // mesh on every hover is what jitters.
             object.userData.pickBox = new THREE.Box3().setFromObject(object);
@@ -1573,6 +1577,7 @@ class MapEditor3D {
                 object.traverse(node => { node.userData.propId = prop.id; });
                 this.placeProp(object, prop, mapData);
                 group.add(object);
+                if (Reactor3D.Shadows) Reactor3D.Shadows.markCaster(object, !!template.userData.animated);
                 // Picking tests the box, not the mesh: a raycast through a
                 // million triangles on every mouse move is what jitters.
                 object.userData.pickBox = new THREE.Box3().setFromObject(object);
@@ -3491,6 +3496,9 @@ class MapEditor3D {
         // Lights are map content: feed the compositor on every drawn frame,
         // whether or not the Lighting panel is open.
         window.reactor?.lightingManager?.feed3D?.();
+        // The shadow maps, before any pass hides a group: the same step the
+        // game's viewport takes, from the same lights the feed just synced.
+        this.mapScene.renderShadows?.(this.renderer, this.currentMap());
         const scene = this.mapScene.scene();
         const background = scene.background;
         const autoClear = this.renderer.autoClear;

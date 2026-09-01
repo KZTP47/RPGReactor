@@ -6,6 +6,78 @@ the fs-backed editor prefs store (so future NW bumps stop resetting prefs),
 cycle on project change, and (optional) a web audio extension manifest to
 silence the one-per-track BGM probe 404.
 
+## 2026-09-01 — Shadow maps (runtime 20260901.4)
+
+Owner: "we do actually need shadows as well, should be based on the shape
+of the 3d model... an option that doesn't cause too much performance
+issues." `Reactor3D.Shadows` in reactor_3d.js, after `litMaterial`.
+- **Maps.** three r185's own shadow pass (`renderer.shadowMap.render(
+  lights, scene, camera)`) driven from OFF-SCENE `THREE.PointLight`s at
+  intensity 0 (spots use a cube too — one sampler kind, one code path).
+  r185 renders point shadows into a `WebGLCubeRenderTarget` with a
+  `CubeDepthTexture` (compare mode) — sampled as `samplerCubeShadow` with
+  hardware PCF; the compare depth is rebuilt from the major axis of the
+  light-to-fragment vector exactly as three's `getPointShadow` does. Lit
+  materials get a second program variant (`lightGlsl(true, taps)`, cache
+  key `|shadowsN`) declaring `rrShadowMapK`/`rrShadowDynK` for
+  `SHADOW_SLOTS = 4` plus `rrLightShadow[32]` (slot per light, -1 none)
+  and `rrShadowInfo[4]` (near, far, dynOn, softness). No THREE light is
+  ever in the scene, so no program's light counts change.
+- **The pass must run INSIDE `renderer.render`.** `renderBufferDirect`
+  reads `currentRenderState`, which is null outside a render — the first
+  cut crashed the game with "Cannot read properties of null (reading
+  'state')". `scene.onBeforeRender` fires BEFORE the state is set
+  (three.js:77636 vs 77638); a mesh's `onBeforeRender` fires inside the
+  draw loop with it set (the Reflector pattern). So: a zero-vertex
+  "shadow-sentinel" mesh at renderOrder -1e9 on the scene root runs
+  `_flush()` first in every pass; `render()` (called from
+  `Viewport.renderPass` once a frame after `updateMatrixWorld`, and
+  from `MapEditor3D.render` after `feed3D`) only decides and sets
+  `_pending`. On activation the flush renders every slot's maps BEFORE
+  `_active` flips and materials refresh — a shadow sampler bound to no
+  depth texture is a draw-time INVALID_OPERATION in WebGL2.
+- **Static / dynamic.** `markCaster(root, dynamic)`: meshes get
+  `castShadow`, layer 1 (static) or 2 (dynamic), and a
+  `customDistanceMaterial` with polygonOffset (2, 4) — without the slope
+  offset a console a hand's width from its light shaded itself solid.
+  three copies map/alphaTest/side onto the custom material per draw, so
+  plain surfaces share one and alpha-tested billboards get their own
+  (the map is part of the program). Probe `THREE.Camera`s with
+  `layers.set(1|2)` are passed as the `camera` argument — that is what
+  `renderObject` tests layers against. Static roots: props (event id ≥
+  `PROP_EVENT_BASE` — NOT `isEventProp`, which is the claimed-tile set)
+  and editor props/still previews; dynamic: event models, character
+  billboards, animated editor previews. Static maps re-render on a
+  transform hash over the static roots + `_lodSwaps` + `invalidate()`,
+  drawn at the COARSEST level (`_atCoarsestLod`; pickLod now stamps
+  `userData.lodKey` on instances). Dynamic maps render only when a
+  dynamic root's sphere is within the slot's far.
+- **Slots.** `syncVolumeLights` hands `setCandidates` every placed light
+  with `shadow !== false` (id, loop index, world position, gap to focus);
+  `assign()` keeps a chosen light in its slot. `farFor()` holds a far
+  plane a little past the reach and only moves it when the reach leaves
+  the band — flicker/pulse otherwise re-rendered the statics every frame
+  (seen: `lastFrame.statics = 4` on a still scene). Quality by
+  `Graphics.gpuTier`: full 4 slots / 512 / 5 Vogel taps, weak 2 / 256 / 1.
+- **Schema.** Light `shadow` (default true) in readMapLights,
+  MapLights.js, LightingManager (resolvedLights, feed3D — which now also
+  carries `id`), panel flag `lit.shadow` "Casts shadows" (18 locales);
+  sidecar `lighting.shadows === false` and `Reactor3D.SHADOWS = "off"`.
+- **Verified** with `nw-game-profile.cjs --setup --shot` on the Demo (a
+  `--setup` script may push lights into `$dataMap.reactor3d.lights`,
+  reset `Reactor3D._nativeNorm = null`, `$gamePlayer.locate`, and
+  `Reactor3D.Camera.change({mode:"fixed"}, 0)`): consoles throw their
+  outlines across the floor, the tank hides the floor behind it, the
+  player is shaded by the hull; 5.66 vs 5.55 ms/frame, dynamics 4/frame,
+  statics 0/frame once cached. Slots go to the lights nearest the PLAYER,
+  so a probe light far from the player gets none.
+- Not done: the editor's 3D view was not exercised live (the owner had
+  the Demo open; same MapScene path, needs a look); the map's own sheet
+  meshes and room walls do not cast (a wall still lets light through);
+  in-shader tile billboards (foliage/upright cut-outs) cannot cast
+  through three's depth pass (their vertex patch is not in it); no
+  per-light shadow resolution or intensity; no game Options entry.
+
 ## 2026-09-01 — Quadric decimator, LOD worker, pointer BVH (editor-only)
 
 - `editor/src/utils/QuadricDecimator.js` (`RRQuadricDecimator.decimate(

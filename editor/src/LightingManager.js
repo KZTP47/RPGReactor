@@ -399,6 +399,7 @@ class LightingManager {
                 id: light.id, type: light.type, x, y, height: light.height,
                 radius, intensity, angle: light.angle, yaw: light.yaw, pitch: light.pitch,
                 colour: this._colourNumber(light.color), occlude: light.occlude,
+                shadow: light.shadow,
                 animated: !!(light.pulse || light.flicker),
                 attached: !!light.attach
             });
@@ -980,9 +981,10 @@ class LightingManager {
             colour: this._colourNumber(ambient.ambientColour)
         });
         Reactor3D.setLights(this.resolvedLights(this._frame).map(light => ({
-            type: light.type, x: light.x, y: light.y, height: light.height,
+            id: light.id, type: light.type, x: light.x, y: light.y, height: light.height,
             radius: light.radius, colour: light.colour, intensity: light.intensity,
-            angle: light.angle, yaw: -light.yaw, pitch: light.pitch, occlude: light.occlude
+            angle: light.angle, yaw: -light.yaw, pitch: light.pitch, occlude: light.occlude,
+            shadow: light.shadow
         })));
         const map = this.map();
         const focus = map ? { x: map.width / 2, y: map.height / 2 } : null;
@@ -1588,7 +1590,7 @@ class LightingManager {
 
         const flags = this._el('div');
         flags.style.cssText = 'display:flex;gap:14px;';
-        for (const [key, label] of [['on', 'lit.on'], ['occlude', 'lit.occlude']]) {
+        for (const [key, label] of [['on', 'lit.on'], ['occlude', 'lit.occlude'], ['shadow', 'lit.shadow']]) {
             const wrap = this._el('label');
             wrap.style.cssText = 'display:flex;gap:5px;align-items:center;font-size:11px;';
             const input = this._input('checkbox', '', field => {

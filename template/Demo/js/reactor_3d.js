@@ -998,6 +998,8 @@ Reactor3D.Viewport.prototype.renderPass = function(mapScene, which, slot) {
         if (this._matrixFrame !== frame) {
             this._matrixFrame = frame;
             scene.updateMatrixWorld();
+            // The shadow maps, while every group is still visible.
+            if (mapScene.renderShadows) mapScene.renderShadows(this._renderer, null);
         }
     }
     mapScene.setPass(which);
@@ -1037,6 +1039,7 @@ Reactor3D.Viewport.prototype.isDetached = function() {
 
 Reactor3D.Viewport.prototype.destroy = function() {
     if (this._shared) this._disposeTargets();
+    if (this._renderer && Reactor3D.Shadows._renderer === this._renderer) Reactor3D.Shadows.dispose();
     if (this._renderer) {
         this._renderer.dispose();
         this._renderer = null;
@@ -5991,6 +5994,9 @@ Reactor3D.MapScene.prototype.syncVolumeLights = function(declared, focus) {
     const aim = uniforms.rrLightAim.value;
     const bodies = this.lightBodies();
     const mapData = typeof $dataMap !== "undefined" ? $dataMap : null;
+    const candidates = [];
+    const fx = focus ? focus.x : 0;
+    const fy = focus ? focus.y : 0;
     let count = 0;
     for (const light of list) {
         const radius = light.radius > 0 ? light.radius : 0;
@@ -6035,10 +6041,27 @@ Reactor3D.MapScene.prototype.syncVolumeLights = function(declared, focus) {
             x, y, z, radius, spot, r, g, b, angle, ax, ay, az,
             intensity: light.intensity === undefined ? 1 : light.intensity
         });
+        if (light.shadow !== false) {
+            candidates.push({
+                index: count,
+                id: light.id !== undefined && light.id !== null ? String(light.id) : "#" + count,
+                x, y, z, radius,
+                gap: Math.hypot((light.x || 0) - fx, (light.y || 0) - fy) - radius
+            });
+        }
         count++;
     }
     uniforms.rrLightCount.value = count;
     bodies.trim(count);
+    Reactor3D.Shadows.setCandidates(candidates);
+};
+
+/**
+ * The frame's shadow maps, before the first pass draws: see `Reactor3D.Shadows`.
+ */
+Reactor3D.MapScene.prototype.renderShadows = function(renderer, mapData) {
+    if (!this._scene) return;
+    Reactor3D.Shadows.render(renderer, this._scene, mapData);
 };
 
 /**
@@ -6573,42 +6596,124 @@ Reactor3D.lightUniforms = function() {
         rrLightPos: { value: new Float32Array(n * 4) },     // x, y, z, reach
         rrLightColor: { value: new Float32Array(n * 4) },   // r, g, b (× intensity × gain), spot flag
         rrLightAim: { value: new Float32Array(n * 4) },     // aim x, y, z, cos(half angle)
-        rrAmbient: { value: new Float32Array([1, 1, 1]) }
+        rrAmbient: { value: new Float32Array([1, 1, 1]) },
+        // Which shadow slot each light samples, -1 for none.
+        rrLightShadow: { value: new Float32Array(n).fill(-1) },
+        // Per slot: near, far, dynamic map live, softness (in cube units).
+        rrShadowInfo: { value: new Float32Array(this.SHADOW_SLOTS * 4) },
+        rrShadowBias: { value: this.SHADOW_BIAS }
     };
+    for (let k = 0; k < this.SHADOW_SLOTS; k++) {
+        this._lightUniforms["rrShadowMap" + k] = { value: null };
+        this._lightUniforms["rrShadowDyn" + k] = { value: null };
+    }
     return this._lightUniforms;
 };
 
-Reactor3D.LIGHT_GLSL = [
-    "uniform int rrLightCount;",
-    "uniform vec4 rrLightPos[" + Reactor3D.SHADER_LIGHTS + "];",
-    "uniform vec4 rrLightColor[" + Reactor3D.SHADER_LIGHTS + "];",
-    "uniform vec4 rrLightAim[" + Reactor3D.SHADER_LIGHTS + "];",
-    "uniform vec3 rrAmbient;",
-    "varying vec3 vRRWorldPos;",
-    "vec3 rrLight(vec3 p) {",
-    "\tvec3 sum = rrAmbient;",
-    "\tfor (int i = 0; i < " + Reactor3D.SHADER_LIGHTS + "; i++) {",
-    "\t\tif (i >= rrLightCount) break;",
-    "\t\tvec4 lp = rrLightPos[i];",
-    "\t\tvec3 d = p - lp.xyz;",
-    "\t\tfloat dist = length(d);",
-    // The same falloff the flat pool's picture carries: (1 - d/r)^2.
-    "\t\tfloat fall = 1.0 - dist / max(lp.w, 0.001);",
-    "\t\tif (fall <= 0.0) continue;",
-    "\t\tfall *= fall;",
-    "\t\tvec4 lc = rrLightColor[i];",
-    "\t\tif (lc.w > 0.5) {",
-    "\t\t\tvec4 aim = rrLightAim[i];",
-    "\t\t\tfloat c = dot(d / max(dist, 0.0001), aim.xyz);",
-    // Soft at the rim rather than a cut-out cone: full inside the inner
-    // third of the spread, fading to nothing at the authored edge.
-    "\t\t\tfall *= smoothstep(aim.w, mix(aim.w, 1.0, 0.35), c);",
-    "\t\t}",
-    "\t\tsum += lc.rgb * fall;",
-    "\t}",
-    "\treturn sum;",
-    "}"
-].join("\n") + "\n";
+/**
+ * The shadow term, when a program carries one: each slot is a cube depth
+ * map rendered from a light (three's own shadow pass, see `Reactor3D.Shadows`)
+ * and sampled with hardware depth comparison. A light with a slot multiplies
+ * its falloff by the visibility of the fragment from the source: the static
+ * map holds the props and the map's models, the dynamic one whoever moved
+ * this frame, and the darker of the two wins.
+ */
+Reactor3D.shadowGlsl = function(taps) {
+    const slots = this.SHADOW_SLOTS;
+    const lines = [
+        "#define RR_SHADOW_TAPS " + (taps > 1 ? 5 : 1),
+        "uniform float rrLightShadow[" + this.SHADER_LIGHTS + "];",
+        "uniform vec4 rrShadowInfo[" + slots + "];",
+        "uniform float rrShadowBias;"
+    ];
+    for (let k = 0; k < slots; k++) {
+        lines.push("uniform samplerCubeShadow rrShadowMap" + k + ";");
+        lines.push("uniform samplerCubeShadow rrShadowDyn" + k + ";");
+    }
+    lines.push(
+        "float rrShadowNoise(vec2 p) { return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); }",
+        "vec2 rrShadowTap(int i, float phi) {",
+        "\tfloat r = sqrt((float(i) + 0.5) / 5.0);",
+        "\tfloat t = float(i) * 2.399963229728653 + phi;",
+        "\treturn vec2(cos(t), sin(t)) * r;",
+        "}",
+        // The stored depth is the face camera's projected depth (a 90-degree
+        // frustum per cube face), so the compare value is rebuilt the same
+        // way from the major axis of the light-to-fragment vector.
+        "float rrCubeShadow(samplerCubeShadow map, vec3 d, vec4 info) {",
+        "\tvec3 a = abs(d);",
+        "\tfloat z = max(max(a.x, a.y), a.z);",
+        "\tif (z < info.x || z > info.y) return 1.0;",
+        "\tfloat dp = (info.y * (z - info.x)) / (z * (info.y - info.x)) + rrShadowBias;",
+        "\tvec3 dir = normalize(d);",
+        "#if RR_SHADOW_TAPS > 1",
+        "\tvec3 ad = abs(dir);",
+        "\tvec3 t = ad.x > ad.z ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);",
+        "\tt = normalize(cross(dir, t));",
+        "\tvec3 b = cross(dir, t);",
+        "\tfloat phi = rrShadowNoise(gl_FragCoord.xy) * 6.283185307179586;",
+        "\tfloat s = 0.0;",
+        "\tfor (int i = 0; i < 5; i++) {",
+        "\t\tvec2 o = rrShadowTap(i, phi) * info.w;",
+        "\t\ts += texture(map, vec4(dir + t * o.x + b * o.y, dp));",
+        "\t}",
+        "\treturn s * 0.2;",
+        "#else",
+        "\treturn texture(map, vec4(dir, dp));",
+        "#endif",
+        "}",
+        "float rrShadowAt(int slot, vec3 d) {"
+    );
+    for (let k = 0; k < slots; k++) {
+        lines.push(
+            "\tif (slot == " + k + ") {",
+            "\t\tfloat s = rrCubeShadow(rrShadowMap" + k + ", d, rrShadowInfo[" + k + "]);",
+            "\t\tif (rrShadowInfo[" + k + "].z > 0.5) s = min(s, rrCubeShadow(rrShadowDyn" + k + ", d, rrShadowInfo[" + k + "]));",
+            "\t\treturn s;",
+            "\t}"
+        );
+    }
+    lines.push("\treturn 1.0;", "}");
+    return lines.join("\n") + "\n";
+};
+
+/** The light term, with or without the shadow lookup inside its loop. */
+Reactor3D.lightGlsl = function(shadows, taps) {
+    return (shadows ? this.shadowGlsl(taps) : "") + [
+        "uniform int rrLightCount;",
+        "uniform vec4 rrLightPos[" + this.SHADER_LIGHTS + "];",
+        "uniform vec4 rrLightColor[" + this.SHADER_LIGHTS + "];",
+        "uniform vec4 rrLightAim[" + this.SHADER_LIGHTS + "];",
+        "uniform vec3 rrAmbient;",
+        "varying vec3 vRRWorldPos;",
+        "vec3 rrLight(vec3 p) {",
+        "\tvec3 sum = rrAmbient;",
+        "\tfor (int i = 0; i < " + this.SHADER_LIGHTS + "; i++) {",
+        "\t\tif (i >= rrLightCount) break;",
+        "\t\tvec4 lp = rrLightPos[i];",
+        "\t\tvec3 d = p - lp.xyz;",
+        "\t\tfloat dist = length(d);",
+        // The same falloff the flat pool's picture carries: (1 - d/r)^2.
+        "\t\tfloat fall = 1.0 - dist / max(lp.w, 0.001);",
+        "\t\tif (fall <= 0.0) continue;",
+        "\t\tfall *= fall;",
+        "\t\tvec4 lc = rrLightColor[i];",
+        "\t\tif (lc.w > 0.5) {",
+        "\t\t\tvec4 aim = rrLightAim[i];",
+        "\t\t\tfloat c = dot(d / max(dist, 0.0001), aim.xyz);",
+        // Soft at the rim rather than a cut-out cone: full inside the inner
+        // third of the spread, fading to nothing at the authored edge.
+        "\t\t\tfall *= smoothstep(aim.w, mix(aim.w, 1.0, 0.35), c);",
+        "\t\t}",
+        shadows ? "\t\tfloat sh = rrLightShadow[i];\n\t\tif (sh >= 0.0) fall *= rrShadowAt(int(sh + 0.5), d);" : "",
+        "\t\tsum += lc.rgb * fall;",
+        "\t}",
+        "\treturn sum;",
+        "}"
+    ].filter(line => line !== "").join("\n") + "\n";
+};
+
+Reactor3D.LIGHT_GLSL = Reactor3D.lightGlsl(false);
 
 /**
  * Teach a compiled program about the map's lights: the world position of
@@ -6626,7 +6731,8 @@ Reactor3D.injectLightShader = function(shader) {
             "#include <project_vertex>",
             "#include <project_vertex>\n\tvRRWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;"
         );
-    shader.fragmentShader = this.LIGHT_GLSL
+    const shadows = this.Shadows.active();
+    shader.fragmentShader = (shadows ? this.lightGlsl(true, this.Shadows.quality().taps) : this.LIGHT_GLSL)
         + shader.fragmentShader.replace(
             "vec4 diffuseColor = vec4( diffuse, opacity );",
             "vec4 diffuseColor = vec4( diffuse * rrLight(vRRWorldPos), opacity );"
@@ -6650,9 +6756,443 @@ Reactor3D.litMaterial = function(material) {
     };
     const earlierKey = material.customProgramCacheKey;
     material.customProgramCacheKey = function() {
-        return (typeof earlierKey === "function" ? earlierKey.call(this) : "") + "|reactor3d-lit";
+        return (typeof earlierKey === "function" ? earlierKey.call(this) : "") + "|reactor3d-lit"
+            + (Reactor3D.Shadows.active() ? "|shadows" + Reactor3D.Shadows.quality().taps : "");
     };
     return material;
+};
+
+//-----------------------------------------------------------------------------
+// Shadows
+//
+// A light's map is a cube of depth rendered from the source, by three's own
+// shadow pass — the point lights that render it live off-scene, so they
+// light nothing and change no program's parameters, and the maps are read
+// back through uniforms the lit materials declare themselves. Two maps per
+// light: a STATIC one, holding the props and placed models, rendered only
+// when something in it moved or a light did, at the coarsest distance level
+// a model has; and a DYNAMIC one, holding the characters, rendered each
+// frame a character stands in the light's reach and skipped otherwise. The
+// nearest few lights to the focus get slots; the rest cast none. A weak GPU
+// gets two slots at 256 and a single tap; the rest four at 512 and five.
+
+/** "auto" follows the GPU tier; "off" draws none anywhere. */
+Reactor3D.SHADOWS = "auto";
+/** How many lights can cast at once — the samplers are declared per slot. */
+Reactor3D.SHADOW_SLOTS = 4;
+Reactor3D.SHADOW_QUALITY = {
+    full: { slots: 4, size: 512, taps: 5 },
+    weak: { slots: 2, size: 256, taps: 1 }
+};
+/** The cube camera's near plane, in tiles; far is the light's reach. */
+Reactor3D.SHADOW_NEAR = 0.1;
+/** Added to the compare depth, over and above the slope offset below. */
+Reactor3D.SHADOW_BIAS = 0.0004;
+/**
+ * Casters are drawn into the maps with a slope-scaled depth offset (factor,
+ * units), so a surface at a grazing angle to its light does not shade
+ * itself into acne, and a light a hand's width from a console still lights
+ * the face it looks at.
+ */
+Reactor3D.SHADOW_SLOPE_BIAS = [2, 4];
+/** The filter's spread, in texels of the map. */
+Reactor3D.SHADOW_SOFTNESS = 1.5;
+Reactor3D.SHADOW_LAYER_STATIC = 1;
+Reactor3D.SHADOW_LAYER_DYNAMIC = 2;
+/** Bumped by every distance-level swap, so a cached map follows the geometry. */
+Reactor3D._lodSwaps = 0;
+
+/** Whether this map wants shadows at all: the engine switch, the mode, the sidecar. */
+Reactor3D.shadowsWanted = function(mapData) {
+    if (this.SHADOWS === "off") return false;
+    if (this.lightModeFor(mapData) !== "volume") return false;
+    const map = mapData || (typeof $dataMap !== "undefined" ? $dataMap : null);
+    const lighting = map && map.reactor3d && map.reactor3d.lighting;
+    if (lighting && lighting.shadows === false) return false;
+    return true;
+};
+
+Reactor3D.Shadows = {
+    _active: false,
+    _slots: null,
+    _renderer: null,
+    _sentinel: null,
+    _pending: null,
+    _quality: null,
+    _cameras: null,
+    _static: new Set(),
+    _dynamic: new Set(),
+    _candidates: [],
+    _generation: 0,
+    _staticHash: NaN,
+
+    quality() {
+        if (this._quality) return this._quality;
+        const weak = typeof Graphics !== "undefined" && Graphics.gpuTier === "weak";
+        this._quality = Reactor3D.SHADOW_QUALITY[weak ? "weak" : "full"];
+        return this._quality;
+    },
+
+    active() {
+        return this._active;
+    },
+
+    /** Something in the static maps changed in a way the transform hash cannot see. */
+    invalidate() {
+        this._generation++;
+    },
+
+    /**
+     * Make an object cast. Dynamic casters are the characters — anything
+     * that moves by itself each frame; everything else is static and cached.
+     */
+    markCaster(root, dynamic) {
+        if (!root || typeof THREE === "undefined") return root;
+        const layer = dynamic ? Reactor3D.SHADOW_LAYER_DYNAMIC : Reactor3D.SHADOW_LAYER_STATIC;
+        const other = dynamic ? Reactor3D.SHADOW_LAYER_STATIC : Reactor3D.SHADOW_LAYER_DYNAMIC;
+        root.traverse(child => {
+            if (!child.isMesh) return;
+            child.castShadow = true;
+            child.layers.enable(layer);
+            child.layers.disable(other);
+            child.customDistanceMaterial = this.casterMaterialFor(child.material);
+        });
+        root.userData.reactorShadowCaster = dynamic ? "dynamic" : "static";
+        (dynamic ? this._dynamic : this._static).add(root);
+        (dynamic ? this._static : this._dynamic).delete(root);
+        this._generation++;
+        return root;
+    },
+
+    /**
+     * What a caster is drawn with into a map: three's distance material
+     * with the slope offset. three copies the object's map, alpha test and
+     * side onto it per draw, so plain surfaces share one; a cut-out gets
+     * its own, because the map is part of its program.
+     */
+    casterMaterialFor(material) {
+        const first = Array.isArray(material) ? material[0] : material;
+        const make = () => {
+            const distance = new THREE.MeshDistanceMaterial();
+            distance.polygonOffset = true;
+            distance.polygonOffsetFactor = Reactor3D.SHADOW_SLOPE_BIAS[0];
+            distance.polygonOffsetUnits = Reactor3D.SHADOW_SLOPE_BIAS[1];
+            return distance;
+        };
+        if (first && first.alphaTest > 0) {
+            if (!first.__reactorCasterMaterial) first.__reactorCasterMaterial = make();
+            return first.__reactorCasterMaterial;
+        }
+        if (!this._casterMaterial) this._casterMaterial = make();
+        return this._casterMaterial;
+    },
+
+    /** This frame's lights that may cast, from `syncVolumeLights`. */
+    setCandidates(list) {
+        this._candidates = Array.isArray(list) ? list : [];
+    },
+
+    /**
+     * Which candidate takes which slot: the nearest `count` to the focus,
+     * each kept in the slot it already had so its cached map survives.
+     */
+    assign(candidates, count, previous) {
+        const chosen = (candidates || []).slice().sort((a, b) => a.gap - b.gap).slice(0, count);
+        const result = [];
+        for (let k = 0; k < count; k++) result.push(null);
+        const pending = [];
+        for (const candidate of chosen) {
+            const at = previous ? previous.findIndex(p => p && p.id === candidate.id) : -1;
+            if (at >= 0 && at < count && !result[at]) result[at] = candidate;
+            else pending.push(candidate);
+        }
+        for (const candidate of pending) {
+            const free = result.indexOf(null);
+            if (free >= 0) result[free] = candidate;
+        }
+        return result;
+    },
+
+    /**
+     * The far plane a slot's maps are rendered to. A light's reach breathes
+     * with flicker and pulse, and a map rendered to one far plane is read
+     * against that same plane, so the slot keeps a plane a little past the
+     * reach and moves it only when the reach leaves the band — otherwise a
+     * candle would re-render every prop in the room sixty times a second.
+     */
+    farFor(radius, previous) {
+        if (previous > 0 && radius <= previous && radius >= previous * 0.6) return previous;
+        return Math.ceil((radius * 1.15) / 0.5) * 0.5;
+    },
+
+    _makeLight(size) {
+        const light = new THREE.PointLight(0xffffff, 0, 1);
+        light.castShadow = true;
+        light.shadow.mapSize.set(size, size);
+        light.shadow.camera.near = Reactor3D.SHADOW_NEAR;
+        light.shadow.camera.far = 1;
+        light.shadow.camera.updateProjectionMatrix();
+        light.shadow.autoUpdate = false;
+        light.shadow.needsUpdate = true;
+        light.shadow.bias = 0;
+        return light;
+    },
+
+    /**
+     * The sentinel is drawn first in every pass and draws nothing: its
+     * `onBeforeRender` is the one hook three fires with a render in
+     * progress, which the depth passes need — `renderBufferDirect` reads
+     * the render state that only exists inside `renderer.render`.
+     */
+    _makeSentinel() {
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(0), 3));
+        const material = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, depthTest: false });
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.name = "shadow-sentinel";
+        mesh.frustumCulled = false;
+        mesh.renderOrder = -1e9;
+        mesh.matrixAutoUpdate = false;
+        mesh.onBeforeRender = () => this._flush();
+        return mesh;
+    },
+
+    _ensureSlots(renderer) {
+        if (this._slots && this._renderer === renderer) return this._slots;
+        this.disposeSlots();
+        this._renderer = renderer;
+        const size = this.quality().size;
+        const slots = [];
+        for (let k = 0; k < Reactor3D.SHADOW_SLOTS; k++) {
+            slots.push({ light: this._makeLight(size), dyn: this._makeLight(size), id: null, key: "", far: 0 });
+        }
+        const probe = layer => {
+            const camera = new THREE.Camera();
+            camera.layers.set(layer);
+            return camera;
+        };
+        this._cameras = { static: probe(Reactor3D.SHADOW_LAYER_STATIC), dynamic: probe(Reactor3D.SHADOW_LAYER_DYNAMIC) };
+        this._sentinel = this._makeSentinel();
+        this._slots = slots;
+        return slots;
+    },
+
+    disposeSlots() {
+        if (this._slots) {
+            for (const slot of this._slots) {
+                for (const light of [slot.light, slot.dyn]) {
+                    if (light.shadow.map) light.shadow.map.dispose();
+                    light.shadow.map = null;
+                }
+            }
+        }
+        if (this._sentinel) {
+            if (this._sentinel.parent) this._sentinel.parent.remove(this._sentinel);
+            this._sentinel.geometry.dispose();
+            this._sentinel.material.dispose();
+        }
+        this._sentinel = null;
+        this._pending = null;
+        this._slots = null;
+        this._renderer = null;
+        this._staticHash = NaN;
+        const uniforms = Reactor3D.lightUniforms();
+        for (let k = 0; k < Reactor3D.SHADOW_SLOTS; k++) {
+            uniforms["rrShadowMap" + k].value = null;
+            uniforms["rrShadowDyn" + k].value = null;
+        }
+    },
+
+    dispose() {
+        this.disposeSlots();
+        this._static.clear();
+        this._dynamic.clear();
+        this._candidates = [];
+        this._active = false;
+        Reactor3D.lightUniforms().rrLightShadow.value.fill(-1);
+    },
+
+    /** Every lit program recompiles into the other variant. */
+    refreshMaterials(scene) {
+        if (!scene) return;
+        scene.traverse(object => {
+            const mats = object.material ? (Array.isArray(object.material) ? object.material : [object.material]) : [];
+            for (const mat of mats) if (mat && mat.__reactorLit) mat.needsUpdate = true;
+        });
+    },
+
+    /**
+     * A number that changes when a static caster moves, appears, hides or
+     * swaps its level. Cheaper than tracking every path that can move one.
+     */
+    _staticChanged() {
+        let hash = this._generation * 0.37 + Reactor3D._lodSwaps * 0.53;
+        let n = 0;
+        for (const root of this._static) {
+            if (!root.parent) { this._static.delete(root); continue; }
+            n++;
+            if (!root.visible) { hash += n * 0.11; continue; }
+            const e = root.matrixWorld.elements;
+            hash += n * (e[12] * 1.7 + e[13] * 2.3 + e[14] * 3.1 + e[0] * 0.7 + e[5] * 1.1 + e[10] * 1.3 + e[1] * 0.3 + e[8] * 0.5 + 1);
+        }
+        hash += n * 1000;
+        const changed = hash !== this._staticHash;
+        this._staticHash = hash;
+        return changed;
+    },
+
+    /** Whether any character stands within a light's reach. */
+    _dynamicWithin(candidate, far) {
+        const reachBase = far || candidate.radius;
+        for (const root of this._dynamic) {
+            if (!root.parent) { this._dynamic.delete(root); continue; }
+            if (!root.visible) continue;
+            const e = root.matrixWorld.elements;
+            const span = Reactor3D.instanceSpan(root) || 1;
+            const reach = reachBase + span;
+            const dx = e[12] - candidate.x;
+            const dy = e[13] - candidate.y;
+            const dz = e[14] - candidate.z;
+            if (dx * dx + dy * dy + dz * dz <= reach * reach) return true;
+        }
+        return false;
+    },
+
+    /** Static casters at their coarsest level for the duration of `fn`. */
+    _atCoarsestLod(fn) {
+        const swapped = [];
+        const cache = Reactor3D._lodCache;
+        if (cache) {
+            for (const root of this._static) {
+                const key = root.userData && root.userData.lodKey;
+                const entry = key && cache[key];
+                if (!entry || !entry.levels || entry.levels.length < 2) continue;
+                const coarse = entry.levels[entry.levels.length - 1];
+                const current = entry.levels[root.userData.lodLevel || 0];
+                if (coarse === current) continue;
+                root.traverse(child => {
+                    if (!child.isMesh || child.userData.lodIndex === undefined) return;
+                    const geometry = coarse[child.userData.lodIndex];
+                    if (geometry && child.geometry !== geometry) {
+                        swapped.push([child, child.geometry]);
+                        child.geometry = geometry;
+                    }
+                });
+            }
+        }
+        try {
+            fn();
+        } finally {
+            for (const [child, geometry] of swapped) child.geometry = geometry;
+        }
+    },
+
+    /**
+     * The frame's shadow work, decided before the first pass: which light
+     * takes which slot, which maps need rendering, and the uniforms that
+     * say so. The rendering itself waits for the sentinel, inside the pass.
+     */
+    render(renderer, scene, mapData) {
+        if (typeof THREE === "undefined" || !renderer || !scene || !renderer.shadowMap) return;
+        const uniforms = Reactor3D.lightUniforms();
+        const want = Reactor3D.shadowsWanted(mapData);
+        if (!want) {
+            if (this._active) {
+                this._active = false;
+                uniforms.rrLightShadow.value.fill(-1);
+                this.refreshMaterials(scene);
+            }
+            if (this._sentinel && this._sentinel.parent) this._sentinel.parent.remove(this._sentinel);
+            return;
+        }
+        const fresh = !this._slots || this._renderer !== renderer;
+        const slots = this._ensureSlots(renderer);
+        if (this._sentinel.parent !== scene) scene.add(this._sentinel);
+        renderer.shadowMap.enabled = true;
+        if (scene.matrixWorldAutoUpdate !== false) scene.updateMatrixWorld();
+        const quality = this.quality();
+        const staticDirty = this._staticChanged();
+        const assigned = this.assign(this._candidates, quality.slots, slots.map(s => (s.id === null ? null : { id: s.id })));
+        const shadowOf = uniforms.rrLightShadow.value;
+        shadowOf.fill(-1);
+        const info = uniforms.rrShadowInfo.value;
+        const statics = [];
+        const dynamics = [];
+        for (let k = 0; k < slots.length; k++) {
+            const slot = slots[k];
+            const candidate = assigned[k] || null;
+            const at = k * 4;
+            if (!candidate) {
+                slot.id = null;
+                slot.key = "";
+                info[at + 2] = 0;
+                // A map must exist for every sampler the program declares.
+                if (fresh || !slot.light.shadow.map) { slot.light.shadow.needsUpdate = true; statics.push(slot.light); }
+                if (fresh || !slot.dyn.shadow.map) { slot.dyn.shadow.needsUpdate = true; dynamics.push(slot.dyn); }
+                continue;
+            }
+            const far = this.farFor(candidate.radius, slot.id === candidate.id ? slot.far : 0);
+            const key = candidate.id + "|" + candidate.x.toFixed(3) + "," + candidate.y.toFixed(3) + ","
+                + candidate.z.toFixed(3) + "|" + far;
+            const moved = key !== slot.key;
+            slot.id = candidate.id;
+            slot.key = key;
+            slot.far = far;
+            for (const light of [slot.light, slot.dyn]) {
+                light.position.set(candidate.x, candidate.y, candidate.z);
+                light.distance = far;
+                light.updateMatrixWorld(true);
+            }
+            shadowOf[candidate.index] = k;
+            info[at] = Reactor3D.SHADOW_NEAR;
+            info[at + 1] = far;
+            const dynamic = this._dynamicWithin(candidate, far);
+            info[at + 2] = dynamic ? 1 : 0;
+            info[at + 3] = Reactor3D.SHADOW_SOFTNESS / quality.size;
+            if (moved || staticDirty || fresh || !slot.light.shadow.map) {
+                slot.light.shadow.needsUpdate = true;
+                statics.push(slot.light);
+            }
+            if (dynamic || fresh || !slot.dyn.shadow.map) {
+                slot.dyn.shadow.needsUpdate = true;
+                dynamics.push(slot.dyn);
+            }
+        }
+        this._pending = { renderer, scene, statics, dynamics, activate: !this._active };
+        this.lastFrame = { statics: statics.length, dynamics: dynamics.length, slots: assigned.filter(Boolean).length };
+    },
+
+    /**
+     * The depth passes, from the sentinel's hook. On the frame shadows come
+     * on, every map is rendered before any program declares a sampler for
+     * it, and only then do the lit materials switch to the shadow variant —
+     * a shadow sampler bound to no depth texture fails the draw outright.
+     */
+    _flush() {
+        const pending = this._pending;
+        if (!pending) return;
+        this._pending = null;
+        const { renderer, scene, statics, dynamics } = pending;
+        const shadowMap = renderer.shadowMap;
+        if (statics.length) {
+            this._atCoarsestLod(() => shadowMap.render(statics, scene, this._cameras.static));
+        }
+        if (dynamics.length) shadowMap.render(dynamics, scene, this._cameras.dynamic);
+        this._bindMaps(Reactor3D.lightUniforms());
+        if (pending.activate) {
+            this._active = true;
+            this.refreshMaterials(scene);
+        }
+    },
+
+    _bindMaps(uniforms) {
+        const slots = this._slots || [];
+        for (let k = 0; k < slots.length; k++) {
+            const slot = slots[k];
+            uniforms["rrShadowMap" + k].value = slot.light.shadow.map ? slot.light.shadow.map.depthTexture : null;
+            uniforms["rrShadowDyn" + k].value = slot.dyn.shadow.map ? slot.dyn.shadow.map.depthTexture : null;
+        }
+    }
 };
 
 /**
@@ -7227,6 +7767,7 @@ Reactor3D.readMapLights = function(mapData) {
             color: this.parseColour(entry.color !== undefined ? entry.color : entry.colour),
             intensity: number(entry.intensity, 1, 0, 4),
             occlude: entry.occlude !== false,
+            shadow: entry.shadow !== false,
             on: entry.on !== false,
             tag: entry.tag ? String(entry.tag) : "",
             attach: entry.attach && typeof entry.attach === "object"
@@ -7331,9 +7872,10 @@ Reactor3D.nativeLights = function(mapData) {
             radius *= 1 - light.flicker * 0.06 * jitter;
         }
         out.push({
-            type: light.type, x: x, y: y, height: light.height,
+            id: light.id, type: light.type, x: x, y: y, height: light.height,
             radius: radius, colour: light.color, intensity: intensity,
-            angle: light.angle, yaw: -light.yaw, pitch: light.pitch, occlude: light.occlude
+            angle: light.angle, yaw: -light.yaw, pitch: light.pitch, occlude: light.occlude,
+            shadow: light.shadow
         });
     }
     return out;
@@ -9735,6 +10277,8 @@ Reactor3D.pickLod = function(object, size, eye, cacheKey) {
         if (distance > threshold) level = i + 1;
     }
     if (level === current && object.userData.lodApplied) return;
+    if (!object.userData.lodKey) object.userData.lodKey = key;
+    if (level !== current) this._lodSwaps++;
     object.userData.lodLevel = level;
     object.userData.lodApplied = true;
     const geometries = levels[level];
@@ -13264,6 +13808,9 @@ Reactor3D.MapScene.prototype.syncCharacterModels = function(characters) {
                 current.rules = sidecar ? Reactor3D.readModelAnimationRules(sidecar) : [];
                 current.effects = sidecar ? Reactor3D.readModelEffects(sidecar) : [];
                 group.add(object);
+                // A prop never moves; its map is cached. An event walks.
+                Reactor3D.Shadows.markCaster(object, !(typeof character.eventId === "function"
+                    && character.eventId() >= Reactor3D.PROP_EVENT_BASE));
                 object.traverse(child => {
                     const mats = child.material
                         ? (Array.isArray(child.material) ? child.material : [child.material])
@@ -13492,6 +14039,9 @@ Reactor3D.MapScene.prototype.syncCharacterBillboards = function(sprites) {
             Reactor3D.litMaterial(material);
             const object = new THREE.Mesh(geometry, material);
             group.add(object);
+            // The quad leans towards the camera; seen from a light it is a
+            // cut-out of the sprite, which is the shadow a sprite should cast.
+            Reactor3D.Shadows.markCaster(object, true);
             holder = { texture, geometry, object, stamp: "", view: null, above: false };
             this._billboards.set(key, holder);
         }
