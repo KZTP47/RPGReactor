@@ -635,7 +635,8 @@ class AnimationPicker {
                 return;
             }
             effekseerContext.init(gl);
-            effekseerContext.setRestorationOfStatesFlag(true);
+            if (typeof RREffekseerStateGuard !== 'undefined') RREffekseerStateGuard.attach(effekseerContext, gl.canvas);
+            else effekseerContext.setRestorationOfStatesFlag(true);
             this._effekseerContext = effekseerContext;
             this._gl = gl;
         } catch (e) {
@@ -746,6 +747,7 @@ class AnimationPicker {
                 return;
             }
             effekseerContext.endDraw();
+            if (typeof RREffekseerStateGuard !== 'undefined') RREffekseerStateGuard.settle(effekseerContext);
 
             this._animFrameId = requestAnimationFrame(render);
         };

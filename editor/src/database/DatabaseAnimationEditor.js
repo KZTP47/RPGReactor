@@ -4942,7 +4942,8 @@ class DatabaseAnimationEditor {
                 }
 
                 previewEffekseerContext.init(previewGL);
-                previewEffekseerContext.setRestorationOfStatesFlag(true);
+                if (typeof RREffekseerStateGuard !== 'undefined') RREffekseerStateGuard.attach(previewEffekseerContext, previewGL.canvas);
+                else previewEffekseerContext.setRestorationOfStatesFlag(true);
                 return true;
             } catch (e) {
                 console.error('Preview initialization error:', e);
@@ -5074,6 +5075,7 @@ class DatabaseAnimationEditor {
                         startPlayback();
                     }
                     previewEffekseerContext.endDraw();
+                    if (typeof RREffekseerStateGuard !== 'undefined') RREffekseerStateGuard.settle(previewEffekseerContext);
                 };
 
                 render();

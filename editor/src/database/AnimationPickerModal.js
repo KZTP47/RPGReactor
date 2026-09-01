@@ -148,7 +148,8 @@ class AnimationPickerModal {
             fx.ctx = effekseer.createContext();
             if (!fx.ctx) return false;
             fx.ctx.init(fx.gl);
-            fx.ctx.setRestorationOfStatesFlag(true);
+            if (typeof RREffekseerStateGuard !== 'undefined') RREffekseerStateGuard.attach(fx.ctx, fx.gl && fx.gl.canvas);
+            else fx.ctx.setRestorationOfStatesFlag(true);
             fx.ready = true;
             return true;
         };
@@ -321,6 +322,7 @@ class AnimationPickerModal {
                         }
                     }
                     fx.ctx.endDraw();
+                    if (typeof RREffekseerStateGuard !== 'undefined') RREffekseerStateGuard.settle(fx.ctx);
                     fx.raf = requestAnimationFrame(loop);
                 };
                 fx.raf = requestAnimationFrame(loop);

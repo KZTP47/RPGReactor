@@ -286,7 +286,10 @@
             fx.ctx = effekseer.createContext();
             if (!fx.ctx) return false;
             fx.ctx.init(fx.gl);
-            fx.ctx.setRestorationOfStatesFlag(true);
+            // This context is Effekseer's alone: restore state once, and
+            // again only after a focus/visibility change (see the guard).
+            if (typeof RREffekseerStateGuard !== 'undefined') RREffekseerStateGuard.attach(fx.ctx, this.fxCanvas);
+            else fx.ctx.setRestorationOfStatesFlag(true);
             fx.ready = true;
             return true;
         }
@@ -374,6 +377,7 @@
                     fx.ctx.beginDraw();
                     if (drawn) fx.ctx.drawHandle(fx.handle);
                     fx.ctx.endDraw();
+                    if (typeof RREffekseerStateGuard !== 'undefined') RREffekseerStateGuard.settle(fx.ctx);
                     // Where the picture ends is learned from the first two
                     // plays; the readback that finds it stalls the GPU, so
                     // it is not repeated once known.

@@ -2201,7 +2201,8 @@ class EffekseerGenerator {
             this._gl = gl;
             this._efkContext = effekseer.createContext();
             this._efkContext.init(gl);
-            this._efkContext.setRestorationOfStatesFlag(true);
+            if (typeof RREffekseerStateGuard !== 'undefined') RREffekseerStateGuard.attach(this._efkContext, gl.canvas);
+            else this._efkContext.setRestorationOfStatesFlag(true);
         } catch (e) {
             console.error('EffekseerGenerator: context init failed:', e);
             this._overlay('Effekseer init failed', true);
@@ -2553,6 +2554,7 @@ class EffekseerGenerator {
             this._efkContext.drawHandle(this._efkHandle);
         }
         this._efkContext.endDraw();
+        if (typeof RREffekseerStateGuard !== 'undefined') RREffekseerStateGuard.settle(this._efkContext);
     }
 
     // ── Export ───────────────────────────────────────────────────────────

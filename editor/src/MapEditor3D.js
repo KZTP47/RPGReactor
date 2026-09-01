@@ -3554,13 +3554,20 @@ class MapEditor3D {
         if (!mapScene.hasLights || !mapScene.hasLights()) return;
         const background = scene.background;
         const autoClear = this.renderer.autoClear;
-        const eventVisible = this.eventGroup ? this.eventGroup.visible : null;
-        const gridVisible = this.grid ? this.grid.visible : null;
-        const hoverVisible = this.hoverCell ? this.hoverCell.visible : null;
+        // Only the light group draws in this pass. `setPass` hides the map's
+        // own groups, but the editor hangs its props, events, grid, hover
+        // cell and effect quads off the scene directly, and every one of
+        // them was drawn a second time here — the Demo's model props alone
+        // put 7.7 million triangles through the GPU again per frame, for a
+        // pass that composites nothing but additive quads.
+        const lightGroup = typeof mapScene.lightGroup === 'function' ? mapScene.lightGroup() : null;
+        const hidden = [];
         try {
-            if (this.eventGroup) this.eventGroup.visible = false;
-            if (this.grid) this.grid.visible = false;
-            if (this.hoverCell) this.hoverCell.visible = false;
+            for (const child of scene.children) {
+                if (child === lightGroup || !child.visible) continue;
+                child.visible = false;
+                hidden.push(child);
+            }
             scene.background = null;
             this.renderer.autoClear = false;
             this.renderer.clearDepth();
@@ -3569,9 +3576,7 @@ class MapEditor3D {
         } finally {
             scene.background = background;
             this.renderer.autoClear = autoClear;
-            if (this.eventGroup && eventVisible !== null) this.eventGroup.visible = eventVisible;
-            if (this.grid && gridVisible !== null) this.grid.visible = gridVisible;
-            if (this.hoverCell && hoverVisible !== null) this.hoverCell.visible = hoverVisible;
+            for (const child of hidden) child.visible = true;
         }
     }
 

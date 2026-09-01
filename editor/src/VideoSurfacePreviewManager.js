@@ -1203,9 +1203,16 @@ class VideoSurfacePreviewManager {
             Number(state.rotationY) * Math.PI / 180, Number(state.rotationZ) * Math.PI / 180);
         owner.mesh.scale.set(Number(state.scaleX), Number(state.scaleY), 1);
         owner.material.opacity = Math.max(0, Math.min(255, Number(state.opacity))) / 255;
-        owner.material.transparent = Number(state.opacity) < 255;
-        owner.material.depthWrite = Number(state.opacity) >= 255;
-        owner.material.needsUpdate = true;
+        const transparent = Number(state.opacity) < 255;
+        const depthWrite = Number(state.opacity) >= 255;
+        // `needsUpdate` recompiles the program's parameters on the next
+        // render — and the 3D view renders two to four passes a frame. Only
+        // a change in what the shader is built from earns it.
+        if (owner.material.transparent !== transparent || owner.material.depthWrite !== depthWrite) {
+            owner.material.transparent = transparent;
+            owner.material.depthWrite = depthWrite;
+            owner.material.needsUpdate = true;
+        }
         owner.mesh.renderOrder = Number(state.layer) * 1000 + Number(state.depth);
         if (Number(state.cullingDistance) > 0 && this.mapEditor3D?.camera?.position) {
             owner.mesh.visible = this.mapEditor3D.camera.position.distanceTo(owner.mesh.position)
