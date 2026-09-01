@@ -6,6 +6,254 @@ the fs-backed editor prefs store (so future NW bumps stop resetting prefs),
 cycle on project change, and (optional) a web audio extension manifest to
 silence the one-per-track BGM probe 404.
 
+## 2026-09-01 — Quadric decimator, LOD worker, pointer BVH (editor-only)
+
+- `editor/src/utils/QuadricDecimator.js` (`RRQuadricDecimator.decimate(
+  {positions, normals, uvs, indices}, targetTriangles, {boundaryWeight})`):
+  Garland–Heckbert with a typed-array lazy heap (entries carry both
+  endpoints' version stamps; a collapse bumps both), boundary/seam planes
+  (an edge with one face; seams are boundaries on both islands because
+  their vertices are split) at weight 100, optimal point via the 3x3
+  solve trusted only within 1.5 edge lengths of the midpoint, flip test
+  (face normal dot < 0.2 → refuse), refused edges RE-PUSHED at a rising
+  penalty (without that the queue drained at 573k of 1.9M tris however
+  low the target), UVs from the nearer endpoint, normals averaged. 13.4 s
+  for 1.9M → 25%, and lod2 is built FROM lod1 (3 s) — `lods()` chains
+  `current = built`. Skinned meshes untouched (JOINTS/WEIGHTS = extra
+  attribute → left alone → weld fallback... which also skips them; and
+  `lods()` refuses skins/animations up front anyway).
+- `lods()` now `decimatePrimitive` per primitive (budget share by its
+  triangle fraction), weld grid as fallback; `LOD_LEVELS` carry both
+  `ratio` and `meshCells`. `lodsAsync` = Web Worker built from the three
+  script tags' fetched sources (VertexCacheOrder, QuadricDecimator,
+  GlbOptimizer) + an onmessage shim; falls back to the main thread when
+  a worker cannot be built. ResourceManager import uses it and shows
+  "Building distance levels…". `model-lods.cjs` re-run on the Demo's two
+  props (quadric levels replaced the weld ones).
+- `editor/src/utils/MeshBvh.js` (`RRMeshBvh`): per-BufferGeometry tree
+  (WeakMap cache, midpoint split with median fallback, leaves ≤ 8), slab
+  traversal nearer-child-first, Möller–Trumbore, `side`-aware culling
+  (FrontSide walls are passed through from outside exactly like three).
+  Bug found in testing: partitioning wrote the right half back into
+  `order` while still reading it — use two scratch buffers.
+  `MapEditor3D.raycastMapMeshes()` replaces both
+  `intersectObjects(this.mapScene._meshes)` sites (tileAt,
+  groundPointAt): 0.773 → 0.018 ms per raycast on the Demo (8,482 sheet
+  tris, 13 meshes, 6 ms first build); 94/100 tiles identical, the rest
+  are wall hits at z = ±1e-7 where floor() lands on either side — not
+  tiles either way.
+- Owner's link (utsubo "100 three.js tips"): applicable and already
+  done here — batch buffer updates, dispose, renderer.info + GPU timer
+  queries, BVH raycasts, workers for heavy work, LOD, per-frame
+  allocation discipline. Worth considering later: KTX2/Basis GPU-
+  compressed textures (VRAM + bandwidth on potato GPUs; needs a
+  transcoder shipped offline), Meshopt/Draco geometry compression (file
+  size only; decoder wasm), `precision mediump` on the weak tier (our
+  light loop would band — test first), WebGL context-lost/restored
+  handling in PIXI/three (Effekseer guard already re-arms), fixed-bound
+  shader loops for old mobile GPUs (our `for (i<32) if (i>=count) break`
+  is GLSL ES 3.0-legal but a constant-count variant per program would be
+  faster on Mali-class chips). Not applicable: WebGPU/TSL (parked),
+  React Three Fiber, pmndrs postprocessing, shadow maps (we have none).
+
+## 2026-09-01 — Distance levels, cache order, GPU tier (runtime 20260901.3)
+
+Owner approved the four-item list (LOD, weak-GPU defaults, cache order,
+Demo props) and "keep optimizing for a potato PC, bang for buck".
+- **LOD.** `RRGlbOptimizer.lods(bytes, {levels, minTriangles})` → geometry-
+  only GLBs at coarser weld grids (`LOD_LEVELS` 300/120 cells; the
+  optimizer's "aggressive" is a weld grid, NOT decimation — 1600 cells is
+  pixel-identical, 400 crackled hair per an earlier note; LOD is fine with
+  120 because it is only shown far away). Images/textures/materials/
+  samplers/animations/skins are deleted, `prim.material` removed,
+  `collectGarbage` (extracted from dropTangents) drops the orphan views.
+  Skinned/animated models and < 20k tris get none; a level that is not
+  under 70% of the one above is skipped. Import: `extraSourceFiles` +
+  `sidecar` options on `importModelFolder` write `source/<stem>.lodN.glb`
+  and a root `model.json {lods:[...]}` in the same staged rename; rollback
+  unlinks all. Only in the optimize/aggressive branch (as-is = every byte
+  unchanged and nothing else). Existing models:
+  `node editor/build-scripts/model-lods.cjs <project> [folders]` (merges
+  `lods` into model.json, replaces old lodN files). Runtime: static
+  templates tag `child.userData.lodIndex` (flattened order) —
+  `buildGlbTemplate` static exit only; `loadModel` → `loadLodLevels`
+  (sidecar `lods` list, XHR each, `attachLodLevels`: builds each level
+  with `buildGlbTemplate(json, bin, "", {})`, pairs meshes BY INDEX, refuses
+  a count mismatch, keeps only geometries in `_lodCache[key].levels`
+  (level 0 = base geometries), marks `template.userData.lodKey`).
+  `pickLod(object, spanTiles, eye, cacheKey?)` swaps `mesh.geometry` per
+  instance with hysteresis (`LOD_DISTANCES [4,10]` × span,
+  `LOD_HYSTERESIS 0.85`); the runtime passes `holder.spec` (the cache key)
+  because instances clone BEFORE the levels arrive and `userData` copies
+  by JSON. Editor: `EventPreviewModels.templateFor` reads the lod files
+  sync (`fs.existsSync`) and attaches; `MapEditor3D.pickPropLods()` runs
+  per frame on `propGroup`. Editor event-preview models and skinned
+  characters have no levels. Geometry is in the flattened world space of
+  the base (same nodes, same bake), so swapping geometry alone never
+  moves anything — the recentre lives on `child.position`. Verified: Demo
+  editor 8.2M → 2.86M tris/frame, 13.7 → 10.7 ms; game instances report
+  level 2 at ~34 tiles; the 20-tile tower stays at 0 (correct: it fills
+  the view).
+- **Cache order.** `editor/src/utils/VertexCacheOrder.js` (Tipsify +
+  `acmr`); `reorderForCache` in the optimizer runs in every preset
+  (`cacheOrder: true`) and on LOD levels; skips lists under 64 tris or
+  already < 0.75 ACMR. Computer-01: 2.06 → 0.62 in 387 ms, triangle
+  multiset + winding verified identical. Vertex-bound scenes only; the
+  Demo is fill-bound, so no editor-side number to show.
+- **GPU tier.** `Graphics._sampleGpuTier(renderer)` after `app.init`
+  (`WEBGL_debug_renderer_info` UNMASKED_RENDERER, else RENDERER):
+  `weakGpuPattern` (Intel/UHD/Iris/HD Graphics/Mali/Adreno/PowerVR/
+  VideoCore/SwiftShader/llvmpipe/Software/Microsoft Basic Render/Mesa)
+  → `maxCanvasPixelRatio = min(., 1)` and `Reactor3D.renderTargetSamples
+  = min(., 2)`. "unknown" when unreadable (no guess). `gpuTierOverride`
+  pins. Sharp-first untouched on a capable GPU (3060 reads "full").
+- **CPU churn.** `mapMode` WeakMap memo validated against note/meta/
+  sidecar.mode; `Tilemap._sortChildren` sortedness pass first, bound
+  comparator cached, no slice; `billboardUp`/`aimCharacterBillboard`
+  scratch objects (callers all read on the spot — checked all four);
+  `Game_Map.events` walks `Object.keys` past 512 slots.
+- Not done / next: editor event-preview sprites unlit and un-LODed;
+  characters (skinned) have no LOD; Tipsify is not applied to the Demo's
+  SOURCE files (lossless but the owner's untracked art — one command:
+  optimize with `{cacheOrder:true}` only); a true quadric decimator would
+  give better LOD silhouettes than the weld grid; the editor's pointer
+  raycast still has no BVH; `updateMatrixWorld` is once per frame in the
+  runtime but still per pass in the editor.
+
+## 2026-09-01 — Game update loop: 30 ms → 2 ms (runtime 20260901.2)
+
+`editor/tests/perf/nw-game-profile.cjs` boots a project as the GAME under
+chromedriver (nwapp=<project>), waits for the title (NOT Scene_Boot — a
+map started before boot draws into a 0×0 Graphics and the window is black,
+which is what the owner saw the first time), starts a new game, and
+records rAF deltas / update+render CPU / a CDP profile. Demo start map:
+34 ms/frame, `updateMsPerFrame` 30.3. Root cause: props are synthetic
+events at `PROP_EVENT_BASE + id` (10000+) in `$dataMap.events`, so
+`$gameMap._events` is a 10k-slot sparse array and stock
+`Game_Map.events()` (`this._events.filter(Boolean)`) walked it on EVERY
+call — hundreds a frame via isEventRunning → isAnyEventStarting,
+canMove, setupStartingMapEvent, updateEvents, the 3D sync and plugins.
+Fix: memo in a module-level WeakMap keyed on the array + length +
+`Graphics.frameCount` (NOT a property on Game_Map: JsonEx would serialize
+every event twice into saves). A spawner assigning into an existing hole
+mid-frame is seen next frame. Also `Viewport.renderPass` sets
+`scene.matrixWorldAutoUpdate = false` and calls `updateMatrixWorld()` once
+per frame (was once per pass, ~1.8 ms), and `EffekseerScene.shouldMeasure`
+re-looks every 300 frames once settled (was 30; each look is a
+whole-overlay drawImage + getImageData ≈ 10 ms sync = a hitch twice a
+second). After: 6.9 ms/frame (full 144 Hz), update 2.1 ms, 45% idle.
+Left: `Game_Map.events` still walks the 10k slots once per frame
+(0.12 ms) — an `Object.keys` walk would make it O(events); PIXI
+`_getGlobalBoundsRecursive` from Window/Sprite refresh (~1%);
+`getAttribLocation` per frame from something re-looking-up attributes.
+Triangle facts for the owner's stress test: Computer-01 is 1.89M tris /
+0.99M verts (53.6 MB GLB, one primitive, ACMR 2.06 — no vertex-cache
+ordering at all), placed 3×; the reactor 1.9M. GPU is fill-bound in the
+editor (9.3 ms at 860×598 vs 2.75 ms at 96×64 with identical geometry),
+props ≈ 3 ms of GPU. The GPU timer includes CPU submission gaps and the
+mobile GPU downclocks under light load, so partial hide/show deltas are
+noisy; trust viewport-size and all-or-nothing comparisons.
+
+## 2026-09-01 — Lights in volume (runtime 20260901.1)
+
+Owner: "in 3D mode they appear as a flat disk on the ground. Lights should be
+totally 3D — cube, sphere, cone, not a slice." The flat quads (`lightPool` /
+`syncLights`, phase 1) discarded `height` (written by `nativeLights`, read by
+nothing in 3D), forced a spot's aim to y=0, and drew in a `"lights"` pass
+composited additively. Now `Reactor3D.LIGHT_MODE = "volume"` (default; a
+sidecar `lighting.mode = "flat"` or the global restores the quads):
+- `Reactor3D.litMaterial(material)` composes an `onBeforeCompile` (after any
+  earlier one: clampToTile, billboard quad, straightenBillboardDepth) that
+  injects `vRRWorldPos` after `#include <project_vertex>` (post-skinning,
+  post-billboard `transformed`) and replaces
+  `vec4 diffuseColor = vec4( diffuse, opacity );` with
+  `diffuse * rrLight(vRRWorldPos)`, so `texel * base * (ambient + Σ lights)`.
+  Extends `customProgramCacheKey` with `|reactor3d-lit`. Sites: tile blend
+  + opaque-core materials, room pieces, GLB materials + defaultMat, mesh
+  models, character billboards, `syncEventModels` tagging, and BOTH clone
+  paths (`instanceMaterial`, COLOR_0 clone) — `Material.clone()` drops
+  onBeforeCompile/cacheKey/custom flags, which is why the props first came
+  out unlit-bright in a dark room (12 lit / 157 unlit until fixed).
+- Uniforms are shared value objects from `Reactor3D.lightUniforms()`
+  (`rrLightPos/Color/Aim` Float32Array ×32 vec4, `rrLightCount`,
+  `rrAmbient` Float32Array(3)); `syncVolumeLights` writes them once a
+  frame — no bufferSubData, no pass. Selection: nearest 32 to the focus by
+  (distance − radius). Position: `x+0.5`, `standsOn+lift+height`,
+  `facade.z || y+1` (the flat pool's centre plus height). Spot aim from yaw
+  + new `pitch` (schema/editor/normalize: −90..90; NOT sign-flipped like
+  yaw). `VOLUME_LIGHT_GAIN = 2` ≈ the quads' double add.
+- `syncLights`: ambient multiply now `continue`s on `__reactorLit` (they
+  read `rrAmbient`), then branches to `syncVolumeLights`; the flat branch
+  zeroes `rrLightCount`. `lightBodies()`: per light a Sprite core
+  (round texture), a SphereGeometry haze (0.45·radius) or a ConeGeometry
+  (apex at origin, opens −Y, `setFromUnitVectors(down, aim)`, scale
+  `(tan(half)·r, r, tan(half)·r)`), ShaderMaterial additive, depthTest on,
+  depthWrite off, fresnel-ish `pow(|n·v|,1.6)` × `(1−along)²`. Group
+  `_lightBodyGroup` is visible in all/world/below passes (setPass),
+  disposed in `clear()`.
+- Runtime: `_reactor3dLights` (the additive pass sprite) is only built when
+  `lightModeFor($dataMap) === "flat"`; `updateReactorLighting2D` also stands
+  down when `_reactor3dBelow` exists in volume mode (else the 2D multiply
+  sprite would paint over the 3D map). Editor: `renderLightsPass` skips
+  itself because `hasLights()` sees no pool meshes.
+- Not done: the eye→light occlusion march is flat-mode only (a body is
+  hidden by depth; surfaces have no shadows — a light reaches through a
+  wall, as the quads did); editor event-preview sprites (MapEditor3D's own
+  eventGroup) are unlit; no normal term (distance-only, by design — keep
+  the 2D-match rule); no per-map mode UI (sidecar key only; the editor's
+  `lightModeFor()` sees no `$dataMap`, so it follows the global).
+- Verified: CDP screenshot of the Demo Reactor Room in the editor's 3D view
+  (spheres of haze with cores, lit floor, dimmed tank/bike), 102 lighting +
+  model tests green, `volume-lights.test.cjs` new.
+
+## 2026-09-01 — 3D performance audit (editor 25.5 → 13.7 ms/frame)
+
+Owner: "choppy in the editor and especially on web; per-frame work is always
+the culprit; a 3060m should handle this." Measured with a chromedriver
+harness against the real NW editor on the Demo (now
+`editor/tests/perf/nw-3d-profile.cjs`; rAF deltas, CDP CPU profile,
+EXT_disjoint_timer_query GPU time, mutation counts). Findings, in order:
+1. **Effekseer `setRestorationOfStatesFlag(true)` = a `gl.getParameter`
+   sync stall.** The model-effect preview layer (one Effekseer WebGL1
+   context per playing effect) read state back every draw; the first
+   `getParameter(DEPTH_WRITEMASK)` of a frame blocked 15 ms waiting for
+   the GPU process to drain three's queued frame. 65% of sampled CPU.
+   The game overlay had the same flag. Fix: `RREffekseerStateGuard`
+   (editor) / `Graphics.rearmEffekseerState + settleEffekseerState`
+   (runtime): restoration on until the first draw re-asserts state, off
+   after, re-armed on focus/visibilitychange/webglcontextrestored (the
+   reset the flag guarded against). The Animations page's MAIN preview
+   context (`effekseerContext`, receives a Canvas2D blit per draw) keeps
+   the flag; its standalone Effect File preview is guarded.
+   `effekseer-state-guard.test.cjs`.
+2. **I18n observer fed itself.** `applyText` rewrote every label's
+   textContent unconditionally → added text nodes → `observe()` re-ran
+   `applyText(document)` → ~1000 mutation records/frame, forever, on every
+   editor screen (querySelectorAll+closest 17% CPU). Now writes only on
+   change.
+3. **Editor lights pass redrew the world.** Editor props/events/effect
+   quads hang off the scene directly, so `renderLightsPass` put the Demo's
+   7.7M prop triangles through the GPU again (GPU 26 ms/frame → 13.7).
+   Now hides every scene child but the light group.
+4. `VideoSurfacePreviewManager` set `material.needsUpdate = true` per frame
+   per surface (program params rebuilt per pass). Room textures
+   (2400² non-atlas) had no mipmaps. Both fixed.
+Still open, with numbers: the Demo's `RPGReactor-Computer-01` prop is
+1.89M triangles (placed 3×) and `RPGReactor` 1.9M — 8.2M tris/frame in the
+world pass, ~10.7 ms GPU on a 3060m; run the GLB optimizer's aggressive
+mode on them (content decision). Web-specific: `Graphics.canvasPixelRatio`
+inflates the 3 MSAA render targets by up to 4× area-squared on a stretched
+browser window with `adaptiveResolution` off (owner's sharp-first ruling;
+`Graphics.maxCanvasPixelRatio = 1..2` is the knob). The GPU driver on the
+owner's Windows laptop is 497.29 (2021). `--disable-direct-composition` in
+`chromium-args` is worth an A/B. Per-frame allocation list from the audit
+(billboardUp Vector3s, aimCharacterBillboard, applyEventModelPose closure,
+`Tilemap._sortChildren` slice+bind, `mapMode` regex per sprite,
+`suppressReactor3DGroundParallaxes` Set per frame) is secondary now.
+Baseline on this laptop after the fixes: 13.7 ms mean, p50 13.9 (2 refresh
+intervals at 144 Hz), 68% idle, 0 frames over 33 ms; before: 25.5 ms, 0%
+idle, 9 frames/6 s over 33 ms.
+
 ## 2026-08-31 — Windows no-launch: unsigned binaries vs fresh Windows
 
 The locally built Windows editor zip (dist-editor GUI, unsigned) would not
@@ -434,12 +682,21 @@ no longer places (it is `kawashaki_ninja_h2`'s event now). Tests:
 
 ## Current State
 
-- **0.98.3** is tagged and published at
-  <https://github.com/Psychronic-Games/RPGReactor/releases/tag/v0.98.3>
-  (2026-08-24): in-editor rigging, rig templates and preset motions,
-  database 3D bindings, MP3/WAV/FLAC/M4A audio, PixiJS 8.20.0.
-- **0.98.4** is open in `editor/package.json`, both READMEs, and the
-  `[Unreleased - 0.98.4]` sections of both changelogs. In addition to the custom
+- **0.98.4** is tagged and published at
+  <https://github.com/Psychronic-Games/RPGReactor/releases/tag/v0.98.4>
+  (2026-08-31): height as a coordinate, 3D props and passage, in-world
+  model effects and video surfaces, Scoped Wait, the Show Text overhaul,
+  the GLB import optimizer, native-resolution fullscreen 3D, database
+  parity fixes, and the Windows no-launch root causes (`nul` file, shared
+  Chromium profile).
+- **0.98.5** is open in `editor/package.json`, both READMEs, and the
+  `[Unreleased - 0.98.5]` sections of both changelogs: native lighting
+  (phase 1 quads → the Lighting tool → lights in volume, 2026-09-01), the
+  3D performance audit, SE variants everywhere, MP/TP recovery sounds,
+  still-image media surfaces, the animation timing-row fix, vehicle sprite
+  previews. Carried over: the fs-backed prefs store, the awaited
+  `refreshMap3DView` reconcile, the optional web audio extension manifest.
+- The 0.98.4 tree, for the record — in addition to the custom
   interfaces, GitHub fixes, PIXI 8 compatibility, 3D performance, browser-save,
   localization, plugin schema, database, audio, animation, and Resource Manager
   work described below, the current tree now includes native Video Surface
