@@ -136,7 +136,7 @@ test('the 3D view places and drags lights too', () => {
     assert.match(manager, /m3d\.inputSurface \|\| m3d\.canvas/);
     assert.match(manager, /m3d\.groundPointAt\(event\.clientX, event\.clientY\)/);
     assert.match(manager, /addEventListener\('pointerdown', this\._on3DDown, true\)/);
-    assert.match(manager, /if \(!hit\) return; \/\/ not ours/);
+    assert.match(manager, /Not ours: the orbit and the props keep the click/);
     assert.match(manager, /stopImmediatePropagation/);
     // And the binding follows the 3D canvas through toggles and rebuilds.
     assert.match(manager, /this\._surface3D\(\) !== this\._bound3D/);
@@ -156,6 +156,10 @@ test('a light is clickable across its whole glow, at any zoom, with feedback', (
     assert.match(manager, /\(selected \? 9 : 7\) \/ zoom/);
     assert.match(manager, /_update3DRing\(scene\)/);
     assert.match(manager, /new THREE\.RingGeometry\(0\.42, 0\.55, 40\)/);
+    // And the inverse trap: a light that draws nowhere (player-attached has
+    // no carrier in the editor) must not be clickable anywhere — a CDP click
+    // on "empty" ground was silently selecting the invisible torch.
+    assert.match(manager, /if \(!light\.attach\.event\) return null;/);
 });
 
 test('the tray drags whole lights onto the map, presets and compounds alike', () => {
@@ -175,10 +179,28 @@ test('the tray drags whole lights onto the map, presets and compounds alike', ()
     assert.match(manager, /_shade\(colour, 0\.6\)/);
     assert.match(manager, /Array\.isArray\(template\.compound\)/);
     assert.match(manager, /Object\.assign\(\{\}, part, at, \{ tag \}\)/);
-    // Placement is self-arming on an unlit map and always narrated.
+    // Placement is self-arming on an unlit map and always narrated — and a
+    // click that routes nowhere says why, in both views, with a build stamp
+    // so a stale session identifies itself.
     assert.match(manager, /if \(!this\.lights\(\)\.length\) this\.armPlacement\('point'\);/);
     assert.match(manager, /lit\.placing/);
     assert.match(manager, /_moveGhost\(at\)/);
+    assert.match(manager, /static BUILD = /);
+    const flashes = manager.match(/_flashStatus\(this\._k\('lit\.pickFirst'\)\)/g) || [];
+    assert.equal(flashes.length, 2, 'the hint fires from the 2D and the 3D click paths');
+});
+
+test('a stale session is told the disk has newer lights, and can load them', () => {
+    // "No lights on the map at all": a session opened before a map's lights
+    // were authored shows zero on a map whose file holds ten, and its next
+    // save clobbers them. The panel reads the sidecar straight off the disk,
+    // says when the file is ahead of the session, and loads it on one click.
+    const manager = read('src/LightingManager.js');
+    assert.match(manager, /_diskLights\(\) \{/);
+    assert.match(manager, /'Map' \+ String\(map\.id\)\.padStart\(3, '0'\) \+ '\.r3d\.json'/);
+    assert.match(manager, /disk\.lights\.length <= this\.lights\(\)\.length/);
+    assert.match(manager, /sidecar\.lights = fresh\.lights;/);
+    assert.match(manager, /this\._syncDiskNotice\(\);/);
 });
 
 test('every panel string is a lit.* key present in the locale tables', () => {

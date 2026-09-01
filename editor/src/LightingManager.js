@@ -13,6 +13,9 @@
  * tool is active.
  */
 class LightingManager {
+    /** Bumped with every Lighting change; shown at the panel's foot. */
+    static BUILD = 'r8 · 2026-08-31';
+
     constructor(projectController) {
         this.projectController = projectController;
         this.active = false;
@@ -84,6 +87,63 @@ class LightingManager {
         // An unlit map arms placement by itself: open the tool, click the
         // map, there is light — no reading required.
         if (!this.lights().length) this.armPlacement('point');
+        // And a session older than the map's file says so, with the fix.
+        this._syncDiskNotice();
+    }
+
+    /** The map's sidecar as it exists on disk right now, or null. */
+    _diskLights() {
+        try {
+            const project = this.projectController?.getCurrentProject?.()
+                || this.projectController?.currentProject;
+            const map = this.map();
+            if (!project?.path || !map?.id || typeof require !== 'function') return null;
+            const path = require('path');
+            const fs = require('fs');
+            const file = path.join(project.path, 'data',
+                'Map' + String(map.id).padStart(3, '0') + '.r3d.json');
+            if (!fs.existsSync(file)) return null;
+            const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+            return {
+                lights: Array.isArray(parsed.lights) ? parsed.lights : [],
+                lighting: parsed.lighting && typeof parsed.lighting === 'object'
+                    ? parsed.lighting : null
+            };
+        } catch (error) {
+            return null;
+        }
+    }
+
+    /**
+     * The cure for the stale-session saga: when the file on disk carries
+     * lights this session's map has never loaded, the panel says so and
+     * loads them on one click — no restart ritual, no silent zero.
+     */
+    _syncDiskNotice() {
+        if (!this._noticeHost) return;
+        this._noticeHost.replaceChildren();
+        this._noticeHost.style.display = 'none';
+        const disk = this._diskLights();
+        if (!disk || disk.lights.length <= this.lights().length) return;
+        const note = this._el('div', '', this._k('lit.diskNewer'));
+        note.style.cssText = 'color:var(--color-text);font-size:11px;line-height:1.45;';
+        const button = this._el('button', 'rr-button-primary', this._k('lit.reload'));
+        button.type = 'button';
+        button.style.cssText = 'padding:5px 8px;font-size:11px;';
+        button.addEventListener('click', () => {
+            const map = this.map();
+            const fresh = this._diskLights();
+            if (!map || !fresh) return;
+            this.pushUndo();
+            const sidecar = map.reactor3d || (map.reactor3d = { version: 1 });
+            sidecar.lights = fresh.lights;
+            if (fresh.lighting) sidecar.lighting = fresh.lighting;
+            this.selectedId = null;
+            this._changed();
+            this._syncDiskNotice();
+        });
+        this._noticeHost.append(note, button);
+        this._noticeHost.style.display = 'flex';
     }
 
     _deactivate() {
@@ -501,7 +561,11 @@ class LightingManager {
 
     /** Where a light's handle sits, in tiles - its carrier plus offset. */
     _lightAnchor(light) {
-        if (light.attach && light.attach.event) {
+        if (light.attach) {
+            // No carrier in the editor (the player, a missing event): the
+            // light draws nowhere, so it must not be clickable anywhere.
+            // Its row in the panel list stays the way to select it.
+            if (!light.attach.event) return null;
             const event = (this.map()?.events || [])[light.attach.event];
             if (!event) return null;
             return { x: light.x + event.x + 0.5, y: light.y + event.y + 0.5 };
@@ -596,7 +660,12 @@ class LightingManager {
             return;
         }
         const hit = this._lightNear(at, 0.9);
-        if (!hit) return; // not ours: the orbit and the props keep the click
+        if (!hit) {
+            // Not ours: the orbit and the props keep the click — but the
+            // panel still explains what a placing click would have needed.
+            this._flashStatus(this._k('lit.pickFirst'));
+            return;
+        }
         if (hit.id !== this.selectedId) this.select(hit.id);
         this.pushUndo();
         const anchor = this._lightAnchor(hit) || at;
@@ -691,6 +760,8 @@ class LightingManager {
         const grab = this._grabAt(at);
         if (!grab) {
             this.select(null);
+            // A click that routed nowhere says so, instead of doing nothing.
+            this._flashStatus(this._k('lit.pickFirst'));
             return;
         }
         if (grab.id !== this.selectedId) this.select(grab.id);
@@ -861,6 +932,7 @@ class LightingManager {
                 this._destroyOverlay();
                 this._buildOverlay();
                 this._syncPanel();
+                this._syncDiskNotice();
             }
             // The 3D view toggles and rebuilds its canvas underneath the
             // open panel; follow it so placement clicks always land.
@@ -1020,11 +1092,23 @@ class LightingManager {
             + 'background:var(--color-accent);color:var(--color-bg-deep);'
             + 'font-size:11px;font-weight:700;text-align:center;';
         panel.appendChild(this._statusHost);
+        this._noticeHost = this._el('div');
+        this._noticeHost.style.cssText = 'display:none;flex-direction:column;gap:6px;'
+            + 'padding:8px;border:1px solid var(--color-accent);border-radius:4px;'
+            + 'background:var(--color-bg-input);';
+        panel.appendChild(this._noticeHost);
         this._listHost = this._el('div');
         this._listHost.style.cssText = 'display:flex;flex-direction:column;gap:2px;';
         panel.appendChild(this._listHost);
         this._propsHost = this._el('div');
         panel.appendChild(this._propsHost);
+
+        // The build stamp turns "is my editor running this code?" from a
+        // guessing game into a glance.
+        const stamp = this._el('div', '', 'Lighting ' + LightingManager.BUILD);
+        stamp.style.cssText = 'margin-top:auto;padding-top:6px;color:var(--color-text-muted);'
+            + 'font-size:10px;text-align:right;opacity:0.8;';
+        panel.appendChild(stamp);
 
         (workspace || document.body).appendChild(panel);
         this._panel = panel;
@@ -1305,6 +1389,22 @@ class LightingManager {
             this._statusHost.style.display = this.placing ? '' : 'none';
         }
         if (!this.placing && this._ghost) this._ghost.visible = false;
+    }
+
+    /** A transient hint in the status slot; placement narration outranks it. */
+    _flashStatus(text) {
+        if (!this._statusHost || this.placing) return;
+        this._statusHost.textContent = text;
+        this._statusHost.style.display = '';
+        this._statusHost.style.background = 'var(--color-bg-input)';
+        this._statusHost.style.color = 'var(--color-text)';
+        clearTimeout(this._flashTimer);
+        this._flashTimer = setTimeout(() => {
+            if (!this._statusHost || this.placing) return;
+            this._statusHost.style.display = 'none';
+            this._statusHost.style.background = 'var(--color-accent)';
+            this._statusHost.style.color = 'var(--color-bg-deep)';
+        }, 2600);
     }
 
     _syncPanel() {
