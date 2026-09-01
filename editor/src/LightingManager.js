@@ -209,30 +209,36 @@ class LightingManager {
      * The tray's light flavours. A preset is a whole personality — colour,
      * reach, flicker, pulse — so a dropped Candle already flickers.
      */
+    /**
+     * The tray. Every preset hangs at a height: a light in the floor plane
+     * pools brightest right under itself and can only shade the floor with a
+     * streak along it, while a lamp a tile or two up lights a room the way
+     * a lamp does and throws what stands in it onto the floor.
+     */
     _presets() {
         return [
             { key: 'point', label: this._k('lit.point'),
-              template: { key: 'point', type: 'point', color: '#ffcf7d', radius: 3, intensity: 1 } },
+              template: { key: 'point', type: 'point', color: '#ffcf7d', radius: 3, intensity: 1, height: 1.5 } },
             { key: 'spot', label: this._k('lit.spot'),
-              template: { key: 'spot', type: 'spot', color: '#fff2cc', radius: 6, intensity: 1 } },
+              template: { key: 'spot', type: 'spot', color: '#fff2cc', radius: 6, intensity: 1, height: 3, pitch: -60 } },
             { key: 'candle', label: this._k('lit.preset.candle'),
-              template: { key: 'candle', type: 'point', color: '#ffb45e', radius: 2.5, intensity: 1.1, flicker: 0.6 } },
+              template: { key: 'candle', type: 'point', color: '#ffb45e', radius: 2.5, intensity: 1.1, height: 0.6, flicker: 0.6 } },
             { key: 'lamp', label: this._k('lit.preset.lamp'),
-              template: { key: 'lamp', type: 'point', color: '#ffd9a0', radius: 4, intensity: 1.2 } },
+              template: { key: 'lamp', type: 'point', color: '#ffd9a0', radius: 4, intensity: 1.2, height: 2 } },
             { key: 'neon', label: this._k('lit.preset.neon'),
-              template: { key: 'neon', type: 'point', color: '#ff2d95', radius: 5, intensity: 1.4, tag: 'neon' } },
+              template: { key: 'neon', type: 'point', color: '#ff2d95', radius: 5, intensity: 1.4, height: 2.5, tag: 'neon' } },
             { key: 'alarm', label: this._k('lit.preset.alarm'),
-              template: { key: 'alarm', type: 'point', color: '#ff1720', radius: 6, intensity: 1.4,
+              template: { key: 'alarm', type: 'point', color: '#ff1720', radius: 6, intensity: 1.4, height: 3,
                   pulse: { min: 0.3, max: 1, period: 150 }, tag: 'alarm' } },
             { key: 'screen', label: this._k('lit.preset.screen'),
-              template: { key: 'screen', type: 'point', color: '#7f9bff', radius: 3, intensity: 1, flicker: 0.4 } },
+              template: { key: 'screen', type: 'point', color: '#7f9bff', radius: 3, intensity: 1, height: 1, flicker: 0.4 } },
             { key: 'torch', label: this._k('lit.preset.torch'),
-              template: { key: 'torch', type: 'spot', color: '#eaf6ff', radius: 7, angle: 30, intensity: 0.9, flicker: 0.08 } },
+              template: { key: 'torch', type: 'spot', color: '#eaf6ff', radius: 7, angle: 30, intensity: 0.9, height: 1.2, pitch: -20, flicker: 0.08 } },
             // A compound: one drop places the whole fixture, tagged together.
             { key: 'streetlamp', label: this._k('lit.preset.streetlamp'),
               template: { key: 'streetlamp', color: '#ffd9a0', type: 'point', compound: [
-                  { type: 'point', color: '#ffd9a0', radius: 5.5, intensity: 1.2 },
-                  { type: 'point', color: '#fff3d6', radius: 1.2, intensity: 1.6, height: 2, flicker: 0.06 }
+                  { type: 'point', color: '#ffd9a0', radius: 5.5, intensity: 1.2, height: 3 },
+                  { type: 'point', color: '#fff3d6', radius: 1.2, intensity: 1.6, height: 3.2, flicker: 0.06 }
               ] } }
         ];
     }

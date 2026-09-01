@@ -93,7 +93,10 @@ test('the shadow variant of the light shader declares a static and a dynamic cub
     // The darker of the static and the dynamic map wins.
     assert.match(soft, /s = min\(s, rrCubeShadow\(rrShadowDyn0, d, rrShadowInfo\[0\]\)\);/);
     // Sampled inside the light loop, before the light adds in.
-    assert.match(soft, /float sh = rrLightShadow\[i\];\n\t\tif \(sh >= 0\.0\) fall \*= rrShadowAt\(int\(sh \+ 0\.5\), d\);\n\t\tsum \+= lc\.rgb \* fall;/);
+    assert.match(soft, /float sh = rrLightShadow\[i\];\n\t\tif \(sh >= 0\.0\) fall \*= rrShadowAt\(int\(sh \+ 0\.5\), p\);\n\t\tsum \+= lc\.rgb \* fall;/);
+    // Each slot measures from where its map was rendered, not from the light.
+    assert.match(soft, /uniform vec4 rrShadowPos\[4\];/);
+    assert.match(soft, /vec3 d = p - rrShadowPos\[0\]\.xyz;/);
 
     const hard = Reactor3D.lightGlsl(true, 1);
     assert.match(hard, /#define RR_SHADOW_TAPS 1/);
@@ -174,10 +177,13 @@ test('syncVolumeLights hands the shadow module every light that may cast, ranked
         assert.equal(handed[0].index, 0, 'the slot is written back at the light\'s loop index');
         assert.equal(handed[0].gap, -3, 'distance to the focus minus reach');
         assert.equal(handed[0].x, 1.5);
-        assert.equal(handed[0].y, 1);
+        assert.equal(handed[0].y, 1, 'a light a tile up is its own shadow source');
         assert.equal(handed[0].z, 2);
         assert.equal(handed[1].id, '#2', 'a plugin light without an id is named by its index');
         assert.equal(handed[1].index, 2);
+        scene.syncVolumeLights([{ id: 'floor', type: 'point', x: 1, y: 1, height: 0, radius: 3 }], { x: 1, y: 1 });
+        assert.equal(handed[0].y, Reactor3D.SHADOW_LIFT, 'a light on the floor casts from a little above it');
+        assert.equal(Reactor3D.lightUniforms().rrLightPos.value[1], 0, 'while the light itself stays on the floor');
     } finally {
         Reactor3D.facadeAt = saved.facadeAt;
         Reactor3D.surfaceHeightAt = saved.surfaceHeightAt;

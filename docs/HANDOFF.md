@@ -71,9 +71,25 @@ issues." `Reactor3D.Shadows` in reactor_3d.js, after `litMaterial`.
   player is shaded by the hull; 5.66 vs 5.55 ms/frame, dynamics 4/frame,
   statics 0/frame once cached. Slots go to the lights nearest the PLAYER,
   so a probe light far from the player gets none.
-- Not done: the editor's 3D view was not exercised live (the owner had
-  the Demo open; same MapScene path, needs a look); the map's own sheet
-  meshes and room walls do not cast (a wall still lets light through);
+- Owner: "only seeing shadows on the walls, what about the floor?" The
+  Demo rig's eight point lights have NO height (they were authored for
+  the flat quads, which ignored it), so each sits in the floor plane and
+  none reaches a prop; a floor-plane light's casters sit on the cube's
+  equator and the floor compare comes out half-lit at best. Verified
+  both renderers with a raised probe light beside a console (game:
+  `--setup` on nw-game-profile; editor: nw-3d-profile on a copy of the
+  Demo in /var/tmp/rr-scratch with the lock removed, `RRMapLights.add`
+  + `feed3D()` + camera move): the console's outline lands on the floor
+  in both. Tray presets now carry heights; the Demo rig is the owner's
+  to lift (Height field, 1.5-3 tiles). Editor verification: fine.
+  Owner: "a light on the floor would still cast a shadow from somebody
+  walking over it" — yes, so `SHADOW_LIFT = 0.25`: the cube is rendered
+  from `max(height, lift)` above where the light stands (candidate `y`,
+  per-slot `rrShadowPos`; the shader measures `d` from it, the light term
+  from the light) — the floor is then below the equator and a floor lamp
+  streaks a passer-by across it.
+- Not done: the map's own sheet meshes and room walls do not cast (a
+  wall still lets light through);
   in-shader tile billboards (foliage/upright cut-outs) cannot cast
   through three's depth pass (their vertex patch is not in it); no
   per-light shadow resolution or intensity; no game Options entry.

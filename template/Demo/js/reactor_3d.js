@@ -6045,7 +6045,7 @@ Reactor3D.MapScene.prototype.syncVolumeLights = function(declared, focus) {
             candidates.push({
                 index: count,
                 id: light.id !== undefined && light.id !== null ? String(light.id) : "#" + count,
-                x, y, z, radius,
+                x, y: y + Math.max(0, Reactor3D.SHADOW_LIFT - height), z, radius,
                 gap: Math.hypot((light.x || 0) - fx, (light.y || 0) - fy) - radius
             });
         }
@@ -6601,6 +6601,8 @@ Reactor3D.lightUniforms = function() {
         rrLightShadow: { value: new Float32Array(n).fill(-1) },
         // Per slot: near, far, dynamic map live, softness (in cube units).
         rrShadowInfo: { value: new Float32Array(this.SHADOW_SLOTS * 4) },
+        // Per slot: where the map was rendered from (a floor light's is lifted).
+        rrShadowPos: { value: new Float32Array(this.SHADOW_SLOTS * 4) },
         rrShadowBias: { value: this.SHADOW_BIAS }
     };
     for (let k = 0; k < this.SHADOW_SLOTS; k++) {
@@ -6624,6 +6626,7 @@ Reactor3D.shadowGlsl = function(taps) {
         "#define RR_SHADOW_TAPS " + (taps > 1 ? 5 : 1),
         "uniform float rrLightShadow[" + this.SHADER_LIGHTS + "];",
         "uniform vec4 rrShadowInfo[" + slots + "];",
+        "uniform vec4 rrShadowPos[" + slots + "];",
         "uniform float rrShadowBias;"
     ];
     for (let k = 0; k < slots; k++) {
@@ -6662,11 +6665,12 @@ Reactor3D.shadowGlsl = function(taps) {
         "\treturn texture(map, vec4(dir, dp));",
         "#endif",
         "}",
-        "float rrShadowAt(int slot, vec3 d) {"
+        "float rrShadowAt(int slot, vec3 p) {"
     );
     for (let k = 0; k < slots; k++) {
         lines.push(
             "\tif (slot == " + k + ") {",
+            "\t\tvec3 d = p - rrShadowPos[" + k + "].xyz;",
             "\t\tfloat s = rrCubeShadow(rrShadowMap" + k + ", d, rrShadowInfo[" + k + "]);",
             "\t\tif (rrShadowInfo[" + k + "].z > 0.5) s = min(s, rrCubeShadow(rrShadowDyn" + k + ", d, rrShadowInfo[" + k + "]));",
             "\t\treturn s;",
@@ -6705,7 +6709,7 @@ Reactor3D.lightGlsl = function(shadows, taps) {
         // third of the spread, fading to nothing at the authored edge.
         "\t\t\tfall *= smoothstep(aim.w, mix(aim.w, 1.0, 0.35), c);",
         "\t\t}",
-        shadows ? "\t\tfloat sh = rrLightShadow[i];\n\t\tif (sh >= 0.0) fall *= rrShadowAt(int(sh + 0.5), d);" : "",
+        shadows ? "\t\tfloat sh = rrLightShadow[i];\n\t\tif (sh >= 0.0) fall *= rrShadowAt(int(sh + 0.5), p);" : "",
         "\t\tsum += lc.rgb * fall;",
         "\t}",
         "\treturn sum;",
@@ -6797,6 +6801,15 @@ Reactor3D.SHADOW_BIAS = 0.0004;
 Reactor3D.SHADOW_SLOPE_BIAS = [2, 4];
 /** The filter's spread, in texels of the map. */
 Reactor3D.SHADOW_SOFTNESS = 1.5;
+/**
+ * The lowest a shadow source hangs above where its light stands, in tiles.
+ * A light in the floor plane puts the foot of everything on the cube map's
+ * equator, where the floor's own compare comes out half lit; lifted a
+ * little, a lamp on the ground throws whoever walks past it in a long
+ * streak across the floor, which is what a lamp on the ground does. The
+ * light itself stays where it was authored.
+ */
+Reactor3D.SHADOW_LIFT = 0.25;
 Reactor3D.SHADOW_LAYER_STATIC = 1;
 Reactor3D.SHADOW_LAYER_DYNAMIC = 2;
 /** Bumped by every distance-level swap, so a cached map follows the geometry. */
@@ -7144,6 +7157,10 @@ Reactor3D.Shadows = {
                 light.updateMatrixWorld(true);
             }
             shadowOf[candidate.index] = k;
+            const pos = uniforms.rrShadowPos.value;
+            pos[at] = candidate.x;
+            pos[at + 1] = candidate.y;
+            pos[at + 2] = candidate.z;
             info[at] = Reactor3D.SHADOW_NEAR;
             info[at + 1] = far;
             const dynamic = this._dynamicWithin(candidate, far);
