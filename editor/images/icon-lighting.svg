@@ -1,8 +1,20 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
-  <!-- Three coloured spotlight beams fanning up from one lamp head. -->
-  <path d="M11 15 L3 4 L8 2 Z" fill="#ff5b8d" opacity="0.9"/>
-  <path d="M12 15 L10 1.5 L15 1.5 Z" fill="#ffd34d" opacity="0.9"/>
-  <path d="M13 15 L16 2 L21 4 Z" fill="#4dcdff" opacity="0.9"/>
-  <circle cx="12" cy="17" r="3.4" fill="#e8e8ee"/>
-  <rect x="10.6" y="19.5" width="2.8" height="3" rx="1" fill="#9aa0ad"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Lighting Tool">
+  <defs>
+    <linearGradient id="lit-fan-m" x1="10" y1="4" x2="26" y2="40" gradientUnits="userSpaceOnUse"><stop stop-color="#ff9db9"/><stop offset=".5" stop-color="#ff5b8d"/><stop offset="1" stop-color="#8f1c4e"/></linearGradient>
+    <linearGradient id="lit-fan-g" x1="28" y1="2" x2="36" y2="40" gradientUnits="userSpaceOnUse"><stop stop-color="#fff59c"/><stop offset=".5" stop-color="#ffd529"/><stop offset="1" stop-color="#b06008"/></linearGradient>
+    <linearGradient id="lit-fan-c" x1="54" y1="4" x2="38" y2="40" gradientUnits="userSpaceOnUse"><stop stop-color="#9fe2ff"/><stop offset=".5" stop-color="#24bdf3"/><stop offset="1" stop-color="#0b4a8f"/></linearGradient>
+    <linearGradient id="lit-head" x1="24" y1="39" x2="40" y2="55" gradientUnits="userSpaceOnUse"><stop stop-color="#f4f6fa"/><stop offset=".55" stop-color="#c3c9d6"/><stop offset="1" stop-color="#7d8494"/></linearGradient>
+  </defs>
+  <!-- Three beams fanning up from one lamp head, ink under everything. -->
+  <path d="M27 42 L4 9 L19 3 Z" fill="#01030a"/>
+  <path d="M28.5 40 L7.5 10 L18 5.5 Z" fill="url(#lit-fan-m)"/>
+  <path d="M27 42 L24 3 L40 3 L37 42 Z" fill="#01030a"/>
+  <path d="M28.8 40 L26.5 5.5 L37.5 5.5 L35.2 40 Z" fill="url(#lit-fan-g)"/>
+  <path d="M37 42 L45 3 L60 9 Z" fill="#01030a"/>
+  <path d="M35.5 40 L46 5.5 L56.5 10 Z" fill="url(#lit-fan-c)"/>
+  <circle cx="32" cy="47" r="11.5" fill="#01030a"/>
+  <circle cx="32" cy="47" r="8.5" fill="url(#lit-head)" stroke="#24bdf3" stroke-width="2"/>
+  <circle cx="29" cy="44" r="2.4" fill="#ffffff" opacity="0.8"/>
+  <rect x="26" y="56.5" width="12" height="6" rx="2.5" fill="#01030a"/>
+  <rect x="28" y="58" width="8" height="3" rx="1.5" fill="#9aa0ad"/>
 </svg>

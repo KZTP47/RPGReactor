@@ -169,7 +169,10 @@ test('the tray drags whole lights onto the map, presets and compounds alike', ()
     assert.match(manager, /_chipDown\(event, preset\)/);
     assert.match(manager, /_tileFromClient\(clientX, clientY\)/);
     assert.match(manager, /_presetIcon\(preset\)/);
-    assert.match(manager, /_presetSvg\(preset\.key, preset\.template\.color\)/);
+    // House icon language: ink underlay, gradient in the preset's colour.
+    assert.match(manager, /_presetSvg\(preset\.key, 'url\(#' \+ id \+ '\)', colour\)/);
+    assert.match(manager, /const INK = '#01030a';/);
+    assert.match(manager, /_shade\(colour, 0\.6\)/);
     assert.match(manager, /Array\.isArray\(template\.compound\)/);
     assert.match(manager, /Object\.assign\(\{\}, part, at, \{ tag \}\)/);
     // Placement is self-arming on an unlit map and always narrated.

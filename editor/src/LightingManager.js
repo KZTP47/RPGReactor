@@ -1152,59 +1152,110 @@ class LightingManager {
         return tray;
     }
 
-    /** A chip's face: a bold SVG mark in the preset's own colour. */
+    /** A hex colour pushed toward white (positive) or black (negative). */
+    _shade(hex, amount) {
+        const n = this._colourNumber(hex);
+        const channel = shift => {
+            const value = (n >> shift) & 0xff;
+            const moved = amount >= 0
+                ? value + (255 - value) * amount
+                : value * (1 + amount);
+            return Math.round(Math.max(0, Math.min(255, moved)));
+        };
+        return '#' + ((channel(16) << 16) | (channel(8) << 8) | channel(0))
+            .toString(16).padStart(6, '0');
+    }
+
+    /**
+     * A chip's face, in the app's own icon language: near-black ink drawn
+     * fat under every shape, a saturated three-stop gradient in the preset's
+     * colour on top, and a bright rim — the toolbar's sticker look.
+     */
     _presetIcon(preset) {
         const holder = this._el('span');
         holder.style.cssText = 'width:30px;height:30px;display:block;pointer-events:none;';
-        holder.innerHTML = '<svg viewBox="0 0 24 24" width="30" height="30" aria-hidden="true">'
-            + this._presetSvg(preset.key, preset.template.color) + '</svg>';
+        const colour = preset.template.color;
+        const id = 'lit-' + preset.key;
+        holder.innerHTML = '<svg viewBox="0 0 64 64" width="30" height="30" aria-hidden="true">'
+            + '<defs><linearGradient id="' + id + '" x1="14" y1="8" x2="50" y2="58" gradientUnits="userSpaceOnUse">'
+            + '<stop stop-color="' + this._shade(colour, 0.6) + '"/>'
+            + '<stop offset=".5" stop-color="' + colour + '"/>'
+            + '<stop offset="1" stop-color="' + this._shade(colour, -0.55) + '"/>'
+            + '</linearGradient></defs>'
+            + this._presetSvg(preset.key, 'url(#' + id + ')', colour)
+            + '</svg>';
         return holder;
     }
 
-    _presetSvg(key, c) {
+    _presetSvg(key, fill, colour) {
+        const INK = '#01030a';
+        const rim = this._shade(colour, 0.45);
+        const rays = pairs => variant =>
+            `<g stroke="${variant.stroke}" stroke-width="${variant.width}" stroke-linecap="round">`
+            + pairs.map(([x1, y1, x2, y2]) =>
+                `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"/>`).join('')
+            + '</g>';
         switch (key) {
-            case 'spot': return '<path d="M8 2.6 h8 l2.2 4.4 h-12.4 Z" fill="#cfd6e2"/>'
-                + `<path d="M6.6 7 h10.8 L15.2 21.4 h-6.4 Z" fill="${c}" opacity="0.92"/>`;
-            case 'candle': return '<rect x="9.4" y="10" width="5.2" height="11.4" rx="1.4" fill="#e8e3d5"/>'
-                + `<path d="M12 2.4 C14.7 5.3 14.3 7.5 12 9.2 C9.7 7.5 9.3 5.3 12 2.4 Z" fill="${c}"/>`
-                + '<path d="M12 4.8 C13.2 6.2 13 7.2 12 8 C11 7.2 10.8 6.2 12 4.8 Z" fill="#ffffff" opacity="0.85"/>';
-            case 'lamp': return `<circle cx="12" cy="9.4" r="6.6" fill="${c}"/>`
-                + '<circle cx="10" cy="7.4" r="2" fill="#ffffff" opacity="0.55"/>'
-                + '<rect x="9.4" y="15.4" width="5.2" height="3" fill="#cfd6e2"/>'
-                + '<rect x="10.3" y="18.8" width="3.4" height="2.6" rx="1.1" fill="#9aa0ad"/>';
-            case 'neon': return `<rect x="2.6" y="8.2" width="18.8" height="7.6" rx="3.8" fill="none" stroke="${c}" stroke-width="3.4"/>`
-                + '<rect x="2.6" y="8.2" width="18.8" height="7.6" rx="3.8" fill="none" stroke="#ffffff" stroke-width="1.1" opacity="0.75"/>';
-            case 'alarm': return `<path d="M4.8 14.4 a7.2 7.2 0 0 1 14.4 0 v2 h-14.4 Z" fill="${c}"/>`
-                + '<rect x="3.2" y="16.8" width="17.6" height="3.2" rx="1.3" fill="#9aa0ad"/>'
-                + `<g stroke="${c}" stroke-width="2.3" stroke-linecap="round">`
-                + '<line x1="12" y1="1.4" x2="12" y2="4.2"/>'
-                + '<line x1="4.2" y1="4.6" x2="6.3" y2="6.7"/>'
-                + '<line x1="19.8" y1="4.6" x2="17.7" y2="6.7"/></g>';
-            case 'screen': return '<rect x="2.8" y="4.4" width="18.4" height="12.8" rx="1.8" fill="#141a24" stroke="#cfd6e2" stroke-width="1.7"/>'
-                + `<rect x="5.2" y="6.8" width="13.6" height="8" fill="${c}" opacity="0.9"/>`
-                + '<rect x="8.6" y="19" width="6.8" height="2.3" rx="1.1" fill="#9aa0ad"/>';
-            case 'torch': return '<rect x="10.5" y="9.6" width="3" height="12.2" rx="1.3" fill="#8a6a4a" transform="rotate(16 12 16)"/>'
-                + `<path d="M12 1.8 C15.6 5.3 15.2 8.5 12 10.8 C8.8 8.5 8.4 5.3 12 1.8 Z" fill="${c}"/>`
-                + '<path d="M12 4.6 C13.7 6.5 13.5 8 12 9.2 C10.5 8 10.3 6.5 12 4.6 Z" fill="#ffffff" opacity="0.8"/>';
-            case 'streetlamp': return '<rect x="6.2" y="6.4" width="2" height="15" fill="#9aa0ad"/>'
-                + '<rect x="3.6" y="20.4" width="7.2" height="1.9" rx="0.9" fill="#9aa0ad"/>'
-                + '<path d="M7.2 6.8 Q12 3.4 16.6 6.4" fill="none" stroke="#9aa0ad" stroke-width="2"/>'
-                + `<circle cx="17.2" cy="8.6" r="3.6" fill="${c}"/>`
-                + `<g stroke="${c}" stroke-width="1.7" stroke-linecap="round" opacity="0.75">`
-                + '<line x1="17.2" y1="13.4" x2="17.2" y2="15.8"/>'
-                + '<line x1="13.7" y1="11.7" x2="12" y2="13.4"/>'
-                + '<line x1="20.7" y1="11.7" x2="22.4" y2="13.4"/></g>';
-            default: return `<circle cx="12" cy="12" r="5.2" fill="${c}"/>`
-                + '<circle cx="10.2" cy="10.2" r="1.7" fill="#ffffff" opacity="0.6"/>'
-                + `<g stroke="${c}" stroke-width="2.4" stroke-linecap="round">`
-                + '<line x1="12" y1="1.6" x2="12" y2="4.8"/>'
-                + '<line x1="12" y1="19.2" x2="12" y2="22.4"/>'
-                + '<line x1="1.6" y1="12" x2="4.8" y2="12"/>'
-                + '<line x1="19.2" y1="12" x2="22.4" y2="12"/>'
-                + '<line x1="4.7" y1="4.7" x2="6.9" y2="6.9"/>'
-                + '<line x1="17.1" y1="17.1" x2="19.3" y2="19.3"/>'
-                + '<line x1="19.3" y1="4.7" x2="17.1" y2="6.9"/>'
-                + '<line x1="6.9" y1="17.1" x2="4.7" y2="19.3"/></g>';
+            case 'spot': return `<path d="M18 4 h28 l7 14 h-42 Z" fill="${INK}"/>`
+                + `<path d="M21 6.5 h22 l4.8 9.5 h-31.6 Z" fill="#cfd6e2" stroke="#24bdf3" stroke-width="2"/>`
+                + `<path d="M13 18 h38 L40.5 60 h-17 Z" fill="${INK}"/>`
+                + `<path d="M16.5 20.5 h31 L38.5 56.5 h-13 Z" fill="${fill}" stroke="${rim}" stroke-width="2.5"/>`;
+            case 'candle': return `<rect x="22.5" y="26.5" width="19" height="33" rx="4.5" fill="${INK}"/>`
+                + '<rect x="25.5" y="29.5" width="13" height="27" rx="2.5" fill="#e8e3d5" stroke="#c9b98f" stroke-width="2"/>'
+                + `<path d="M32 3.5 C41.5 12.5 40.5 20.5 32 26.5 C23.5 20.5 22.5 12.5 32 3.5 Z" fill="${INK}"/>`
+                + `<path d="M32 7 C38.8 13.8 38 19.4 32 23.6 C26 19.4 25.2 13.8 32 7 Z" fill="${fill}"/>`
+                + '<path d="M32 12.5 C35.6 16.2 35.3 18.8 32 21.2 C28.7 18.8 28.4 16.2 32 12.5 Z" fill="#fff2a0"/>';
+            case 'lamp': return `<circle cx="32" cy="24.5" r="19.5" fill="${INK}"/>`
+                + `<circle cx="32" cy="24.5" r="16.5" fill="${fill}" stroke="${rim}" stroke-width="2.5"/>`
+                + '<circle cx="25.5" cy="18" r="4.5" fill="#ffffff" opacity="0.65"/>'
+                + `<rect x="23" y="42" width="18" height="9" fill="${INK}"/>`
+                + '<rect x="25.5" y="44" width="13" height="5" fill="#cfd6e2"/>'
+                + `<rect x="25.5" y="50.5" width="13" height="9" rx="3.5" fill="${INK}"/>`
+                + '<rect x="27.5" y="52.5" width="9" height="5" rx="2" fill="#9aa0ad"/>';
+            case 'neon': return `<rect x="6" y="20" width="52" height="24" rx="12" fill="none" stroke="${INK}" stroke-width="13"/>`
+                + `<rect x="6" y="20" width="52" height="24" rx="12" fill="none" stroke="${fill}" stroke-width="7"/>`
+                + '<rect x="6" y="20" width="52" height="24" rx="12" fill="none" stroke="#ffffff" stroke-width="2" opacity="0.8"/>';
+            case 'alarm': return rays([[32, 3, 32, 11], [10, 9, 15.5, 15], [54, 9, 48.5, 15]])({ stroke: INK, width: 9 })
+                + rays([[32, 3, 32, 11], [10, 9, 15.5, 15], [54, 9, 48.5, 15]])({ stroke: colour, width: 4.5 })
+                + `<path d="M12 40 a20 20 0 0 1 40 0 v5.5 h-40 Z" fill="${INK}"/>`
+                + `<path d="M15 40 a17 17 0 0 1 34 0 v2.5 h-34 Z" fill="${fill}" stroke="${rim}" stroke-width="2"/>`
+                + '<path d="M20.5 36.5 a12.5 12.5 0 0 1 8 -10.5" stroke="#ffffff" stroke-width="3.2" fill="none" opacity="0.65" stroke-linecap="round"/>'
+                + `<rect x="8" y="46.5" width="48" height="9.5" rx="3.5" fill="${INK}"/>`
+                + '<rect x="10.5" y="48.7" width="43" height="5" rx="2" fill="#9aa0ad"/>';
+            case 'screen': return `<rect x="6" y="9.5" width="52" height="37" rx="5.5" fill="${INK}"/>`
+                + '<rect x="9" y="12.5" width="46" height="31" rx="3" fill="#0b1220" stroke="#24bdf3" stroke-width="2"/>'
+                + `<rect x="13" y="16.5" width="38" height="23" fill="${fill}"/>`
+                + `<path d="M13 23 h38 M13 29.5 h38 M13 36 h38" stroke="${INK}" stroke-width="1.8" opacity="0.5"/>`
+                + `<rect x="24" y="48" width="16" height="4.5" fill="${INK}"/>`
+                + `<rect x="17" y="53" width="30" height="7" rx="3" fill="${INK}"/>`
+                + '<rect x="19.5" y="54.8" width="25" height="3.4" rx="1.7" fill="#9aa0ad"/>';
+            case 'torch': return `<rect x="26.5" y="25" width="11" height="36" rx="4.5" fill="${INK}" transform="rotate(14 32 43)"/>`
+                + '<rect x="29" y="27.5" width="6" height="31" rx="3" fill="#8a6a4a" transform="rotate(14 32 43)"/>'
+                + '<rect x="27.6" y="28" width="8.8" height="6.5" rx="2" fill="#d7318f" transform="rotate(14 32 43)"/>'
+                + `<path d="M32 2 C43.5 11 42.5 21 32 28 C21.5 21 20.5 11 32 2 Z" fill="${INK}"/>`
+                + `<path d="M32 5.5 C41 13 40.2 20 32 25 C23.8 20 23 13 32 5.5 Z" fill="${fill}"/>`
+                + '<path d="M32 11.5 C36.8 15.6 36.4 19 32 22 C27.6 19 27.2 15.6 32 11.5 Z" fill="#fff2a0"/>';
+            case 'streetlamp': return `<rect x="14.5" y="13" width="10" height="47" rx="4" fill="${INK}"/>`
+                + '<rect x="17.5" y="16" width="4" height="42" fill="#9aa0ad"/>'
+                + `<rect x="7" y="54.5" width="25" height="7" rx="3" fill="${INK}"/>`
+                + '<rect x="9.5" y="56.2" width="20" height="3.6" rx="1.8" fill="#9aa0ad"/>'
+                + `<path d="M19 15 Q34 4.5 47 11.5" fill="none" stroke="${INK}" stroke-width="9.5" stroke-linecap="round"/>`
+                + '<path d="M19 15 Q34 4.5 47 11.5" fill="none" stroke="#9aa0ad" stroke-width="4" stroke-linecap="round"/>'
+                + `<circle cx="48" cy="17.5" r="11" fill="${INK}"/>`
+                + `<circle cx="48" cy="17.5" r="8" fill="${fill}" stroke="${rim}" stroke-width="2"/>`
+                + '<circle cx="45" cy="14.5" r="2.6" fill="#ffffff" opacity="0.7"/>'
+                + rays([[48, 31.5, 48, 38], [37.5, 27, 33, 31.5], [58.5, 27, 63, 31.5]])({ stroke: INK, width: 8 })
+                + rays([[48, 31.5, 48, 38], [37.5, 27, 33, 31.5], [58.5, 27, 63, 31.5]])({ stroke: colour, width: 3.6 });
+            default: {
+                const eight = [[32, 4, 32, 13], [32, 51, 32, 60], [4, 32, 13, 32], [51, 32, 60, 32],
+                    [12.2, 12.2, 18.6, 18.6], [45.4, 45.4, 51.8, 51.8],
+                    [51.8, 12.2, 45.4, 18.6], [18.6, 45.4, 12.2, 51.8]];
+                return rays(eight)({ stroke: INK, width: 9.5 })
+                    + rays(eight)({ stroke: colour, width: 5 })
+                    + `<circle cx="32" cy="32" r="16.5" fill="${INK}"/>`
+                    + `<circle cx="32" cy="32" r="13.5" fill="${fill}" stroke="${rim}" stroke-width="2.5"/>`
+                    + '<circle cx="27" cy="27" r="4" fill="#ffffff" opacity="0.75"/>';
+            }
         }
     }
 
