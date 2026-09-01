@@ -142,6 +142,22 @@ test('the 3D view places and drags lights too', () => {
     assert.match(manager, /this\._surface3D\(\) !== this\._bound3D/);
 });
 
+test('a light is clickable across its whole glow, at any zoom, with feedback', () => {
+    // "Nothing happens when I click on the light": the hit-test accepted only
+    // a pinpoint at the centre while the eye aims at the glow, the 2D grip
+    // shrank with the zoom, and 3D selection changed nothing visible. Fixed
+    // and CDP-verified: a real click on neon-mag's glow selected it, a drag
+    // moved it 16.5 → 20.03, and the ground ring appeared.
+    const manager = read('src/LightingManager.js');
+    assert.match(manager, /Math\.max\(grip, Math\.min\(light\.radius, 7\)\)/);
+    assert.match(manager, /distance \/ reach/);
+    assert.match(manager, /16 \/ \(tw \* this\._viewScale\(\)\)/);
+    assert.match(manager, /_viewScale\(\) \{/);
+    assert.match(manager, /\(selected \? 9 : 7\) \/ zoom/);
+    assert.match(manager, /_update3DRing\(scene\)/);
+    assert.match(manager, /new THREE\.RingGeometry\(0\.42, 0\.55, 40\)/);
+});
+
 test('every panel string is a lit.* key present in the locale tables', () => {
     const manager = read('src/LightingManager.js');
     const used = new Set([...manager.matchAll(/'(lit\.[A-Za-z]+)'/g)].map(match => match[1]));

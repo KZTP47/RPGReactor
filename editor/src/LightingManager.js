@@ -191,6 +191,7 @@ class LightingManager {
         this.selectedId = id || null;
         this.render();
         this._syncPanel();
+        this._sync3D();
     }
 
     _changed() {
@@ -359,6 +360,9 @@ class LightingManager {
         g.clear();
         const map = this.map();
         if (!map || typeof RRMapLights === 'undefined') return;
+        // Markers hold their screen size whatever the zoom: shrunk with the
+        // map they became four-pixel dots nobody could see or hit.
+        const zoom = Math.max(0.05, this._viewScale());
         for (const raw of RRMapLights.list(map)) {
             const light = RRMapLights.normalize(raw, raw.id || 'light');
             const at = this._lightAnchor(light);
@@ -366,7 +370,7 @@ class LightingManager {
             const selected = light.id === this.selectedId;
             const colour = this._colourNumber(light.color);
             const x = at.x * tw, y = at.y * tw;
-            g.circle(x, y, selected ? 9 : 7)
+            g.circle(x, y, (selected ? 9 : 7) / zoom)
                 .fill({ color: light.on ? colour : 0x555555, alpha: 0.95 })
                 .stroke({ width: 2, color: selected ? 0xffffff : 0x000000, alpha: 0.9 });
             if (!selected) continue;
@@ -381,17 +385,17 @@ class LightingManager {
                 const left = dir(-1), right = dir(1);
                 g.moveTo(x, y).lineTo(left.x, left.y)
                     .moveTo(x, y).lineTo(right.x, right.y)
-                    .stroke({ width: 1.5, color: 0xffffff, alpha: 0.55 });
-                g.circle(aim.x * tw, aim.y * tw, 7)
+                    .stroke({ width: 1.5 / zoom, color: 0xffffff, alpha: 0.55 });
+                g.circle(aim.x * tw, aim.y * tw, 8 / zoom)
                     .fill({ color: 0xffffff, alpha: 0.9 })
-                    .stroke({ width: 2, color: 0x000000, alpha: 0.9 });
+                    .stroke({ width: 2 / zoom, color: 0x000000, alpha: 0.9 });
             } else {
                 g.circle(x, y, light.radius * tw)
-                    .stroke({ width: 1.5, color: 0xffffff, alpha: 0.5 });
+                    .stroke({ width: 1.5 / zoom, color: 0xffffff, alpha: 0.5 });
                 const reach = this._reachPoint(light, at);
-                g.circle(reach.x * tw, reach.y * tw, 7)
+                g.circle(reach.x * tw, reach.y * tw, 8 / zoom)
                     .fill({ color: 0xffffff, alpha: 0.9 })
-                    .stroke({ width: 2, color: 0x000000, alpha: 0.9 });
+                    .stroke({ width: 2 / zoom, color: 0x000000, alpha: 0.9 });
             }
         }
     }
@@ -480,7 +484,7 @@ class LightingManager {
             event.stopImmediatePropagation();
             return;
         }
-        const hit = this._lightNear(at, 0.75);
+        const hit = this._lightNear(at, 0.9);
         if (!hit) return; // not ours: the orbit and the props keep the click
         if (hit.id !== this.selectedId) this.select(hit.id);
         this.pushUndo();
@@ -523,23 +527,37 @@ class LightingManager {
         }
     }
 
-    /** The nearest light whose anchor sits within `grip` tiles of a point. */
+    /**
+     * The light a press at a tile point means. A light LOOKS like its whole
+     * glow, so the whole glow is clickable — not a pinpoint at its centre —
+     * and among overlapping glows the one whose centre is proportionally
+     * closest wins, so a small lamp inside a big wash is still selectable.
+     */
     _lightNear(at, grip) {
         const map = this.map();
         if (!map || typeof RRMapLights === 'undefined') return null;
         let best = null;
-        let bestDistance = grip;
+        let bestScore = Infinity;
         for (const raw of RRMapLights.list(map)) {
             const light = RRMapLights.normalize(raw, raw.id || 'light');
             const anchor = this._lightAnchor(light);
             if (!anchor) continue;
             const distance = Math.hypot(at.x - anchor.x, at.y - anchor.y);
-            if (distance <= bestDistance) {
+            const reach = Math.max(grip, Math.min(light.radius, 7));
+            if (distance > reach) continue;
+            const score = distance / reach;
+            if (score < bestScore) {
                 best = light;
-                bestDistance = distance;
+                bestScore = score;
             }
         }
         return best;
+    }
+
+    /** The map view's zoom, so screen-sized grips stay screen-sized. */
+    _viewScale() {
+        const container = this.tilemapManager?.container;
+        return (container && container.scale && container.scale.x) || 1;
     }
 
     _tilePoint(event, container) {
@@ -576,7 +594,9 @@ class LightingManager {
         const map = this.map();
         if (!map || typeof RRMapLights === 'undefined') return null;
         const tw = this.tileSize();
-        const grip = 12 / tw; // handle radius in tiles
+        // Handles are drawn at a screen size, so their grip is a screen size
+        // too — 12 map-pixels at 53% zoom was a six-pixel target.
+        const grip = Math.max(16 / (tw * this._viewScale()), 0.3);
         const selected = this.selected();
         if (selected) {
             const light = RRMapLights.normalize(selected, selected.id);
@@ -590,18 +610,15 @@ class LightingManager {
                 }
             }
         }
-        // Topmost light whose marker covers the press.
-        const lights = RRMapLights.list(map);
-        for (let i = lights.length - 1; i >= 0; i--) {
-            const light = RRMapLights.normalize(lights[i], lights[i].id || 'light');
+        // The light whose glow the press lands in — the glow IS the light,
+        // as far as an eye and a cursor are concerned.
+        const light = this._lightNear(at, grip);
+        if (light) {
             const anchor = this._lightAnchor(light);
-            if (!anchor) continue;
-            if (Math.hypot(at.x - anchor.x, at.y - anchor.y) <= grip) {
-                return {
-                    id: light.id, mode: 'move',
-                    offsetX: at.x - anchor.x, offsetY: at.y - anchor.y, anchor
-                };
-            }
+            return {
+                id: light.id, mode: 'move',
+                offsetX: at.x - anchor.x, offsetY: at.y - anchor.y, anchor
+            };
         }
         return null;
     }
@@ -738,9 +755,59 @@ class LightingManager {
         // The editor renders one pass, so the light group joins it instead of
         // waiting for a "lights" pass that never comes.
         if (scene.lightGroup) scene.lightGroup().visible = true;
+        this._update3DRing(scene);
+    }
+
+    /**
+     * A visible answer to "did my click do anything?" in the 3D view: a
+     * bright ring on the ground under the selected light.
+     */
+    _update3DRing(scene) {
+        const selected = this.selected();
+        if (!selected || typeof THREE === 'undefined' || !scene || !scene.scene) {
+            this._hide3DRing();
+            return;
+        }
+        const light = typeof RRMapLights !== 'undefined'
+            ? RRMapLights.normalize(selected, selected.id) : selected;
+        const anchor = this._lightAnchor(light);
+        if (!anchor) {
+            this._hide3DRing();
+            return;
+        }
+        if (!this._ring3d) {
+            const geometry = new THREE.RingGeometry(0.42, 0.55, 40);
+            const material = new THREE.MeshBasicMaterial({
+                color: 0xffd34d, transparent: true, opacity: 0.95,
+                side: THREE.DoubleSide, depthTest: false
+            });
+            this._ring3d = new THREE.Mesh(geometry, material);
+            this._ring3d.rotation.x = -Math.PI / 2;
+            this._ring3d.renderOrder = 30;
+        }
+        if (this._ring3d.parent !== scene.scene()) scene.scene().add(this._ring3d);
+        const m3d = this.mapEditor3D();
+        const ground = typeof Reactor3D !== 'undefined' && Reactor3D.elevationAt && m3d?.currentMap
+            ? Reactor3D.elevationAt(m3d.currentMap(), Math.round(anchor.x), Math.round(anchor.y))
+            : 0;
+        this._ring3d.position.set(anchor.x + 0.5, ground + 0.06, anchor.y + 1);
+        this._ring3d.visible = true;
+    }
+
+    _hide3DRing() {
+        if (this._ring3d) this._ring3d.visible = false;
+    }
+
+    _dispose3DRing() {
+        if (!this._ring3d) return;
+        if (this._ring3d.parent) this._ring3d.parent.remove(this._ring3d);
+        this._ring3d.geometry.dispose();
+        this._ring3d.material.dispose();
+        this._ring3d = null;
     }
 
     _clear3D() {
+        this._dispose3DRing();
         if (typeof Reactor3D === 'undefined') return;
         Reactor3D.setLights([]);
         Reactor3D.setAmbient(null);
