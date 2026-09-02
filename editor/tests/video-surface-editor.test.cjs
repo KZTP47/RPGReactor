@@ -373,9 +373,12 @@ test('map/common contexts route safely and troop allows Stop only', () => {
 });
 
 test('troop display uses the Reactor human label', () => {
+    // A troop page reads its summaries from EventCommandList, so the label a
+    // Reactor plugin command shows is decided in one place for both hosts.
     const troop = read('src/database/DatabaseTroopEditor.js');
-    assert.match(troop, /cmd\.code === 357 && p\[0\] === 'RPGReactor' && p\[2\]/);
-    assert.match(troop, /commandLabel \|\| ''/);
+    assert.match(troop, /getCommandInfo\(cmd, page, index\)/);
+    const list = read('src/event/EventCommandList.js');
+    assert.match(list, /code === 357 && pluginName === 'RPGReactor' && commandName/);
 });
 
 test('visual tooling contains a true quad, event anchor, 3D controls, and deterministic cleanup', () => {
@@ -547,7 +550,7 @@ test('previews show scanlines, stand on their anchor like the game, clamp typed 
     assert.match(runtime, /y -= descriptor\.height \* Math\.abs\(descriptor\.scaleY\) \/ 2;/);
     assert.doesNotMatch(runtime, /descriptor\.z \* th/);
     assert.equal(VideoSurfacePreviewManager.standingLift({ target: 'screen', height: 180, scaleY: 1 }), 0);
-    assert.match(fs.readFileSync(path.join(editorRoot, '..', 'runtime', 'reactor_main.js'), 'utf8'), /runtime revision: 20260902.6/);
+    assert.match(fs.readFileSync(path.join(editorRoot, '..', 'runtime', 'reactor_main.js'), 'utf8'), /runtime revision: 20260902.7/);
     assert.match(editor, /if \(options\.max !== undefined && next > options\.max\) next = options\.max;/);
     assert.match(editor, /if \(final && options\.min !== undefined && next < options\.min\) next = options\.min;/);
     assert.match(manager, /setEnabled\(enabled\) \{/);
