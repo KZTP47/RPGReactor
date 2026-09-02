@@ -534,6 +534,7 @@ class MapEditor3D {
             });
             this.renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
             if (THREE.SRGBColorSpace) this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+            this.reportGpuTier();
             this.camera = Reactor3D.createCamera({ fov: 40 });
             this.resize();
             this.attachInput();
@@ -592,10 +593,40 @@ class MapEditor3D {
         }
         this.renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
         if (THREE.SRGBColorSpace) this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+        this.reportGpuTier();
         this.camera = Reactor3D.createCamera({ fov: 40 });
         this.resize();
         this.attachInput();
         return true;
+    }
+
+    /**
+     * Tell the 3D runtime what it is drawing on.
+     *
+     * The game reads the renderer's name once at boot and settles its costs
+     * against it — shadow slots and resolution, the effect budget, how often
+     * an effect's reach is re-measured. This viewport loads `reactor_3d.js`
+     * without `reactor_core.js`, so there is no `Graphics` here and every one
+     * of those choices would take the full-power branch: four shadow slots at
+     * 512 with five taps in the editor on the same laptop the game had just
+     * been tuned down to two at 256. Same reader, same classifier, so the two
+     * cannot disagree; an unreadable renderer leaves the override unset and
+     * the runtime keeps its sharp-first default.
+     */
+    reportGpuTier() {
+        try {
+            if (typeof Reactor3D === 'undefined' || !Reactor3D.classifyGpu) return;
+            const gl = this.renderer?.getContext?.();
+            const description = Reactor3D.rendererDescription(gl);
+            const tier = Reactor3D.classifyGpu(description);
+            if (tier === 'unknown') return;
+            Reactor3D.gpuTierOverride = tier;
+            Reactor3D.gpuDescription = description;
+            // Costs already settled against the old answer are re-derived.
+            if (Reactor3D.Shadows) Reactor3D.Shadows._quality = null;
+        } catch (error) {
+            // A viewport that cannot name its GPU still renders.
+        }
     }
 
     /**
@@ -3489,6 +3520,11 @@ class MapEditor3D {
 
     render(now) {
         if (!this.renderer || !this.camera || !this.mapScene) return;
+        // Everything in the runtime that culls asks `Reactor3D.activeCamera()`,
+        // which finds the game's viewport — and this view has none. Told
+        // once per frame, before the lights are fed or any pass renders, so
+        // a light off the side of *this* viewport is skipped here too.
+        if (typeof Reactor3D !== 'undefined') Reactor3D.cullCamera = this.camera;
         this.animateAutotiles(now);
         this.animateEventPreviews(now);
         this.pickPropLods();
@@ -3576,9 +3612,20 @@ class MapEditor3D {
         const group = this.propGroup;
         if (!group || !this.camera || typeof Reactor3D === 'undefined' || !Reactor3D.pickLod) return;
         const eye = this.camera.position;
+        // This view's own camera and canvas, because the levels are also
+        // chosen by how much of the screen a model covers and there is no
+        // `Reactor3D.Viewport` here to read that from. Without it the
+        // budget half of the rule was skipped and every prop stayed at full
+        // detail — the distance half alone can never coarsen a large model
+        // on a small map. Computed once for the whole group, not per prop.
+        let screen = null;
+        if (Reactor3D.lodScreen && this.renderer) {
+            const size = this.renderer.getSize(new THREE.Vector2());
+            screen = Reactor3D.lodScreen(this.camera, size.x, size.y);
+        }
         for (const object of group.children) {
             if (object.userData && object.userData.lodKey) {
-                Reactor3D.pickLod(object, Reactor3D.instanceSpan(object), eye);
+                Reactor3D.pickLod(object, Reactor3D.instanceSpan(object), eye, undefined, screen);
             }
         }
     }

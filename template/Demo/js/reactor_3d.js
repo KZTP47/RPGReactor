@@ -6002,6 +6002,7 @@ Reactor3D.MapScene.prototype.syncVolumeLights = function(declared, focus) {
     const fx = focus ? focus.x : 0;
     const fy = focus ? focus.y : 0;
     let count = 0;
+    let bodyCount = 0;
     for (const light of list) {
         const radius = light.radius > 0 ? light.radius : 0;
         if (!(radius > 0) || count >= max) continue;
@@ -6016,6 +6017,13 @@ Reactor3D.MapScene.prototype.syncVolumeLights = function(declared, focus) {
         const x = light.x + 0.5;
         const y = standsOn + lift + height;
         const z = facade ? facade.z : light.y + 1;
+
+        // A light that cannot reach the view lights nothing anyone can see,
+        // and its glowing body is at the same place, so neither is drawn.
+        // This is free frame time, not a quality setting: the pixels come
+        // out identical. Nine of the Demo's ten lights are off screen at
+        // any moment, and every lit fragment was paying for all ten.
+        if (!Reactor3D.sphereInView(x, y, z, radius)) continue;
 
         const rgb = light.colour === undefined ? 0xffffff : light.colour;
         const intensity = (light.intensity === undefined ? 1 : light.intensity) * Reactor3D.LIGHT_GAIN;
@@ -6041,10 +6049,16 @@ Reactor3D.MapScene.prototype.syncVolumeLights = function(declared, focus) {
         pos[at] = x; pos[at + 1] = y; pos[at + 2] = z; pos[at + 3] = radius;
         col[at] = r * gain; col[at + 1] = g * gain; col[at + 2] = b * gain; col[at + 3] = spot ? 1 : 0;
         aim[at] = ax; aim[at + 1] = ay; aim[at + 2] = az; aim[at + 3] = cosHalf;
-        bodies.place(count, {
-            x, y, z, radius, spot, r, g, b, angle, ax, ay, az,
-            intensity: light.intensity === undefined ? 1 : light.intensity
-        });
+        // Bodies are counted separately so the pool stays packed when a
+        // light asks not to be seen (a carried torch); `trim` below takes
+        // the body count, not the light count.
+        if (light.body !== false) {
+            bodies.place(bodyCount, {
+                x, y, z, radius, spot, r, g, b, angle, ax, ay, az,
+                intensity: light.intensity === undefined ? 1 : light.intensity
+            });
+            bodyCount++;
+        }
         if (light.shadow !== false) {
             candidates.push({
                 index: count,
@@ -6056,7 +6070,7 @@ Reactor3D.MapScene.prototype.syncVolumeLights = function(declared, focus) {
         count++;
     }
     uniforms.rrLightCount.value = count;
-    bodies.trim(count);
+    bodies.trim(bodyCount);
     Reactor3D.Shadows.setCandidates(candidates);
 };
 
@@ -6784,13 +6798,136 @@ Reactor3D.litMaterial = function(material) {
 // nearest few lights to the focus get slots; the rest cast none. A weak GPU
 // gets two slots at 256 and a single tap; the rest four at 512 and five.
 
+/**
+ * The GPU's class as the 3D code sees it.
+ *
+ * `Graphics.gpuTier` is the game's answer, read once from the renderer
+ * string when the app starts — but the editor's 3D map view loads
+ * `reactor_3d.js` on its own, with no `reactor_core.js` and so no
+ * `Graphics` at all. Every tier-aware choice in here would quietly take the
+ * full-power branch there: the editor's own viewport would run four shadow
+ * slots at 512 with five taps on the same laptop the game had just been
+ * tuned down to two at 256. So the tier is asked for through here, and the
+ * editor sets `gpuTierOverride` from its own renderer once it has one.
+ */
+Reactor3D.gpuTierOverride = null;
+
+/** Renderers that want the cheap path. `Graphics` owns the canonical pair. */
+Reactor3D.WEAK_GPU_PATTERN = /\b(Intel|UHD|Iris|HD Graphics|Mali|Adreno|PowerVR|VideoCore|SwiftShader|llvmpipe|Software|Microsoft Basic Render|Mesa)\b/i;
+Reactor3D.WEAK_AMD_PATTERN = /\bRadeon(?:\s*\(TM\))?(?:\s+(?:RX\s+)?Vega\s*\d*)?\s+Graphics\b|\bVega\s*\d+\s+Graphics\b|\bAMD Custom GPU\b|\bRadeon\(TM\)\s+R[2-7]\b/i;
+
+/** "weak", "full" or "unknown" for a renderer description. */
+Reactor3D.classifyGpu = function(description) {
+    if (!description) return "unknown";
+    // A project may have replaced the patterns on Graphics; honour that.
+    const weak = (typeof Graphics !== "undefined" && Graphics.weakGpuPattern) || this.WEAK_GPU_PATTERN;
+    const amd = (typeof Graphics !== "undefined" && Graphics.weakAmdPattern) || this.WEAK_AMD_PATTERN;
+    return weak.test(description) || amd.test(description) ? "weak" : "full";
+};
+
+/** Read the renderer's own name out of a live context, or "" if it will not say. */
+Reactor3D.rendererDescription = function(gl) {
+    try {
+        if (!gl) return "";
+        const info = gl.getExtension("WEBGL_debug_renderer_info");
+        return String((info && gl.getParameter(info.UNMASKED_RENDERER_WEBGL)) || gl.getParameter(gl.RENDERER) || "");
+    } catch (e) {
+        return "";
+    }
+};
+
+/**
+ * The tier every cost decision in this file asks for: an explicit override
+ * first, then the game's, and "full" when nobody knows — an unknown GPU is
+ * left sharp rather than quietly demoted.
+ */
+Reactor3D.tier = function() {
+    if (this.gpuTierOverride) return this.gpuTierOverride;
+    if (typeof Graphics !== "undefined" && Graphics.gpuTier && Graphics.gpuTier !== "unknown") {
+        return Graphics.gpuTier;
+    }
+    return "full";
+};
+
+Reactor3D.isWeakGpu = function() {
+    return this.tier() === "weak";
+};
+
+/**
+ * The camera the frame is being drawn from, for anything that culls.
+ *
+ * A host without a `Reactor3D.Viewport` — the editor's map view, which
+ * builds its own renderer and camera — sets `cullCamera` instead. Reaching
+ * straight for the viewport is the mistake that has now been made three
+ * times in this file; go through here.
+ */
+Reactor3D.cullCamera = null;
+
+Reactor3D.activeCamera = function() {
+    if (this.cullCamera) return this.cullCamera;
+    try {
+        const viewport = this.viewport ? this.viewport() : null;
+        return viewport && viewport.camera ? viewport.camera() : null;
+    } catch (e) {
+        return null;
+    }
+};
+
+/**
+ * The view frustum, rebuilt at most once a frame.
+ *
+ * A light whose sphere of reach does not touch the frustum cannot light a
+ * single fragment anyone can see — every visible fragment is inside the
+ * frustum by definition — so dropping it changes no pixel. On the Demo's
+ * start map **nine of the ten lights are off screen at any moment**, and
+ * every lit pixel was running the distance and falloff maths for all ten.
+ * Null when there is no camera to ask, in which case nothing is culled.
+ */
+Reactor3D.viewFrustum = function() {
+    if (typeof THREE === "undefined") return null;
+    const camera = this.activeCamera();
+    if (!camera) return null;
+    const stamp = (typeof Graphics !== "undefined" && Graphics.frameCount) || 0;
+    if (this._frustumAt === stamp && this._frustumCamera === camera && this._frustum) {
+        return this._frustum;
+    }
+    const frustum = this._frustum || (this._frustum = new THREE.Frustum());
+    const matrix = this._frustumMatrix || (this._frustumMatrix = new THREE.Matrix4());
+    camera.updateMatrixWorld();
+    matrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    frustum.setFromProjectionMatrix(matrix);
+    this._frustumAt = stamp;
+    this._frustumCamera = camera;
+    return frustum;
+};
+
+/** Whether a sphere of `radius` at (x, y, z) can reach anything on screen. */
+Reactor3D.sphereInView = function(x, y, z, radius) {
+    const frustum = this.viewFrustum();
+    if (!frustum) return true;
+    const sphere = this._cullSphere || (this._cullSphere = new THREE.Sphere());
+    sphere.center.set(x, y, z);
+    sphere.radius = radius;
+    return frustum.intersectsSphere(sphere);
+};
+
 /** "auto" follows the GPU tier; "off" draws none anywhere. */
 Reactor3D.SHADOWS = "auto";
 /** How many lights can cast at once — the samplers are declared per slot. */
 Reactor3D.SHADOW_SLOTS = 4;
+/**
+ * `dynamicTriangles` is the ceiling on the geometry the moving casters may
+ * put into ONE cube map. It is a real ceiling, not a hint: a cube is six
+ * faces and a slot holds four lights, so every triangle a character casts is
+ * drawn up to twenty-four times a frame. The Demo's start map made that
+ * concrete — ten dynamic casters totalling 1.93M triangles (two characters
+ * of 595k each, two of 255k, all skinned) cost 289 ms of a 392 ms frame on
+ * an integrated Radeon, and dropping them to the cheapest five took the
+ * frame to 107 ms with everything else untouched.
+ */
 Reactor3D.SHADOW_QUALITY = {
-    full: { slots: 4, size: 512, taps: 5 },
-    weak: { slots: 2, size: 256, taps: 1 }
+    full: { slots: 4, size: 512, taps: 5, dynamicTriangles: 120000 },
+    weak: { slots: 2, size: 256, taps: 1, dynamicTriangles: 30000 }
 };
 /** The cube camera's near plane, in tiles; far is the light's reach. */
 Reactor3D.SHADOW_NEAR = 0.1;
@@ -6814,6 +6951,12 @@ Reactor3D.SHADOW_SOFTNESS = 1.5;
  * light itself stays where it was authored.
  */
 Reactor3D.SHADOW_LIFT = 0.25;
+/**
+ * How far past `dynamicTriangles` the single nearest caster may go before it
+ * is refused outright. Multiplied by the tier's budget, so it scales with
+ * the machine rather than naming a number twice.
+ */
+Reactor3D.SHADOW_DYNAMIC_CEILING = 4;
 Reactor3D.SHADOW_LAYER_STATIC = 1;
 Reactor3D.SHADOW_LAYER_DYNAMIC = 2;
 /** Bumped by every distance-level swap, so a cached map follows the geometry. */
@@ -6842,11 +6985,12 @@ Reactor3D.Shadows = {
     _candidates: [],
     _generation: 0,
     _staticHash: NaN,
+    _dynamicHash: NaN,
+    _casting: null,
 
     quality() {
         if (this._quality) return this._quality;
-        const weak = typeof Graphics !== "undefined" && Graphics.gpuTier === "weak";
-        this._quality = Reactor3D.SHADOW_QUALITY[weak ? "weak" : "full"];
+        this._quality = Reactor3D.SHADOW_QUALITY[Reactor3D.isWeakGpu() ? "weak" : "full"];
         return this._quality;
     },
 
@@ -7013,6 +7157,8 @@ Reactor3D.Shadows = {
         this._slots = null;
         this._renderer = null;
         this._staticHash = NaN;
+        // The maps are gone, so nothing may be judged unchanged against them.
+        this._dynamicHash = NaN;
         const uniforms = Reactor3D.lightUniforms();
         for (let k = 0; k < Reactor3D.SHADOW_SLOTS; k++) {
             uniforms["rrShadowMap" + k].value = null;
@@ -7024,6 +7170,8 @@ Reactor3D.Shadows = {
         this.disposeSlots();
         this._static.clear();
         this._dynamic.clear();
+        this._casting = null;
+        this._dynamicHash = NaN;
         this._candidates = [];
         this._active = false;
         Reactor3D.lightUniforms().rrLightShadow.value.fill(-1);
@@ -7056,6 +7204,169 @@ Reactor3D.Shadows = {
         const changed = hash !== this._staticHash;
         this._staticHash = hash;
         return changed;
+    },
+
+    /**
+     * Where the budget measures "near" from: the eye, because the shadow a
+     * player notices is the one in front of them. Falls back to the first
+     * casting light, and finally to nothing — in which case `_budgetDynamic`
+     * lets everything cast, exactly as it did before the budget existed.
+     */
+    _focusPoint(scene) {
+        try {
+            const viewport = Reactor3D.viewport ? Reactor3D.viewport() : null;
+            const camera = viewport && viewport._camera;
+            if (camera && camera.position) return camera.position;
+        } catch (e) {
+            // Fall through to the light below.
+        }
+        const first = this._candidates && this._candidates[0];
+        return first ? { x: first.x, y: first.y, z: first.z } : null;
+    },
+
+    /**
+     * A root's triangles, cached against the distance-level counter so a
+     * swap re-reads it. Walking eighty meshes a frame to add up index counts
+     * is itself measurable when the answer only changes on a swap.
+     */
+    _casterTriangles(root) {
+        const data = root.userData;
+        if (data.rrCasterTris !== undefined && data.rrCasterTrisAt === Reactor3D._lodSwaps) {
+            return data.rrCasterTris;
+        }
+        let total = 0;
+        root.traverse(child => {
+            if (!child.isMesh) return;
+            const geometry = child.geometry;
+            if (!geometry) return;
+            if (geometry.index) total += geometry.index.count / 3;
+            else if (geometry.attributes && geometry.attributes.position) total += geometry.attributes.position.count / 3;
+        });
+        data.rrCasterTris = total;
+        data.rrCasterTrisAt = Reactor3D._lodSwaps;
+        return total;
+    },
+
+    /**
+     * Choose the moving casters this frame can afford, nearest the focus
+     * first, and take the rest off the dynamic layer so the depth pass never
+     * sees them. Nearest-first rather than cheapest-first on purpose: the
+     * shadow a player is looking for is the one under their own feet, and a
+     * rule that spent the budget on whatever happened to be smallest would
+     * drop exactly that one. A caster already casting keeps casting until
+     * the budget genuinely runs out, so walking past a lamp does not switch
+     * a shadow on and off with every step.
+     */
+    _budgetDynamic(focus) {
+        const budget = this.quality().dynamicTriangles;
+        const casting = this._casting || (this._casting = new Set());
+        if (!focus || !(budget > 0)) {
+            // No budget: everything casts again. `_casting` must still list
+            // them, because it is what `_dynamicChanged` hashes — an empty
+            // set would hash to a constant and freeze every dynamic map.
+            const all = new Set();
+            for (const root of this._dynamic) {
+                if (!root.parent) { this._dynamic.delete(root); continue; }
+                if (!casting.has(root)) this._setCasts(root, true);
+                all.add(root);
+            }
+            this._casting = all;
+            return null;
+        }
+        const ranked = [];
+        for (const root of this._dynamic) {
+            if (!root.parent) { this._dynamic.delete(root); casting.delete(root); continue; }
+            if (!root.visible) continue;
+            const e = root.matrixWorld.elements;
+            const dx = e[12] - focus.x;
+            const dy = e[13] - focus.y;
+            const dz = e[14] - focus.z;
+            // A caster already chosen is held slightly closer than it is, so
+            // a tie at the budget's edge does not alternate frame to frame.
+            const bias = casting.has(root) ? 0.75 : 1;
+            ranked.push({ root, gap: (dx * dx + dy * dy + dz * dz) * bias });
+        }
+        ranked.sort((a, b) => a.gap - b.gap);
+
+        // The nearest caster is allowed past the budget, because a rule that
+        // could refuse the only shadow on screen is worse than one frame of
+        // honest cost — but only so far past it. A cube is six faces, so a
+        // caster costs six times its triangles every time its map is redrawn:
+        // the Demo's player model is 595k triangles (skinned models are the
+        // one thing the import optimizer cannot decimate), which is 3.6M a
+        // redraw, and no shadow is worth that on an integrated GPU. Past the
+        // ceiling it casts nothing and the model wants decimating instead.
+        const ceiling = budget * Reactor3D.SHADOW_DYNAMIC_CEILING;
+        let spent = 0;
+        const wanted = new Set();
+        for (const entry of ranked) {
+            const tris = this._casterTriangles(entry.root);
+            if (!wanted.size) {
+                if (tris <= ceiling) { wanted.add(entry.root); spent += tris; }
+                continue;
+            }
+            if (spent + tris > budget) continue;
+            wanted.add(entry.root);
+            spent += tris;
+        }
+        // Every considered root, not just the ones casting last frame:
+        // `markCaster` enables the layer as it registers a caster, so a
+        // model that appears mid-frame would otherwise cast straight past
+        // the budget until it happened to be chosen once.
+        for (const entry of ranked) if (!wanted.has(entry.root)) this._setCasts(entry.root, false);
+        for (const root of wanted) if (!casting.has(root)) this._setCasts(root, true);
+        this._casting = wanted;
+        return { casters: wanted.size, considered: ranked.length, triangles: Math.round(spent) };
+    },
+
+    /** Put a root's meshes on or off the dynamic depth layer. */
+    _setCasts(root, on) {
+        const layer = Reactor3D.SHADOW_LAYER_DYNAMIC;
+        root.traverse(child => {
+            if (!child.isMesh) return;
+            if (on) child.layers.enable(layer);
+            else child.layers.disable(layer);
+        });
+    },
+
+    /**
+     * A number that changes when a casting character moves or animates.
+     * Root transforms alone are not enough: a character animating on the
+     * spot never moves its root, and freezing its shadow while it moved
+     * would be the very artefact the dynamic map exists to avoid — so a
+     * skinned caster also folds in two of its bones.
+     */
+    _dynamicChanged() {
+        let hash = 0;
+        let n = 0;
+        for (const root of (this._casting || [])) {
+            if (!root.parent || !root.visible) continue;
+            n++;
+            const e = root.matrixWorld.elements;
+            hash += n * (e[12] * 1.7 + e[13] * 2.3 + e[14] * 3.1 + e[0] * 0.7 + e[5] * 1.1 + e[10] * 1.3);
+            const skeleton = root.userData.rrShadowSkeleton !== undefined
+                ? root.userData.rrShadowSkeleton
+                : (root.userData.rrShadowSkeleton = this._firstSkeleton(root));
+            if (!skeleton || !skeleton.bones.length) continue;
+            const bones = skeleton.bones;
+            for (const bone of [bones[0], bones[bones.length >> 1]]) {
+                if (!bone) continue;
+                const b = bone.matrixWorld.elements;
+                hash += n * (b[12] * 5.1 + b[13] * 6.7 + b[14] * 7.3);
+            }
+        }
+        hash += n * 1000;
+        const changed = hash !== this._dynamicHash;
+        this._dynamicHash = hash;
+        return changed;
+    },
+
+    _firstSkeleton(root) {
+        let found = null;
+        root.traverse(child => {
+            if (!found && child.isSkinnedMesh && child.skeleton) found = child.skeleton;
+        });
+        return found;
     },
 
     /** Whether any character stands within a light's reach. */
@@ -7129,6 +7440,12 @@ Reactor3D.Shadows = {
         if (scene.matrixWorldAutoUpdate !== false) scene.updateMatrixWorld();
         const quality = this.quality();
         const staticDirty = this._staticChanged();
+        // Which characters can afford to cast, and whether any of them has
+        // moved or animated since the last maps were drawn. Both must run
+        // before the slot loop: the budget decides what `_dynamicChanged`
+        // is even hashing.
+        this.lastBudget = this._budgetDynamic(this._focusPoint(scene));
+        const dynamicDirty = this._dynamicChanged();
         const assigned = this.assign(this._candidates, quality.slots, slots.map(s => (s.id === null ? null : { id: s.id })));
         const shadowOf = uniforms.rrLightShadow.value;
         shadowOf.fill(-1);
@@ -7174,7 +7491,12 @@ Reactor3D.Shadows = {
                 slot.light.shadow.needsUpdate = true;
                 statics.push(slot.light);
             }
-            if (dynamic || fresh || !slot.dyn.shadow.map) {
+            // A dynamic map is only worth redrawing when something in it
+            // actually changed. Before this, a slot with any character in
+            // reach redrew six cube faces of every casting character every
+            // frame, standing perfectly still — on the Demo's start map that
+            // was 289 ms of a 392 ms frame with nothing moving at all.
+            if ((dynamic && (dynamicDirty || moved)) || fresh || !slot.dyn.shadow.map) {
                 slot.dyn.shadow.needsUpdate = true;
                 dynamics.push(slot.dyn);
             }
@@ -7600,6 +7922,42 @@ Reactor3D.parseColour = function(value) {
     return Number.isFinite(parsed) && hex.length >= 3 ? parsed : 0xffffff;
 };
 
+/**
+ * Record the heading a character's model is drawn at this frame, in scene
+ * radians. Facing itself is discrete, but the mesh eases between compass
+ * points over about a quarter second, and anything riding the character -
+ * a carried spotlight above all - should swing with the mesh rather than
+ * jump ahead of it.
+ */
+Reactor3D.noteModelFacing = function(character, radians) {
+    if (!character || !Number.isFinite(radians)) return;
+    character._reactorModelYaw = radians;
+    character._reactorModelYawAt = typeof Graphics !== "undefined" && Graphics.frameCount
+        ? Graphics.frameCount : 0;
+};
+
+/**
+ * Which way a carrier is facing, in degrees, for a light that rides it.
+ * The drawn model's heading when there is one and it is being kept up to
+ * date; the discrete facing otherwise, which is all a character drawn as a
+ * sprite has. A stale reading is refused so a model that stopped updating
+ * cannot pin a light to a heading its owner left long ago.
+ */
+Reactor3D.CARRIER_FACING_STALE_FRAMES = 30;
+
+Reactor3D.carrierFacingYaw = function(carrier) {
+    const stamp = carrier._reactorModelYawAt;
+    if (stamp != null && carrier._reactorModelYaw != null) {
+        const now = typeof Graphics !== "undefined" && Graphics.frameCount ? Graphics.frameCount : 0;
+        if (now - stamp <= this.CARRIER_FACING_STALE_FRAMES) {
+            // Scene yaw is anticlockwise from south; this convention is
+            // clockwise. Same negation the scene's own lights use.
+            return (-carrier._reactorModelYaw * 180) / Math.PI;
+        }
+    }
+    return this.facingYaw(carrier.direction ? carrier.direction() : 2);
+};
+
 /** RPG Maker's direction numbers as a yaw in degrees: 2 is south, 8 north. */
 Reactor3D.facingYaw = function(direction) {
     switch (direction) {
@@ -7756,6 +8114,10 @@ Reactor3D.collectLights = function() {
 //     angle,                               // spot spread in degrees
 //     color, intensity, occlude, on, tag,
 //     attach: null | { event: id } | { player: true },
+//     followFacing,                        // attached cones aim where the carrier looks
+//                                          // (yaw is then an offset); false keeps a bearing
+//     body,                                // draw the source as a glowing shape in the
+//                                          // world; defaults off for an attached light
 //     flicker: 0..1,                       // candle jitter on intensity
 //     pulse: { min, max, period } }        // radius breathing, period in frames
 
@@ -7796,6 +8158,21 @@ Reactor3D.readMapLights = function(mapData) {
                     : Number(entry.attach.event) > 0
                         ? { event: Math.floor(Number(entry.attach.event)) } : null)
                 : null,
+            // A spot riding a character aims where that character is facing
+            // unless it says otherwise, its own yaw read as an offset from
+            // that. Off, it keeps a fixed compass bearing while it travels.
+            followFacing: entry.followFacing !== false,
+            // Whether the source is drawn as a glowing body in the world.
+            // A lamp on a wall should be visible; a torch carried by a
+            // character should not, because the character is what you are
+            // meant to see holding it — drawn anyway it is a bright blob
+            // sitting on the floor at their feet, which is what the Demo's
+            // torch looked like. So an attached light defaults to no body
+            // and anything standing on its own defaults to having one.
+            body: entry.body !== undefined
+                ? !!entry.body
+                : !(entry.attach && typeof entry.attach === "object"
+                    && (entry.attach.player || Number(entry.attach.event) > 0)),
             flicker: number(entry.flicker, 0, 0, 1),
             pulse: entry.pulse && typeof entry.pulse === "object" ? {
                 min: number(entry.pulse.min, 0.6, 0, 10),
@@ -7866,6 +8243,8 @@ Reactor3D.nativeLights = function(mapData) {
         if (!this.lightIsOn(light)) continue;
         let x = light.x;
         let y = light.y;
+        // Extra yaw from the carrier this light rides, if it rides one.
+        let facing = 0;
         if (light.attach) {
             let carrier = null;
             if (light.attach.player) {
@@ -7876,6 +8255,18 @@ Reactor3D.nativeLights = function(mapData) {
             if (!carrier) continue;
             x += carrier._realX + 0.5;
             y += carrier._realY + 0.5;
+            // A cone carried by a character points where that character is
+            // looking. Attachment moved the light and stopped there, so a
+            // torch on the player lit one fixed compass bearing however they
+            // turned — a wedge on the floor that swung with nothing. The
+            // authored yaw stays meaningful as an offset from the carrier's
+            // facing (90 for a lamp held out to the left), and a light that
+            // genuinely wants a fixed bearing while it travels sets
+            // `followFacing: false`. Only cones care: a point light has no
+            // direction to get wrong.
+            if (light.type === this.LIGHT_SPOT && light.followFacing && carrier.direction) {
+                facing = this.carrierFacingYaw(carrier);
+            }
         }
         let radius = light.radius;
         let intensity = light.intensity;
@@ -7895,8 +8286,8 @@ Reactor3D.nativeLights = function(mapData) {
         out.push({
             id: light.id, type: light.type, x: x, y: y, height: light.height,
             radius: radius, colour: light.color, intensity: intensity,
-            angle: light.angle, yaw: -light.yaw, pitch: light.pitch, occlude: light.occlude,
-            shadow: light.shadow
+            angle: light.angle, yaw: -(light.yaw + facing), pitch: light.pitch, occlude: light.occlude,
+            shadow: light.shadow, body: light.body
         });
     }
     return out;
@@ -10275,7 +10666,104 @@ Reactor3D.attachLodLevels = function(template, key, buffers) {
  * meshes' geometry. `size` is the model's size in tiles (its largest span
  * after scaling); `eye` the camera's world position.
  */
-Reactor3D.pickLod = function(object, size, eye, cacheKey) {
+/**
+ * Triangles a model may spend per pixel it covers on screen.
+ *
+ * The distance rule below is relative to the model's own size, which is
+ * right for "is this thing far away" and useless as a cost ceiling: a
+ * twenty-tile tower has to be eighty tiles off before it coarsens, which on
+ * a fifty-tile map it never is, so the Demo's start map drew 7.5M triangles
+ * a frame with every level built and unused.
+ *
+ * One triangle per pixel is the honest ceiling: at that point every pixel
+ * on the model already has a triangle of its own and more geometry cannot
+ * show up. Measured on the Demo's start map, a tighter 0.5 dropped the
+ * screen-filling tower to a twentieth (0.1 triangles per covered pixel),
+ * which is past the point where a silhouette starts to read as faceted; at
+ * 1.0 it takes the quarter level instead and the small consoles, which are
+ * coarser than the budget however far they drop, are unaffected.
+ */
+Reactor3D.LOD_TRIANGLES_PER_PIXEL = 1;
+/** Refining again needs this much more room than coarsening did, so a level cannot flicker. */
+Reactor3D.LOD_BUDGET_HYSTERESIS = 1.4;
+
+/** Triangles in one built level, counted once and kept on the entry. */
+Reactor3D._levelTriangles = function(entry, index) {
+    const counts = entry.triangleCounts || (entry.triangleCounts = []);
+    if (counts[index] !== undefined) return counts[index];
+    let total = 0;
+    for (const geometry of entry.levels[index] || []) {
+        if (!geometry) continue;
+        if (geometry.index) total += geometry.index.count / 3;
+        else if (geometry.attributes && geometry.attributes.position) total += geometry.attributes.position.count / 3;
+    }
+    counts[index] = total;
+    return total;
+};
+
+/**
+ * Pixels per world unit at one unit of depth: the factor that turns a span
+ * and a distance into a size on screen. Read from the live camera once a
+ * frame — every placed instance asks, and the answer only changes when the
+ * camera or the window does.
+ */
+/**
+ * The two numbers the budget needs, for any camera and target: pixels per
+ * world unit at one unit of depth, and how many pixels there are to fill.
+ *
+ * Taken as an argument rather than read from the viewport, because the
+ * editor's map view has neither — it builds its own `THREE.WebGLRenderer`
+ * and camera and never creates a `Reactor3D.Viewport`. Reading the viewport
+ * there returned nothing, the budget was skipped, and the editor drew every
+ * prop at full detail while the game beside it drew a twentieth: 7.5M
+ * triangles against 2.2M, which is why the editor felt heavier than play.
+ */
+Reactor3D.lodScreen = function(camera, width, height) {
+    if (!camera || !camera.isPerspectiveCamera || !(height > 0) || !(width > 0)) return null;
+    return {
+        factor: height / (2 * Math.tan((camera.fov * Math.PI) / 360)),
+        pixels: width * height
+    };
+};
+
+Reactor3D._lodScreenFactor = function() {
+    // Keyed on what the answer is actually made of, not on the frame
+    // counter: `Graphics` does not exist in the editor, so a frame key read
+    // as -1 for ever and the factor computed once would never follow a
+    // resized viewport or a changed field of view.
+    let camera = null;
+    let width = 0;
+    let height = 0;
+    try {
+        const viewport = this.viewport ? this.viewport() : null;
+        camera = viewport && viewport.camera ? viewport.camera() : null;
+        const size = viewport && viewport.targetSize ? viewport.targetSize() : null;
+        height = size && size.height > 0 ? size.height
+            : (typeof Graphics !== "undefined" ? Graphics.height : 0);
+        width = size && size.width > 0 ? size.width
+            : (typeof Graphics !== "undefined" ? Graphics.width : 0);
+    } catch (e) {
+        camera = null;
+    }
+    if (!camera || !camera.isPerspectiveCamera || !(height > 0)) {
+        this._lodFactor = 0;
+        this._lodPixels = 0;
+        return 0;
+    }
+    const key = camera.fov + "|" + width + "x" + height;
+    if (this._lodFactorKey === key) return this._lodFactor;
+    this._lodFactorKey = key;
+    this._lodFactor = height / (2 * Math.tan((camera.fov * Math.PI) / 360));
+    this._lodPixels = width * height;
+    return this._lodFactor;
+};
+
+/** Pixels in the pass being drawn, read alongside the factor above. */
+Reactor3D._lodScreenPixels = function() {
+    return this._lodPixels || (typeof Graphics !== "undefined" ? Graphics.width * Graphics.height : 1);
+};
+
+Reactor3D.pickLod = function(object, size, eye, cacheKey, screen) {
     if (!object || !eye) return;
     // The levels may arrive after an instance was cloned from its template
     // (they load behind the model in the game), so a caller that knows the
@@ -10296,6 +10784,41 @@ Reactor3D.pickLod = function(object, size, eye, cacheKey) {
         // to be clearly inside it.
         const threshold = this.LOD_DISTANCES[i] * span * (current > i ? this.LOD_HYSTERESIS : 1);
         if (distance > threshold) level = i + 1;
+    }
+    // …and never finer than the pixels it covers can show. The distance
+    // rule asks "is it far away"; this asks "is this detail visible at all",
+    // which is the question that actually bounds the cost.
+    // The caller's own view when it has one (the editor), the viewport's
+    // otherwise (the game).
+    const factor = screen && screen.factor > 0 ? screen.factor : this._lodScreenFactor();
+    const screenPixels = screen && screen.pixels > 0 ? screen.pixels : this._lodScreenPixels();
+    if (factor > 0 && distance > 0.0001) {
+        const radius = (span * 0.5) / distance * factor;
+        // Clamped to the screen, because the projection of a sphere grows
+        // without bound as the camera approaches it and nothing can cover
+        // more than every pixel there is. Unclamped, standing beside the
+        // Demo's tower asked for 1.9M triangles again — the budget said a
+        // model covering "several screens" could afford anything.
+        const pixels = Math.min(Math.PI * radius * radius, screenPixels);
+        let budgetLevel = levels.length - 1;
+        for (let i = 0; i < levels.length; i++) {
+            // Refining below the level already in use has to clear a
+            // margin; holding or coarsening uses the plain budget. Both
+            // directions must be measured against the SAME current level or
+            // the rule oscillates: giving the finer level extra allowance
+            // only while it is not selected means it fits, gets chosen,
+            // stops fitting, and is dropped again — which is exactly what
+            // happened, 123 swaps in 40 frames on a still camera. Every
+            // swap bumps `_lodSwaps`, that invalidates the static shadow
+            // hash, and the whole prop set re-rendered into both cube maps
+            // every frame for a scene where nothing was moving.
+            const margin = i < current ? 1 / this.LOD_BUDGET_HYSTERESIS : 1;
+            if (this._levelTriangles(entry, i) <= pixels * this.LOD_TRIANGLES_PER_PIXEL * margin) {
+                budgetLevel = i;
+                break;
+            }
+        }
+        if (budgetLevel > level) level = budgetLevel;
     }
     if (level === current && object.userData.lodApplied) return;
     if (!object.userData.lodKey) object.userData.lodKey = key;
@@ -10546,17 +11069,40 @@ Reactor3D.cloneModelTemplate = function(template) {
  * runs every vertex through its bones on the CPU: a third of a second for
  * a 600k-vertex character, once per instance, exactly as it steps into
  * view or a battle opens. The rest geometry's sphere is a plain vertex
- * pass, computed once per template because the geometry is shared, and
- * it sorts and culls a character just as well. One character is never
- * worth frustum culling either.
+ * pass, computed once per template because the geometry is shared, and it
+ * sorts a character just as well. It does NOT cull one — see below.
  */
+
 Reactor3D.presetSkinnedBounds = function(object) {
     object.traverse(child => {
         if (!child.isSkinnedMesh || !child.geometry) return;
-        child.frustumCulled = false;
         const geometry = child.geometry;
         if (!geometry.boundingSphere) geometry.computeBoundingSphere();
         if (geometry.boundingSphere) child.boundingSphere = geometry.boundingSphere.clone();
+        // Culling stays OFF, and the sphere above is for depth sorting only.
+        //
+        // It was switched on for a while, against that sphere grown by a
+        // margin, and characters vanished on screen — reported as "the main
+        // actors disappear when they should still be in the camera's view".
+        // The reason it cannot work this way: the sphere describes the REST
+        // pose in the geometry's own space, and a glTF skin puts its
+        // vertices wherever the bones say — through inverse binds, an
+        // armature scale, and the identity bind this loader uses (see
+        // `applyRestSkins`). `Frustum.intersectsObject` transforms that
+        // sphere by the mesh's `matrixWorld`, which for a skinned mesh is
+        // the node's transform and not where the skin actually ends up, so
+        // the test is being made against the wrong place entirely. No
+        // margin fixes a sphere in the wrong space; it only makes the bug
+        // rarer and stranger.
+        //
+        // A correct cull needs a sphere built in WORLD space from what the
+        // instance is actually doing — its placed position and
+        // `instanceSpan` — checked in `syncCharacterModels` where both are
+        // known, not handed to three per mesh. Worth doing: it measured
+        // 137 -> 90 draw calls and 2.53M -> 2.22M triangles. Worth doing
+        // correctly, though, because the failure is a character that is not
+        // there.
+        child.frustumCulled = false;
     });
     return object;
 };
@@ -11394,6 +11940,15 @@ Reactor3D.sampleModelKeys = function(rule, p) {
 };
 
 /** Drive one instance's rules for this frame. */
+/**
+ * Logic frames a movement clip keeps playing after movement stops being
+ * reported, before idle takes over. Long enough to ride out the frame
+ * between one step landing and the next starting, and any frame that
+ * caught no logic tick at all; short enough that stopping still reads as
+ * stopping. Frames, not milliseconds, so it is the same on any display.
+ */
+Reactor3D.MOVE_CLIP_GRACE = 8;
+
 Reactor3D.applyModelAnimation = function(binding, rules, state) {
     if (typeof THREE === "undefined" || !binding || !rules || !rules.length) return;
     binding.root.position.set(0, 0, 0);
@@ -11646,12 +12201,37 @@ Reactor3D.applyModelAnimation = function(binding, rules, state) {
             }
         }
         if (!desired) {
+            // Movement is held for a moment after it stops being reported.
+            //
+            // A step lands on its tile a frame before the next one starts,
+            // and a frame that catches no logic tick sees no movement at
+            // all — so `moving` reads false for a single frame while a
+            // character is plainly running. That frame picked "idle", and a
+            // model with no idle rule got *no rule*, which empties `key`,
+            // tears the clip down, and makes the next frame `reset()` a
+            // fresh one: the run restarts from its first frame. Reported as
+            // dashing that "stops in place and replays the animation", and
+            // measured as `Running -> null -> Running` off one such frame.
+            //
+            // The grace is in logic frames, so it is the same fifth of a
+            // second whatever the display is doing. A character that has
+            // genuinely stopped is still idle a breath later.
+            if (state.moving) {
+                binding.movingAt = state.frame;
+                binding.movingDash = !!state.dashing;
+            }
+            const held = binding.movingAt !== undefined
+                && state.frame - binding.movingAt <= Reactor3D.MOVE_CLIP_GRACE;
+            const moving = state.moving || held;
+            // Keep the gait that was actually running, so the last frames of
+            // a dash do not drop into the walk clip on the way to idle.
+            const dashing = state.moving ? state.dashing : !!binding.movingDash;
             // The most specific movement clip wins: a dashing character
             // prefers "dashing" over plain "moving"; two clips on the same
             // trigger never fight — the first in the list plays.
             const pick = trigger => clipRules.find(r => r.trigger === trigger);
-            const rule = (state.moving
-                ? (state.dashing ? pick("dashing") : pick("walking")) || pick("moving")
+            const rule = (moving
+                ? (dashing ? pick("dashing") : pick("walking")) || pick("moving")
                 : pick("idle")) || pick("always");
             if (rule) {
                 desired = rule.clip;
@@ -12231,6 +12811,8 @@ Reactor3D.updateMapModelSprite = function(sprite) {
         state.shownYaw = state.smoothYaw;
         state.dirty = true;
     }
+    // Same as the 3D path: a carried light follows the drawn heading.
+    this.noteModelFacing(character, state.smoothYaw - (spec.yaw || 0));
     // Same animation driver as the scene: walk/idle by movement, actions
     // from Play Model Animation. Scene-side effects are not fired here.
     if (state.binding && state.rules.length) {
@@ -12840,6 +13422,25 @@ Reactor3D.MAX_ANCHORED_PER_MODEL = 8;
 Reactor3D.EffekseerScene = {
     /** The most pixels one effect draws and copies per frame, as a fraction of the screen. */
     BUDGET: 0.25,
+    /**
+     * The same on a weak GPU, where that copy is the frame's largest single
+     * cost. An anchored effect's pixels live in a second WebGL context, so
+     * every frame they go out to a 2D canvas and back up as a texture, and
+     * the cost scales with the box: on the Demo's start map, standing at
+     * the reactor core, 212k pixels a frame measured 49 fps, 111k measured
+     * 55, and 55k measured 60 — below which nothing further is gained
+     * because the copy has stopped being the bottleneck. The effect is then
+     * drawn at about half its screen size and stretched onto its quad,
+     * which for additive glow is the softest thing in the frame to give up
+     * and is why this is the knob that moves rather than the geometry's.
+     * A capable GPU keeps the full quarter-screen.
+     */
+    BUDGET_WEAK: 0.06,
+
+    /** The share of the screen one effect may cost this frame, by GPU class. */
+    passBudget() {
+        return Reactor3D.isWeakGpu() ? this.BUDGET_WEAK : this.BUDGET;
+    },
     /** The effect's reach, in frames: the authored screen is one frame tall; a beam may run past it. */
     RADIUS_FRAMES: 1.25,
     /** Frames between looks at what the effect actually covers of its box. */
@@ -12849,6 +13450,60 @@ Reactor3D.EffekseerScene = {
     MEASURE_PAD_TILES: 0.25,
     /** Measurements remembered: the reach is the largest of them, so a bolt every few seconds keeps its room. */
     MEASURE_HISTORY: 30,
+    /**
+     * The most the interval between looks may be multiplied by after
+     * consecutive looks that found nothing lit. A look costs a readback,
+     * and a readback is a GPU sync — about ten milliseconds on a discrete
+     * card, but ~250 ms on an integrated one, where the whole frame is only
+     * meant to take sixteen.
+     */
+    MEASURE_MISS_BACKOFF: 30,
+    /**
+     * Consecutive empty looks after which an effect stops being drawn and
+     * copied between looks.
+     *
+     * The copy is the expensive part of an anchored effect, not the draw:
+     * the overlay is a second WebGL context, so its pixels reach three by
+     * going out to a 2D canvas and back up as a texture — 640x360 of it a
+     * frame on the Demo's start map, about 7 ms of a 24 ms frame, for an
+     * effect that had not lit a single pixel in fifty looks. `begin` starts
+     * every play at zero misses, so an effect that is fired and draws is
+     * never held back; only a long-lived one that keeps coming back empty
+     * goes quiet, and it wakes on its next look.
+     */
+    EMPTY_AFTER: 3,
+    /** Multiples of `MEASURE_EVERY` between looks once a reach has settled, by GPU class. */
+    SETTLED_EVERY: 30,
+    SETTLED_EVERY_WEAK: 300,
+
+    settledInterval() {
+        return Reactor3D.isWeakGpu() ? this.SETTLED_EVERY_WEAK : this.SETTLED_EVERY;
+    },
+
+    /**
+     * The same two numbers for the period *before* a reach has settled,
+     * which is where the cost actually lands.
+     *
+     * Settling takes `MEASURE_HISTORY` looks at one per `MEASURE_EVERY`
+     * frames — thirty looks, ten frames apart, so three hundred frames of
+     * paying a readback every tenth one. That is invisible at ten
+     * milliseconds a look and a stutter at forty, which is what it costs on
+     * an integrated GPU: seven of the nine remaining spikes in a six-hundred
+     * frame walk were this, at 33 to 72 ms each. So a weak GPU looks three
+     * times less often and settles on a third of the samples — eight looks
+     * over 240 frames instead of thirty over 300 — which is a coarser reach
+     * held sooner, and a reach is only a box that has to contain the effect.
+     */
+    MEASURE_EVERY_WEAK: 30,
+    MEASURE_HISTORY_WEAK: 8,
+
+    learnInterval() {
+        return Reactor3D.isWeakGpu() ? this.MEASURE_EVERY_WEAK : this.MEASURE_EVERY;
+    },
+
+    historyWanted() {
+        return Reactor3D.isWeakGpu() ? this.MEASURE_HISTORY_WEAK : this.MEASURE_HISTORY;
+    },
     /** The effect plane's side, in tiles: enough to cover the view from any distance a map allows. */
     QUAD_SPAN: 600,
     _live: [],
@@ -13019,14 +13674,15 @@ Reactor3D.EffekseerScene = {
      * last invisible particle does.
      */
     boxTracker() {
-        return { radius: null, below: null, above: null, history: [], visibleFrames: null, mini: null };
+        return { radius: null, below: null, above: null, history: [], visibleFrames: null, mini: null, misses: 0 };
     },
 
     /** Remember a measured reach `{ radius, below, above }` and keep the widest remembered. */
     remember(track, reach) {
         const history = track.history || (track.history = []);
         history.push(reach);
-        if (history.length > this.MEASURE_HISTORY) history.splice(0, history.length - this.MEASURE_HISTORY);
+        const keep = this.historyWanted();
+        if (history.length > keep) history.splice(0, history.length - keep);
         let radius = 0, below = Infinity, above = -Infinity;
         for (const box of history) {
             if (box.radius > radius) radius = box.radius;
@@ -13099,7 +13755,13 @@ Reactor3D.EffekseerScene = {
                 if (y > maxY) maxY = y;
             }
         }
-        if (maxX < 0) return false;
+        if (maxX < 0) {
+            // Nothing lit: count it, so `shouldMeasure` can back off rather
+            // than pay this readback again in ten frames' time.
+            track.misses = (track.misses || 0) + 1;
+            return false;
+        }
+        track.misses = 0;
         // Mini pixels to screen pixels (the mini's first row is the box's top).
         const sx = rect.w / mw, sy = rect.h / mh;
         const lit = {
@@ -13146,13 +13808,40 @@ Reactor3D.EffekseerScene = {
      */
     shouldMeasure(frames, track) {
         if (frames === 3) return true;
-        const settled = track && track.history && track.history.length >= this.MEASURE_HISTORY;
+        const settled = track && track.history && track.history.length >= this.historyWanted();
+        // An effect whose box comes back empty never remembers a reach, so
+        // it never settles either — and without a backoff it pays the
+        // readback every `MEASURE_EVERY` frames for as long as it lives.
+        // The Demo's start map holds exactly one such effect, and it was
+        // spending ~250 ms every ten frames, for ever, measuring nothing.
+        // Each consecutive miss doubles the wait to a ceiling; one look
+        // that finds anything resets it, so an effect that fires once in a
+        // while is still measured the moment it does.
+        const misses = track && track.misses ? track.misses : 0;
+        const backoff = misses > 0 ? Math.min(1 << Math.min(misses, 5), this.MEASURE_MISS_BACKOFF) : 1;
+        if (backoff > 1) {
+            const base = settled ? this.learnInterval() * this.settledInterval() : this.learnInterval();
+            return frames % (base * backoff) === 0;
+        }
         // A settled look is a whole-overlay drawImage plus a readback — a
         // GPU sync of about ten milliseconds, which at every thirtieth frame
         // was a visible hitch twice a second on a map with an always-on
         // effect. Every three hundred frames keeps a slowly growing effect
         // honest and costs a hitch every five seconds instead.
-        return frames % (settled ? this.MEASURE_EVERY * 30 : this.MEASURE_EVERY) === 0;
+        //
+        // Ten milliseconds is the discrete-card price. On an integrated one
+        // the same sync measured 31 to 42 ms — two and a half frames — and
+        // with everything else on the Demo's start map down to vsync it was
+        // the *only* thing left that broke sixty: four slow frames in four
+        // hundred, all of them this. A settled reach is already the widest
+        // of thirty looks, so on that hardware the refinement is worth far
+        // less than the stutter it costs, and it drops to once every fifty
+        // seconds rather than stopping — an effect that genuinely grows is
+        // still caught, just not at the price of a visible hitch.
+        const every = settled
+            ? this.learnInterval() * this.settledInterval()
+            : this.learnInterval();
+        return frames % every === 0;
     },
 
     setPass(which) {
@@ -13176,7 +13865,7 @@ Reactor3D.EffekseerScene = {
         if (!camera || !renderer || !efx || !gl || !overlay) return;
         const screenW = overlay.width;
         const screenH = overlay.height;
-        const budget = screenW * screenH * this.BUDGET;
+        const budget = screenW * screenH * this.passBudget();
         const size = viewport.targetSize ? viewport.targetSize() : { width: screenW, height: screenH };
         camera.updateMatrixWorld();
         const clip = this._clip || (this._clip = new THREE.Vector4());
@@ -13194,6 +13883,23 @@ Reactor3D.EffekseerScene = {
                 // The effect's own box on screen, drawn 1:1 (smaller only past the budget).
                 const rect = this.trackedRect(play.track, camera, play.world, play.radius || 1, screenW, screenH, budget, 32);
                 if (!rect) { play.ready = false; play.quad.mesh.visible = false; continue; }
+                // An effect whose picture keeps coming back empty costs
+                // nothing between looks: no scissored draw, no copy out of
+                // the overlay, no upload. It is looked at on exactly the
+                // cadence `shouldMeasure` already backs off to, because a
+                // look is a readback and a readback is the single most
+                // expensive thing in this frame — 30 to 60 ms on an
+                // integrated GPU. Watching cheaply every frame does not
+                // work: the sync is what costs, not the pixels, so a 96 px
+                // look every frame measured worse than the full-size copy
+                // it replaced (41 ms a frame against 24).
+                const empty = play.track && play.track.misses >= this.EMPTY_AFTER;
+                if (empty && !this.shouldMeasure(play.frames + 1, play.track)) {
+                    play.frames++;
+                    play.ready = false;
+                    play.quad.mesh.visible = false;
+                    continue;
+                }
                 const s = rect.scale;
                 const drawW = Math.max(1, Math.round(rect.w * s));
                 const drawH = Math.max(1, Math.round(rect.h * s));
@@ -13239,8 +13945,17 @@ Reactor3D.EffekseerScene = {
                 this.standQuad(play.quad.mesh, play.world, camera);
                 const uniforms = play.quad.material.uniforms;
                 uniforms.resolution.value.set(size.width, size.height);
-                uniforms.rectMin.value.set(rect.x / screenW, rect.y / screenH);
-                uniforms.rectSize.value.set(rect.w / screenW, rect.h / screenH);
+                // The box the quad samples has to be the box that was
+                // actually drawn, which is the rounded one: `drawX` and the
+                // rest are snapped to whole pixels *at the reduced scale*,
+                // so at a quarter scale a rounding of one drawn pixel is
+                // four on screen. Handing the shader the unrounded rect put
+                // the picture up to several pixels off its anchor and moved
+                // it about as the rounding crossed — an effect that jumps
+                // aside for a frame and snaps back. Invisible while the
+                // scale was 1 and plain once a weak GPU drew these smaller.
+                uniforms.rectMin.value.set((drawX / s) / screenW, (drawY / s) / screenH);
+                uniforms.rectSize.value.set((drawW / s) / screenW, (drawH / s) / screenH);
                 play.ready = true;
                 play.quad.mesh.visible = this._pass === "all" || this._pass === "world" || this._pass === "below";
             }
@@ -13883,6 +14598,12 @@ Reactor3D.MapScene.prototype.syncCharacterModels = function(characters) {
                 : holder.smoothYaw + Math.sign(delta) * maxStep;
         }
         object.rotation.y = holder.smoothYaw;
+        // Publish the heading the model is actually drawn at, so a light this
+        // character carries swings with the mesh instead of snapping between
+        // compass points. The spec's own yaw is an art correction for a model
+        // authored facing the wrong way, not part of where the character
+        // looks, so it comes back off.
+        Reactor3D.noteModelFacing(character, holder.smoothYaw - (spec.yaw || 0));
         object.position.set(character._realX + 0.5, ground + (character._reactorLift || 0), character._realY + 0.5);
         Reactor3D.applyLiveTransform(object, character);
         // Face Ceiling / Face Ground and Rotate route steps. Local axes,

@@ -10522,20 +10522,26 @@
       "type": "spot",
       "x": 0,
       "y": 0,
-      "yaw": 180,
-      "radius": 6,
-      "angle": 28,
+      "height": 3,
+      "yaw": 0,
+      "pitch": -30,
+      "radius": 5,
+      "angle": 45,
       "color": "#eaf6ff",
-      "intensity": 0.5,
-      "flicker": 0.08,
+      "intensity": 0.9,
+      "occlude": true,
+      "shadow": true,
+      "on": true,
+      "tag": "torch",
       "attach": {
         "player": true
       },
-      "tag": "torch"
+      "flicker": 0.08,
+      "pulse": null
     }
   ],
   "lighting": {
-    "ambient": 0.3,
-    "ambientColour": "#5a6fc0"
+    "ambient": 0.22,
+    "ambientColour": "#9db4ff"
   }
 }

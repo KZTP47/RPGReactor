@@ -209,20 +209,23 @@ test('the runtime and the editor load the listed levels and pick per frame', () 
     assert.match(preview, /if \(!fs\.existsSync\(lodPath\)\) continue;/);
     const editor = read('editor/src/MapEditor3D.js');
     assert.match(editor, /this\.animateEventPreviews\(now\);\n\s*this\.pickPropLods\(\);/);
-    assert.match(editor, /Reactor3D\.pickLod\(object, Reactor3D\.instanceSpan\(object\), eye\);/);
+    assert.match(editor, /Reactor3D\.pickLod\(object, Reactor3D\.instanceSpan\(object\), eye, undefined, screen\);/, 'the editor hands pickLod its own screen pair');
 });
 
-test('a weak GPU is read once at boot and keeps the 3D passes at one pixel and two samples', () => {
+test('a weak GPU is read once at boot, keeps the 3D passes sharp under a capped ratio and gives up multisampling', () => {
     const core = read('runtime/reactor_core.js');
     assert.match(core, /this\._sampleGpuTier\(app\.renderer\);/);
     const start = core.indexOf('Graphics._sampleGpuTier = function(renderer) {');
     const end = core.indexOf('\n};', start) + 3;
-    const context = { Graphics: { maxCanvasPixelRatio: 4, gpuTierOverride: null, weakGpuPattern: null }, Reactor3D: { renderTargetSamples: 4 } };
+    const context = { Graphics: { maxCanvasPixelRatio: 4, weakMaxCanvasPixelRatio: 2, gpuTierOverride: null, weakGpuPattern: null, weakAmdPattern: null }, Reactor3D: { renderTargetSamples: 4 } };
     vm.createContext(context);
     vm.runInContext(core.slice(start, end), context);
     const patternLine = core.match(/Graphics\.weakGpuPattern = (\/.*\/i);/);
     assert.ok(patternLine, 'the pattern is a literal');
     context.Graphics.weakGpuPattern = vm.runInContext(patternLine[1], context);
+    const amdLine = core.match(/Graphics\.weakAmdPattern = (\/.*\/i);/);
+    assert.ok(amdLine, 'the AMD APU pattern is a literal');
+    context.Graphics.weakAmdPattern = vm.runInContext(amdLine[1], context);
     const fakeGl = name => ({ getExtension: () => ({ UNMASKED_RENDERER_WEBGL: 1 }), getParameter: () => name, RENDERER: 2 });
 
     assert.equal(context.Graphics._sampleGpuTier({ gl: fakeGl('ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Laptop GPU Direct3D11 vs_5_0 ps_5_0, D3D11)') }), 'full');
@@ -230,8 +233,8 @@ test('a weak GPU is read once at boot and keeps the 3D passes at one pixel and t
     assert.equal(context.Reactor3D.renderTargetSamples, 4);
 
     assert.equal(context.Graphics._sampleGpuTier({ gl: fakeGl('ANGLE (Intel, Intel(R) UHD Graphics 620 Direct3D11 vs_5_0 ps_5_0, D3D11)') }), 'weak');
-    assert.equal(context.Graphics.maxCanvasPixelRatio, 1);
-    assert.equal(context.Reactor3D.renderTargetSamples, 2);
+    assert.equal(context.Graphics.maxCanvasPixelRatio, 2, 'sharp stays, but a 4K panel cannot ask for nine times the pixels');
+    assert.equal(context.Reactor3D.renderTargetSamples, 0, 'edge smoothing is what a weak GPU gives up');
 
     context.Graphics.maxCanvasPixelRatio = 4; context.Reactor3D.renderTargetSamples = 4;
     assert.equal(context.Graphics._sampleGpuTier({ gl: fakeGl('Mali-G52') }), 'weak');

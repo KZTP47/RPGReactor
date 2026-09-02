@@ -1465,8 +1465,11 @@ class ResourceManager {
                     // GLBs get an optional shrink before they land in the
                     // project: textures capped at 2K, float skin weights
                     // packed to 16-bit, unused tangent streams dropped, and
-                    // duplicate vertices welded. The user picks the level;
-                    // validateModelBytes still gates whatever comes out.
+                    // the mesh cut by collapsing the edges that change the
+                    // shape least, with UV seams pinned so the surface cannot
+                    // tear. The user picks the level; validateModelBytes still
+                    // gates whatever comes out. A model already in the project
+                    // can be put through the same thing from the 3D database.
                     let importBytes = bytes;
                     let shrunkNote = '';
                     // Distance levels: geometry-only copies at coarser weld
@@ -1491,7 +1494,11 @@ class ResourceManager {
                                     shrunkNote = ` (${(bytes.length / 1048576).toFixed(1)}MB → ` +
                                         `${(importBytes.length / 1048576).toFixed(1)}MB)`;
                                 }
-                                if (typeof window.RRGlbOptimizer.lods === 'function') {
+                                // Off by default: see the note on PRESETS. The
+                                // reduced model carries its own saving at every
+                                // distance, without a second copy on disk.
+                                if ((window.RRGlbOptimizer.PRESETS[mode] || {}).buildLods
+                                    && typeof window.RRGlbOptimizer.lods === 'function') {
                                     this.setStatus(`Building distance levels for ${file.name}…`);
                                     const levels = await (window.RRGlbOptimizer.lodsAsync || window.RRGlbOptimizer.lods)(importBytes);
                                     if (generation !== this.operationGeneration) return;

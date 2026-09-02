@@ -96,13 +96,19 @@
     }
 
     /**
-     * Decimate. `mesh` = { positions, normals?, uvs?, indices } (typed arrays,
-     * triangle list); `target` = triangle count to stop at. Options:
-     * `boundaryWeight` (penalty on boundary/seam planes, default 100),
-     * `maxIterations` (safety). Returns { positions, normals, uvs, indices,
-     * triangles, collapsed } with compacted vertices; `indices` is Uint16Array
-     * when it fits, Uint32Array otherwise. Empty or already-small input comes
-     * back as fresh copies.
+     * Decimate. `mesh` = { positions, normals?, uvs?, joints?, weights?,
+     * indices } (typed arrays, triangle list); `target` = triangle count to
+     * stop at. Options: `boundaryWeight` (penalty on boundary/seam planes,
+     * default 100), `maxIterations` (safety). Returns { positions, normals,
+     * uvs, joints, weights, indices, triangles, collapsed } with compacted
+     * vertices; `indices` is Uint16Array when it fits, Uint32Array otherwise.
+     * Empty or already-small input comes back as fresh copies.
+     *
+     * Skinning rides along as four-channel baggage. Unlike normals, it is
+     * never blended: a joint channel holds a bone index, so the average of
+     * bones 3 and 9 is bone 6 — an unrelated bone that would fling the vertex
+     * across the model. The surviving endpoint's four pairs travel intact,
+     * the same way a UV does.
      */
     function decimate(mesh, target, options) {
         const settings = options || {};
@@ -114,12 +120,21 @@
         const pos = Float64Array.from(src);
         const nor = mesh.normals ? Float32Array.from(mesh.normals) : null;
         const uv = mesh.uvs ? Float32Array.from(mesh.uvs) : null;
+        // Keep the source types: joints are integer bone indices, and weights
+        // may arrive normalized as bytes/shorts. Copying through Float32 would
+        // corrupt both.
+        const joi = mesh.joints ? mesh.joints.slice() : null;
+        const wei = mesh.weights ? mesh.weights.slice() : null;
+        // Optional per-vertex pin (1 = never remove this vertex). Callers use
+        // it to hold a UV seam still; see the note at the collapse commit.
+        const locked = mesh.locked || null;
         const goal = Math.max(1, Math.floor(target));
         if (triCount <= goal || vertexCount < 4) {
             // Nothing to collapse: fresh copies, numbering untouched.
             const indices = vertexCount < 65536 ? Uint16Array.from(tri) : Uint32Array.from(tri);
             return {
-                positions: Float32Array.from(src), normals: nor, uvs: uv, indices,
+                positions: Float32Array.from(src), normals: nor, uvs: uv,
+                joints: joi, weights: wei, indices,
                 triangles: triCount, vertices: vertexCount, collapsed: 0, stopped: 'target'
             };
         }
@@ -274,10 +289,22 @@
         while (remaining > goal) {
             if (iterations++ >= maxIterations) { stopped = 'iterations'; break; }
             if (!heap.pop(entry)) { stopped = 'queue'; break; }
-            const a = entry.a, b = entry.b;
-            if (dead[a] || dead[b] || version[a] !== entry.va || version[b] !== entry.vb) continue;
+            let a = entry.a, b = entry.b, va = entry.va, vb = entry.vb;
+            if (dead[a] || dead[b] || version[a] !== va || version[b] !== vb) continue;
+            // A model split at its UV seams stores the same point twice, once
+            // per island. Nothing in index space ties the copies together, so
+            // if they collapse independently the surface opens along every
+            // seam - the mesh reduces into a sieve. Pinned vertices are never
+            // removed and never move: the rest of the mesh reduces around a
+            // fixed seam network instead of tearing away from it.
+            if (locked && locked[b]) {
+                if (locked[a]) continue;                       // both pinned; this edge can never go
+                const v = a; a = b; b = v;                     // fold the free end into the pinned one
+                const w = va; va = vb; vb = w;
+            }
             const c = evaluate(a, b);
-            const px = c.x, py = c.y, pz = c.z;
+            let px = c.x, py = c.y, pz = c.z;
+            if (locked && locked[a]) { px = pos[a * 3]; py = pos[a * 3 + 1]; pz = pos[a * 3 + 2]; }
             // Refuse a collapse that flips or crushes any surviving face.
             let flips = false;
             const oax = pos[a * 3], oay = pos[a * 3 + 1], oaz = pos[a * 3 + 2];
@@ -302,7 +329,7 @@
                 // Back in the queue, dearer each time; a version bump on
                 // either end retires it for good.
                 const deferred = entry.cost + penalty * (1 + (entry.cost / penalty) * 0.5);
-                if (deferred < penalty * 1e6) heap.push(deferred, a, b, entry.va, entry.vb);
+                if (deferred < penalty * 1e6) heap.push(deferred, a, b, va, vb);
                 continue;
             }
 
@@ -315,6 +342,10 @@
                 nor[a * 3] = nx / len; nor[a * 3 + 1] = ny / len; nor[a * 3 + 2] = nz / len;
             }
             if (uv && !keepA) { uv[a * 2] = uv[b * 2]; uv[a * 2 + 1] = uv[b * 2 + 1]; }
+            if (!keepA) {
+                if (joi) for (let k = 0; k < 4; k++) joi[a * 4 + k] = joi[b * 4 + k];
+                if (wei) for (let k = 0; k < 4; k++) wei[a * 4 + k] = wei[b * 4 + k];
+            }
             for (let k = 0; k < 10; k++) Q[a * 10 + k] += Q[b * 10 + k];
             const listB = adjacency[b];
             const listA = adjacency[a];
@@ -348,12 +379,12 @@
                 listA.length = w;
             }
         }
-        const result = compact(pos, nor, uv, tri, alive, vertexCount, collapsed);
+        const result = compact(pos, nor, uv, joi, wei, tri, alive, vertexCount, collapsed);
         result.stopped = stopped;
         return result;
     }
 
-    function compact(pos, nor, uv, tri, alive, vertexCount, collapsed) {
+    function compact(pos, nor, uv, joi, wei, tri, alive, vertexCount, collapsed) {
         const remap = new Int32Array(vertexCount).fill(-1);
         let next = 0;
         let triangles = 0;
@@ -369,12 +400,16 @@
         const positions = new Float32Array(next * 3);
         const normals = nor ? new Float32Array(next * 3) : null;
         const uvs = uv ? new Float32Array(next * 2) : null;
+        const joints = joi ? new joi.constructor(next * 4) : null;
+        const weights = wei ? new wei.constructor(next * 4) : null;
         for (let v = 0; v < vertexCount; v++) {
             const to = remap[v];
             if (to < 0) continue;
             positions[to * 3] = pos[v * 3]; positions[to * 3 + 1] = pos[v * 3 + 1]; positions[to * 3 + 2] = pos[v * 3 + 2];
             if (normals) { normals[to * 3] = nor[v * 3]; normals[to * 3 + 1] = nor[v * 3 + 1]; normals[to * 3 + 2] = nor[v * 3 + 2]; }
             if (uvs) { uvs[to * 2] = uv[v * 2]; uvs[to * 2 + 1] = uv[v * 2 + 1]; }
+            if (joints) for (let k = 0; k < 4; k++) joints[to * 4 + k] = joi[v * 4 + k];
+            if (weights) for (let k = 0; k < 4; k++) weights[to * 4 + k] = wei[v * 4 + k];
         }
         const indices = next < 65536 ? new Uint16Array(triangles * 3) : new Uint32Array(triangles * 3);
         let w = 0;
@@ -384,7 +419,7 @@
             if (i0 === i1 || i1 === i2 || i0 === i2) continue;
             indices[w++] = remap[i0]; indices[w++] = remap[i1]; indices[w++] = remap[i2];
         }
-        return { positions, normals, uvs, indices, triangles, vertices: next, collapsed };
+        return { positions, normals, uvs, joints, weights, indices, triangles, vertices: next, collapsed };
     }
 
     const QuadricDecimator = { decimate };

@@ -175,7 +175,11 @@ class Database3DEditor {
         detailEl.innerHTML = `
             <div style="display:flex;flex-direction:row;gap:0;height:100%;min-height:0;">
                 <div style="width:220px;flex:0 0 220px;display:flex;flex-direction:column;border-right:1px solid var(--color-border);min-height:0;">
-                    <div style="padding:6px 10px;font-weight:bold;color:var(--color-text);border-bottom:1px solid var(--color-border);">${this._t('Models')}</div>
+                    <div style="padding:6px 10px;font-weight:bold;color:var(--color-text);border-bottom:1px solid var(--color-border);display:flex;align-items:center;gap:6px;">
+                        <span style="flex:1;">${this._t('Models')}</span>
+                        <button type="button" class="rr-btn-secondary r3d-optimize"
+                            title="${this._t('Shrink this model in place. The original is kept beside it.')}">${this._t('Optimize')}</button>
+                    </div>
                     <div class="database-search-container" style="padding:8px;background-color:var(--color-bg-menubar);border-bottom:1px solid var(--color-border);flex-shrink:0;">
                         <input type="text" class="r3d-model-search" placeholder="${this._t('Search files...')}"
                             style="width:100%;padding:6px 10px;background-color:var(--color-bg-panel);border:1px solid var(--color-border-input);border-radius:3px;color:var(--color-text);font-size:12px;box-sizing:border-box;">
@@ -195,6 +199,11 @@ class Database3DEditor {
                     <div class="r3d-sim-bar" style="display:flex;gap:6px;align-items:center;padding:6px 8px;border-top:1px solid var(--color-border);flex-wrap:wrap;"></div>
                 </div>
                 <div style="width:300px;flex:0 0 300px;display:flex;flex-direction:column;border-left:1px solid var(--color-border);min-height:0;">
+                    <div class="sidebar-header r3d-sec-header" data-sec="stats" style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+                        <span class="r3d-sec-toggle" style="flex:0 0 12px;font-size:10px;color:var(--color-text-muted);">▾</span>
+                        <span style="flex:1;">${this._t('What this model costs')}</span>
+                    </div>
+                    <div class="r3d-stats" style="flex:0 0 auto;max-height:230px;overflow-y:auto;padding:6px 10px;border-bottom:1px solid var(--color-border);font-size:11px;"></div>
                     <div class="sidebar-header r3d-sec-header" data-sec="parts" style="display:flex;align-items:center;gap:6px;cursor:pointer;">
                         <span class="r3d-sec-toggle" style="flex:0 0 12px;font-size:10px;color:var(--color-text-muted);">▾</span>
                         <span style="flex:1;">${this._t('Parts')}</span>
@@ -225,6 +234,8 @@ class Database3DEditor {
                     <div class="r3d-status" style="padding:4px 10px;font-size:11px;color:var(--color-text-muted);min-height:20px;"></div>
                 </div>
             </div>`;
+        const optimize = detailEl.querySelector('.r3d-optimize');
+        if (optimize) optimize.addEventListener('click', () => this.optimizeSelectedModel());
         const search = detailEl.querySelector('.r3d-model-search');
         search.addEventListener('input', () => this.renderModelList(true));
         search.addEventListener('focus', () => {
@@ -261,6 +272,9 @@ class Database3DEditor {
             document.addEventListener('keydown', event => this._onKeyDown(event), true);
         }
         this.renderModelList();
+        // A project with no models still gets the panel's own explanation of
+        // itself rather than an empty box.
+        if (!this.selectedName) this.renderModelStats();
     }
 
     /**
@@ -612,6 +626,340 @@ class Database3DEditor {
         return path.join(this._project().path, '3d', name || this.selectedName, 'model.json');
     }
 
+    /**
+     * What a model costs to draw, read straight off its file. Cached against
+     * the file's size and mtime, so re-selecting a model is free and a model
+     * changed on disk (or by the Optimize action) is re-read.
+     */
+    modelStats(entry) {
+        if (!entry || !window.RRGlbOptimizer) return null;
+        const fs = require('fs');
+        const path = require('path');
+        const filePath = this.sourcePath(entry);
+        if (!filePath) return null;
+        let stat = null;
+        try { stat = fs.statSync(filePath); } catch (error) { return null; }
+        const key = `${filePath}|${stat.size}|${stat.mtimeMs}`;
+        if (!this._statsCache) this._statsCache = new Map();
+        if (this._statsCache.has(key)) return this._statsCache.get(key);
+
+        let stats = null;
+        try {
+            const analysis = window.RRGlbOptimizer.analyze(new Uint8Array(fs.readFileSync(filePath)));
+            if (analysis) {
+                const largest = (analysis.images || []).reduce((best, image) =>
+                    (!best || image.bytes > best.bytes) ? image : best, null);
+                stats = {
+                    analysis,
+                    largestTexture: largest,
+                    textureBytes: (analysis.images || []).reduce((sum, image) => sum + image.bytes, 0),
+                    fileBytes: stat.size,
+                    optimized: fs.existsSync(filePath + '.orig'),
+                    levels: []
+                };
+                // Distance levels are what stops a heavy prop costing its full
+                // triangle count from across the map, so whether it has any is
+                // half the answer to "why is this one slow".
+                let sidecar = {};
+                try {
+                    const sidecarPath = this.rulesPath(entry.name);
+                    if (fs.existsSync(sidecarPath)) sidecar = JSON.parse(fs.readFileSync(sidecarPath, 'utf8')) || {};
+                } catch (error) { sidecar = {}; }
+                stats.carvedParts = (sidecar.parts || []).length;
+                for (const name of sidecar.lods || []) {
+                    const levelPath = path.join(path.dirname(filePath), name);
+                    if (!fs.existsSync(levelPath)) continue;
+                    try {
+                        const level = window.RRGlbOptimizer.analyze(new Uint8Array(fs.readFileSync(levelPath)));
+                        if (level) stats.levels.push({ name, triangles: level.triangles });
+                    } catch (error) { /* a level that will not read is simply not listed */ }
+                }
+            }
+        } catch (error) {
+            stats = null;
+        }
+        this._statsCache.set(key, stats);
+        return stats;
+    }
+
+    /**
+     * The cost panel. Numbers alone do not tell someone which model is making
+     * their map slow, so each one that matters is followed by what it means
+     * and what can be done about it.
+     */
+    renderModelStats() {
+        const host = this._detail ? this._detail.querySelector('.r3d-stats') : null;
+        if (!host) return;
+        host.innerHTML = '';
+        const entry = this.listModels().find(m => m.name === this.selectedName);
+        const muted = 'color:var(--color-text-muted);';
+        if (!entry) {
+            host.innerHTML = `<div style="${muted}">${this._t('Select a model to see what it costs.')}</div>`;
+            return;
+        }
+        const stats = this.modelStats(entry);
+        if (!stats) {
+            host.innerHTML = `<div style="${muted}">${this._t('This model’s cost could not be read.')}</div>`;
+            return;
+        }
+        const a = stats.analysis;
+        const mb = value => `${(value / 1048576).toFixed(1)} MB`;
+        const num = value => value.toLocaleString();
+
+        // Bands chosen against what the runtime does: models under
+        // LOD_MIN_TRIANGLES get no distance levels because they are not worth
+        // any, and a map's whole frame budget is a few hundred thousand.
+        const triangles = a.triangles;
+        const band = triangles < 20000 ? { label: this._t('Light'), colour: 'var(--color-success, #4caf50)' }
+            : triangles < 150000 ? { label: this._t('Moderate'), colour: 'var(--color-warning, #d6a13a)' }
+            : triangles < 500000 ? { label: this._t('Heavy'), colour: 'var(--color-warning, #d6a13a)' }
+            : { label: this._t('Very heavy'), colour: 'var(--color-danger, #d05353)' };
+
+        const headline = document.createElement('div');
+        headline.style.cssText = 'display:flex;align-items:baseline;gap:6px;margin-bottom:6px;';
+        headline.innerHTML = `<span style="font-size:16px;color:var(--color-text);">${num(triangles)}</span>`
+            + `<span style="${muted}">${this._t('triangles')}</span>`
+            + `<span style="margin-left:auto;padding:1px 7px;border-radius:9px;font-size:10px;`
+            + `background:${band.colour};color:var(--color-bg-deep);">${band.label}</span>`;
+        host.appendChild(headline);
+
+        const rows = [
+            [this._t('Vertices'), num(a.vertices)],
+            [this._t('Draw calls'), `${num(a.primitives)}${a.materials ? ` · ${num(a.materials)} ${this._t('materials')}` : ''}`],
+            [this._t('Textures'), a.images.length
+                ? `${a.images.length} · ${mb(stats.textureBytes)}${stats.largestTexture && stats.largestTexture.width
+                    ? ` · ${this._t('largest')} ${stats.largestTexture.width}×${stats.largestTexture.height}` : ''}`
+                : this._t('none')],
+            [this._t('File'), mb(stats.fileBytes)]
+        ];
+        if (a.skinned) {
+            rows.push([this._t('Rig'), `${num(a.bones)} ${this._t('bones')} · ${num(a.animations)} ${this._t('animations')}`]);
+        } else if (a.animations) {
+            rows.push([this._t('Animations'), num(a.animations)]);
+        }
+        rows.push([this._t('Distance levels'), stats.levels.length
+            ? stats.levels.map(level => num(level.triangles)).join(' · ')
+            : this._t('none')]);
+
+        const table = document.createElement('div');
+        table.style.cssText = 'display:grid;grid-template-columns:auto 1fr;column-gap:8px;row-gap:2px;';
+        for (const [label, value] of rows) {
+            const left = document.createElement('div');
+            left.style.cssText = muted;
+            left.textContent = label;
+            const right = document.createElement('div');
+            right.style.cssText = 'color:var(--color-text);text-align:right;';
+            right.textContent = value;
+            table.append(left, right);
+        }
+        host.appendChild(table);
+
+        // The actionable half: why this model costs what it does.
+        const notes = [];
+        if (a.skinned) {
+            notes.push(this._t('Characters are posed every frame and are drawn at full detail at every distance — distance levels are not built for them. Their triangle count is paid in full, always.'));
+        } else if (triangles >= 150000) {
+            notes.push(this._t('This model costs every one of its triangles at every distance. Optimize cuts them — a background prop rarely needs more than a fraction of what a generator gives it.'));
+        }
+        if (stats.levels.length) {
+            notes.push(this._t('This model carries separate distance-level files. They are extra copies of the geometry on disk; optimizing the model clears them.'));
+        }
+        if (stats.carvedParts) {
+            // Parts are triangle ranges into this exact triangle list, so a
+            // reduction invalidates them and they have to be re-derived from
+            // the new surface. Worth saying, because it is the one thing here
+            // that is rebuilt rather than merely preserved.
+            notes.push(this._t('{count} carved part(s): stored as triangle ranges, so Optimize re-derives them from the reduced surface.', { count: stats.carvedParts }));
+        }
+        if (stats.largestTexture && stats.largestTexture.width > 2048) {
+            notes.push(this._t('A texture larger than 2K costs memory and load time with almost nothing to show for it on screen. Optimize caps it.'));
+        } else if (stats.textureBytes > 8 * 1048576) {
+            // A light mesh can still be an expensive model: textures are the
+            // larger half of most files, and they cost the same however few
+            // triangles they are wrapped around.
+            notes.push(this._t('{size} of textures — most of this model’s weight is its pictures, not its shape. Optimize recompresses them.', { size: mb(stats.textureBytes) }));
+        }
+        const dead = (a.tangentBytes || 0) + (a.floatWeightBytes || 0);
+        if (dead > 65536) {
+            notes.push(this._t('{size} of this file is data the renderer never reads. Optimize drops it with no visible change.', { size: mb(dead) }));
+        }
+        if (a.primitives > 24) {
+            notes.push(this._t('{count} draw calls: a model split into many pieces costs the frame once per piece, whatever its triangle count.', { count: num(a.primitives) }));
+        }
+        if (stats.optimized) {
+            notes.push(this._t('Already optimized. The original is kept beside it as a .orig file.'));
+        }
+        for (const note of notes) {
+            const line = document.createElement('div');
+            line.style.cssText = `${muted}margin-top:6px;line-height:1.35;`;
+            line.textContent = note;
+            host.appendChild(line);
+        }
+    }
+
+    /** Where a model's own GLB lives, or null if it cannot be found. */
+    sourcePath(entry) {
+        const fs = require('fs');
+        const path = require('path');
+        const project = this._project();
+        if (!project || !project.path || !entry) return null;
+        const file = (entry.file || entry.name) + (entry.ext || '.glb');
+        const own = path.join(project.path, '3d', entry.name, 'source', file);
+        if (fs.existsSync(own)) return own;
+        const shared = path.join(project.path, '3d', 'source', file);
+        return fs.existsSync(shared) ? shared : null;
+    }
+
+    /**
+     * Shrink a model already in the project, in place. Importing offers this
+     * once, which does nothing for a model that arrived any other way - copied
+     * in by hand, pulled from an asset pack, or imported before the optimizer
+     * knew how to reduce it. The original is kept beside the file as
+     * `<name>.glb.orig` so the choice stays reversible, and distance levels
+     * are rebuilt from whatever comes out.
+     */
+    async optimizeSelectedModel() {
+        const status = this._detail && this._detail.querySelector('.r3d-status');
+        const say = message => { if (status) status.textContent = message; };
+        const entry = this.listModels().find(m => m.name === this.selectedName);
+        if (!entry) return say(this._t('Select a model first.'));
+        if (!window.RRGlbOptimizer) return say(this._t('The model optimizer is unavailable.'));
+        if ((entry.ext || '.glb').toLowerCase() !== '.glb') {
+            return say(this._t('Only .glb models can be optimized.'));
+        }
+        const fs = require('fs');
+        const path = require('path');
+        const filePath = this.sourcePath(entry);
+        if (!filePath) return say(this._t('This model’s source file could not be found.'));
+
+        try {
+            const original = new Uint8Array(fs.readFileSync(filePath));
+            const analysis = window.RRGlbOptimizer.analyze(original);
+            if (!analysis) return say(this._t('This file could not be read as a GLB.'));
+            const ui = this.projectController && this.projectController.uiManager;
+            if (!ui || typeof ui.showModelOptimizeDialog !== 'function') {
+                return say(this._t('The optimizer dialog is unavailable.'));
+            }
+            const mode = await ui.showModelOptimizeDialog({
+                fileName: path.basename(filePath),
+                analysis,
+                title: this._t('Optimize 3D Model'),
+                confirmLabel: this._t('Optimize'),
+                keepLabel: this._t('Leave it alone'),
+                keepDetail: this._t('Make no change to this model.')
+            });
+            if (mode === null || mode === 'keep') return;
+
+            const sidecarPath = this.rulesPath(entry.name);
+            let previous = {};
+            try {
+                if (fs.existsSync(sidecarPath)) previous = JSON.parse(fs.readFileSync(sidecarPath, 'utf8')) || {};
+            } catch (error) { previous = {}; }
+
+            const carvedParts = (previous.parts || []).length;
+            const settings = Object.assign({
+                encodeImage: window.RRGlbOptimizer.canvasEncoder()
+            }, window.RRGlbOptimizer.PRESETS[mode]);
+
+            say(this._t('Optimizing {name}…', { name: entry.name }));
+            let optimized = await window.RRGlbOptimizer.optimize(original, settings);
+
+            // A carved part is stored as runs of triangle indices, and both
+            // reordering and reducing invalidate them: the part that should
+            // animate becomes a scattered wrong set and swings through the
+            // model. The indices are only how the part is written down though
+            // - it is really a region of the surface, and that survives, so it
+            // is re-derived from the new geometry rather than the user being
+            // told they cannot optimize this model.
+            let remappedParts = null;
+            let partsNote = '';
+            if (carvedParts && optimized && optimized.bytes) {
+                remappedParts = window.RRGlbOptimizer.remapParts
+                    ? window.RRGlbOptimizer.remapParts(original, optimized.bytes, previous.parts)
+                    : null;
+                if (remappedParts) {
+                    partsNote = ' ' + this._t('{count} carved part(s) re-derived.', { count: carvedParts });
+                } else {
+                    // The two models could not be paired. Keeping the parts
+                    // working matters more than the reduction, so fall back to
+                    // the passes that leave the triangle list alone.
+                    settings.meshRatio = 0;
+                    settings.meshCells = 0;
+                    settings.cacheOrder = false;
+                    say(this._t('Re-running without geometry changes to keep this model’s parts…'));
+                    optimized = await window.RRGlbOptimizer.optimize(original, settings);
+                    partsNote = ' ' + this._t('Textures only: its carved parts could not be re-derived.');
+                }
+            }
+            const bytes = optimized && optimized.bytes ? optimized.bytes : null;
+            if (!bytes || bytes === original) return say(this._t('Nothing left to reduce in this model.'));
+
+            // Prove the result loads before it replaces anything. Importing
+            // puts every model through this gate; writing in place has to use
+            // the same one, or a bad reduction silently destroys the only copy
+            // of a model the project has.
+            if (typeof ResourceManager !== 'undefined' && ResourceManager.validateModelBytes) {
+                try {
+                    ResourceManager.validateModelBytes(bytes, '.glb', window.Reactor3D);
+                } catch (error) {
+                    return say(`${this._t('Optimizing produced a model that will not load; nothing was changed')}: `
+                        + (error && error.message ? error.message : error));
+                }
+            }
+
+            // The backup is written once and never overwritten, so optimizing
+            // twice still leaves the file the user actually started with.
+            const backup = filePath + '.orig';
+            if (!fs.existsSync(backup)) fs.copyFileSync(filePath, backup);
+            this._writeFileAtomic(fs, filePath, Buffer.from(bytes));
+
+            // No distance-level files are written here. A level is a second
+            // (and third) copy of the geometry on disk, which grows a project
+            // faster than the reduction shrinks it - a 54 MB prop pays another
+            // 15 MB for levels it may never be far enough away to use. The
+            // reduction itself is the win; the base model carries it at every
+            // distance. Any levels cut from the OLD geometry are cleared,
+            // because they no longer describe the mesh that is now on disk and
+            // would snap a prop back to its old shape as it receded.
+            let levelNote = '';
+            let sidecarChanged = false;
+            if ((previous.lods || []).length) {
+                const dir = path.dirname(filePath);
+                let cleared = 0;
+                for (const old of previous.lods) {
+                    const stale = path.join(dir, old);
+                    if (fs.existsSync(stale)) { fs.rmSync(stale, { force: true }); cleared++; }
+                }
+                delete previous.lods;
+                sidecarChanged = true;
+                if (cleared) levelNote = `, ${cleared} ${this._t('stale distance level files removed')}`;
+            }
+            if (remappedParts) {
+                previous.parts = remappedParts;
+                sidecarChanged = true;
+            }
+            // One write, after the mesh is safely on disk: a sidecar pointing
+            // at geometry that was never written would be worse than either.
+            if (sidecarChanged) {
+                this._writeFileAtomic(fs, sidecarPath, JSON.stringify(previous, null, 2) + '\n');
+            }
+
+            // Every cache that holds the old geometry has to let go, or the
+            // editor keeps drawing the model it loaded at startup.
+            delete this._templates[entry.name];
+            if (typeof RREventPreviewModels !== 'undefined' && RREventPreviewModels.clear) RREventPreviewModels.clear();
+            this.projectController?.refreshMap3DView?.();
+            await this.selectModel(entry);
+
+            const before = (original.length / 1048576).toFixed(1);
+            const after = (bytes.length / 1048576).toFixed(1);
+            say(`${this._t('Optimized')} ${entry.name}: ${before}MB → ${after}MB${levelNote}.${partsNote} ` +
+                this._t('Original kept as {file}', { file: path.basename(backup) }));
+        } catch (error) {
+            say(`${this._t('Could not optimize this model')}: ${error && error.message ? error.message : error}`);
+        }
+    }
+
     loadSidecar() {
         const fs = require('fs');
         let parsed = {};
@@ -799,6 +1147,9 @@ class Database3DEditor {
     async selectModel(entry) {
         if (!entry) return;
         this.selectedName = entry.name;
+        // Read straight off the file, so the cost shows at once rather than
+        // waiting on the model to finish loading into the preview.
+        this.renderModelStats();
         // Keep the selection visible: its folder stays open in the list.
         if (entry.name.indexOf('/') > 0) {
             if (!this._openFolders) this._openFolders = new Set();
@@ -2780,12 +3131,13 @@ class Database3DEditor {
         return raw || null;
     }
 
-    /** Fold or unfold a sidebar section: parts, animations or effects. */
+    /** Fold or unfold a sidebar section: stats, parts, animations or effects. */
     toggleSection(name, collapsed) {
         if (!this._detail) return;
         const state = this._sectionsCollapsed || (this._sectionsCollapsed = {});
         state[name] = collapsed === undefined ? !state[name] : !!collapsed;
         const bodies = {
+            stats: ['.r3d-stats'],
             parts: ['.r3d-part-list', '.r3d-part-form'],
             animations: ['.r3d-motions-row', '.r3d-rule-list', '.r3d-rule-note'],
             effects: ['.r3d-effect-list', '.r3d-effect-form']

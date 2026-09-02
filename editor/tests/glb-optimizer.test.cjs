@@ -283,9 +283,264 @@ test('presets carry the import dialog contract', () => {
         assert.equal(preset.dropTangents, true);
         assert.equal(preset.quantizeWeights, true);
         assert.ok(preset.meshCells > 0);
+        assert.ok(preset.meshRatio > 0 && preset.meshRatio < 1, 'edge collapse is the primary reducer');
     }
     assert.ok(Optimizer.PRESETS.aggressive.meshCells < Optimizer.PRESETS.optimize.meshCells,
         'aggressive uses the coarser grid');
+    assert.ok(Optimizer.PRESETS.aggressive.meshRatio < Optimizer.PRESETS.optimize.meshRatio,
+        'aggressive keeps fewer triangles');
+    // Level files are a second and third copy of the geometry on disk, which
+    // grows a project faster than the reduction shrinks it. Reducing the model
+    // itself costs nothing extra and applies at every distance.
+    for (const name of ['optimize', 'aggressive']) {
+        assert.equal(Optimizer.PRESETS[name].buildLods, false, `${name} writes no level files`);
+    }
+    const resourceManager = fs.readFileSync(path.join(srcRoot, 'ResourceManager.js'), 'utf8');
+    assert.match(resourceManager, /\(window\.RRGlbOptimizer\.PRESETS\[mode\] \|\| \{\}\)\.buildLods/,
+        'the import path honours the flag rather than always building levels');
+});
+
+// ---------------------------------------------------------------------------
+// optimize: edge collapse, UV seams and skinning
+// ---------------------------------------------------------------------------
+
+/**
+ * A skinned grid split down the middle into two UV islands, so the vertices
+ * along the split are stored twice - the shape a real export takes, and the
+ * one that used to tear open when the mesh was reduced.
+ */
+function seamGrid() {
+    const positions = [], normals = [], uvs = [], joints = [], weights = [], indices = [];
+    const island = (columns, uStart) => {
+        const base = positions.length / 3;
+        for (let c = 0; c < columns.length; c++) {
+            for (let r = 0; r < 4; r++) {
+                positions.push(columns[c], r, 0);
+                normals.push(0, 0, 1);
+                uvs.push(uStart + c * 0.1, r * 0.1);
+                joints.push(0, 0, 0, 0);
+                weights.push(1, 0, 0, 0);
+            }
+        }
+        for (let c = 0; c < columns.length - 1; c++) {
+            for (let r = 0; r < 3; r++) {
+                const a = base + c * 4 + r, b = a + 4;
+                indices.push(a, b, a + 1, b, b + 1, a + 1);
+            }
+        }
+    };
+    island([0, 1, 2], 0);          // left island, its right edge at x = 2
+    island([2, 3], 0.5);           // right island, its left edge at x = 2 as well
+    return buildGlb({
+        accessors: [
+            { type: 'VEC3', componentType: 5126, data: new Float32Array(positions),
+                extra: { min: [0, 0, 0], max: [3, 3, 0] } },
+            { type: 'VEC3', componentType: 5126, data: new Float32Array(normals) },
+            { type: 'VEC2', componentType: 5126, data: new Float32Array(uvs) },
+            { type: 'VEC4', componentType: 5121, data: new Uint8Array(joints) },
+            { type: 'VEC4', componentType: 5126, data: new Float32Array(weights) },
+            { type: 'SCALAR', componentType: 5123, data: new Uint16Array(indices) }
+        ],
+        rest: {
+            meshes: [{ primitives: [{
+                attributes: { POSITION: 0, NORMAL: 1, TEXCOORD_0: 2, JOINTS_0: 3, WEIGHTS_0: 4 },
+                indices: 5
+            }] }],
+            nodes: [{ name: 'root' }],
+            skins: [{ joints: [0] }]
+        }
+    });
+}
+
+/** Edges used by exactly one triangle, after welding by exact position. */
+function openEdges(bytes) {
+    const { json, bin } = Optimizer.parseGlb(bytes);
+    const prim = json.meshes[0].primitives[0];
+    const pos = readAccessor(json, bin, prim.attributes.POSITION);
+    const idx = readAccessor(json, bin, prim.indices);
+    const key = new Map();
+    const remap = [];
+    for (let i = 0; i < pos.length / 3; i++) {
+        const k = `${pos[i * 3].toFixed(5)},${pos[i * 3 + 1].toFixed(5)},${pos[i * 3 + 2].toFixed(5)}`;
+        if (!key.has(k)) key.set(k, key.size);
+        remap[i] = key.get(k);
+    }
+    const use = new Map();
+    for (let t = 0; t < idx.length; t += 3) {
+        const [a, b, c] = [remap[idx[t]], remap[idx[t + 1]], remap[idx[t + 2]]];
+        if (a === b || b === c || a === c) continue;
+        for (const [u, v] of [[a, b], [b, c], [c, a]]) {
+            const e = u < v ? `${u}_${v}` : `${v}_${u}`;
+            use.set(e, (use.get(e) || 0) + 1);
+        }
+    }
+    let open = 0;
+    for (const count of use.values()) if (count === 1) open++;
+    return open;
+}
+
+test('reducing a seamed mesh does not tear it open', async () => {
+    // The bug this guards: the two copies of a seam vertex are distinct
+    // indices, so a reducer treats the seam as a mesh boundary and lets each
+    // side collapse its own way. The surface separates and the model fills
+    // with pinholes. Seam vertices are pinned, so it cannot.
+    const bytes = seamGrid();
+    const before = openEdges(bytes);
+    const result = await Optimizer.optimize(bytes, { meshRatio: 0.5, meshCells: 0 });
+    const after = openEdges(result.bytes);
+    const out = Optimizer.parseGlb(result.bytes);
+    const prim = out.json.meshes[0].primitives[0];
+
+    assert.ok(out.json.accessors[prim.indices].count / 3 < 18, 'the mesh actually reduced');
+    assert.ok(after <= before, `no new open edges (${before} -> ${after})`);
+
+    // Both copies of every seam position survive, so the two islands keep
+    // their own texture coordinates. (Pinning holds a vertex against being
+    // collapsed away; it cannot save one whose surrounding triangles have all
+    // gone, which is why this asks for a real reduction rather than the
+    // deepest one the grid will take.)
+    const pos = readAccessor(out.json, out.bin, prim.attributes.POSITION);
+    let atSeam = 0;
+    for (let i = 0; i < pos.length / 3; i++) if (Math.abs(pos[i * 3] - 2) < 1e-6) atSeam++;
+    assert.equal(atSeam, 8, 'the seam column is held, both copies of it');
+});
+
+test('edge collapse carries skinning, and never blends bone indices', async () => {
+    const bytes = seamGrid();
+    const result = await Optimizer.optimize(bytes, { meshRatio: 0.5, meshCells: 0 });
+    const { json, bin } = Optimizer.parseGlb(result.bytes);
+    const prim = json.meshes[0].primitives[0];
+
+    assert.ok(prim.attributes.JOINTS_0 != null, 'joints kept');
+    assert.ok(prim.attributes.WEIGHTS_0 != null, 'weights kept');
+    const vertices = json.accessors[prim.attributes.POSITION].count;
+    assert.equal(json.accessors[prim.attributes.JOINTS_0].count, vertices, 'joints in step with positions');
+    assert.equal(json.accessors[prim.attributes.WEIGHTS_0].count, vertices, 'weights in step with positions');
+    // Joint channels are bone indices: an averaged one would point at a bone
+    // that has nothing to do with either endpoint.
+    assert.equal(json.accessors[prim.attributes.JOINTS_0].componentType, 5121, 'still integer bone indices');
+    const jointCount = json.skins[0].joints.length;
+    for (const index of readAccessor(json, bin, prim.attributes.JOINTS_0)) {
+        assert.ok(Number.isInteger(index) && index < jointCount, `bone index ${index} in range`);
+    }
+});
+
+// ---------------------------------------------------------------------------
+// optimize: carved parts across a reduction
+// ---------------------------------------------------------------------------
+
+/**
+ * A flat plane, its triangles emitted column by column, so the first half of
+ * the triangle list is exactly the left half of the surface. That makes a
+ * part defined by index also a part defined by geometry, which is what lets
+ * the remap be checked.
+ */
+function partPlane(n) {
+    const positions = [], normals = [], uvs = [], indices = [];
+    for (let x = 0; x <= n; x++) {
+        for (let y = 0; y <= n; y++) { positions.push(x, y, 0); normals.push(0, 0, 1); uvs.push(x / n, y / n); }
+    }
+    const at = (x, y) => x * (n + 1) + y;
+    for (let x = 0; x < n; x++) {
+        for (let y = 0; y < n; y++) {
+            indices.push(at(x, y), at(x + 1, y), at(x, y + 1));
+            indices.push(at(x + 1, y), at(x + 1, y + 1), at(x, y + 1));
+        }
+    }
+    return buildGlb({
+        accessors: [
+            { type: 'VEC3', componentType: 5126, data: new Float32Array(positions), extra: { min: [0, 0, 0], max: [n, n, 0] } },
+            { type: 'VEC3', componentType: 5126, data: new Float32Array(normals) },
+            { type: 'VEC2', componentType: 5126, data: new Float32Array(uvs) },
+            { type: 'SCALAR', componentType: 5125, data: new Uint32Array(indices) }
+        ],
+        rest: {
+            meshes: [{ primitives: [{ attributes: { POSITION: 0, NORMAL: 1, TEXCOORD_0: 2 }, indices: 3 }] }],
+            nodes: [{ name: 'root' }]
+        }
+    });
+}
+
+/** Triangle centres of a part's runs, in the given model. */
+function partCentres(bytes, part) {
+    const { json, bin } = Optimizer.parseGlb(bytes);
+    const prim = json.meshes[0].primitives[0];
+    const pos = readAccessor(json, bin, prim.attributes.POSITION);
+    const idx = readAccessor(json, bin, prim.indices);
+    const total = idx.length / 3;
+    const centres = [];
+    for (const [start, count] of (part.meshes || {})['0'] || []) {
+        for (let t = start; t < start + count && t < total; t++) {
+            const a = idx[t * 3], b = idx[t * 3 + 1], c = idx[t * 3 + 2];
+            centres.push([
+                (pos[a * 3] + pos[b * 3] + pos[c * 3]) / 3,
+                (pos[a * 3 + 1] + pos[b * 3 + 1] + pos[c * 3 + 1]) / 3
+            ]);
+        }
+    }
+    return { centres, total };
+}
+
+test('a carved part is re-derived across a reduction, not lost', async () => {
+    // The bug this guards: a part is stored as runs of triangle indices, and
+    // reducing (or merely reordering) the mesh repoints them at other
+    // geometry — the piece that should animate becomes a scattered wrong set
+    // and swings through the model. The part is a region of the surface, so
+    // it has to come back as that same region.
+    const n = 40;
+    const bytes = partPlane(n);
+    const half = (n * n * 2) / 2;                  // triangles of the left half
+    const parts = [{ name: 'left', pivot: [0, 0, 0], meshes: { 0: [[0, half]] } }];
+
+    const before = partCentres(bytes, parts[0]);
+    assert.equal(before.centres.length, half, 'the fixture selects half the mesh');
+    assert.ok(before.centres.every(([x]) => x < n / 2), 'and it is the left half');
+
+    const result = await Optimizer.optimize(bytes, { meshRatio: 0.3, meshCells: 0 });
+    const remapped = Optimizer.remapParts(bytes, result.bytes, parts);
+    assert.ok(remapped, 'the part was re-derived');
+
+    const after = partCentres(result.bytes, remapped[0]);
+    assert.ok(after.total < before.total, 'the mesh really was reduced');
+    assert.ok(after.centres.length > 0, 'the part is not empty');
+
+    // Same region: every triangle still on the left, give or take the one-cell
+    // boundary shift a reduction is entitled to.
+    const strays = after.centres.filter(([x]) => x > n / 2 + 1.5);
+    assert.equal(strays.length, 0, `part stayed on its own half (${strays.length} strayed)`);
+    // And it still covers about half the surface, rather than collapsing to a
+    // sliver that would read as "the part stopped working".
+    const share = after.centres.length / after.total;
+    assert.ok(share > 0.3 && share < 0.7, `part keeps its share of the mesh (got ${share.toFixed(2)})`);
+});
+
+test('remapping refuses rather than guessing when the models cannot be paired', () => {
+    const parts = [{ name: 'left', pivot: [0, 0, 0], meshes: { 0: [[0, 10]] } }];
+    // A different model entirely: one primitive against none of the same
+    // geometry is still pairable, but a part naming a primitive that does not
+    // exist is not.
+    const missing = [{ name: 'left', pivot: [0, 0, 0], meshes: { 7: [[0, 10]] } }];
+    const plane = partPlane(8);
+    assert.equal(Optimizer.remapParts(plane, plane, missing), null,
+        'a part naming a primitive that is not there is refused');
+    // Same model in and out: the part must survive unchanged in substance.
+    const same = Optimizer.remapParts(plane, plane, parts);
+    assert.ok(same && same[0].meshes[0].length, 'an unchanged model keeps its part');
+    assert.deepEqual(Optimizer.remapParts(plane, plane, []), [], 'no parts, nothing to do');
+});
+
+test('a primitive the collapse refuses still gets the weld grid', async () => {
+    // Two triangles are already under any sane budget, so the collapse
+    // declines and the weld grid has to be what actually runs.
+    const bytes = flatMesh(
+        [0, 0, 0, 1, 0, 0, 0, 1, 0, /* dup */ 1, 0, 0, /* dup */ 0, 1, 0, 1, 1, 0],
+        [0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1],
+        [0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 1, 1],
+        [0, 1, 2, 3, 4, 5]);
+    const result = await Optimizer.optimize(bytes, { meshRatio: 0.5, meshCells: 1600 });
+    const out = Optimizer.parseGlb(result.bytes);
+    assert.equal(out.json.accessors[out.json.meshes[0].primitives[0].attributes.POSITION].count, 4,
+        'duplicates welded by the fallback');
 });
 
 // ---------------------------------------------------------------------------
@@ -309,4 +564,55 @@ test('the import flow offers the optimizer and imports the chosen bytes', () => 
 
     const indexHtml = fs.readFileSync(path.join(editorRoot, 'index.html'), 'utf8');
     assert.match(indexHtml, /src\/utils\/GlbOptimizer\.js/);
+});
+
+test('the 3D database can optimize a model already in the project', () => {
+    // Importing offers the optimizer once. A model that arrived any other way
+    // - copied in by hand, out of an asset pack - needs its own way in.
+    const editor = fs.readFileSync(path.join(srcRoot, 'database', 'Database3DEditor.js'), 'utf8');
+    assert.match(editor, /class="rr-btn-secondary r3d-optimize"/, 'the action is on screen');
+    assert.match(editor, /\.r3d-optimize'\)[\s\S]{0,120}optimizeSelectedModel\(\)/, 'the button is wired');
+    assert.match(editor, /async optimizeSelectedModel\(\)/);
+    assert.match(editor, /showModelOptimizeDialog\(\{/, 'the same choices the import offers');
+    assert.match(editor, /PRESETS\[mode\]/);
+    assert.match(editor, /if \(mode === null \|\| mode === 'keep'\) return;/, 'declining changes nothing');
+    // Reversible, and never clobbering an older backup.
+    assert.match(editor, /filePath \+ '\.orig'/);
+    assert.match(editor, /if \(!fs\.existsSync\(backup\)\) fs\.copyFileSync\(filePath, backup\);/);
+    // Stale geometry must not survive the swap.
+    assert.match(editor, /delete this\._templates\[entry\.name\];/);
+    // Proves the result loads before it replaces the only copy of a model.
+    assert.match(editor, /ResourceManager\.validateModelBytes\(bytes, '\.glb', window\.Reactor3D\)/);
+    // Carved parts are re-derived, and a failure falls back rather than
+    // writing a model whose parts point at the wrong triangles.
+    assert.match(editor, /window\.RRGlbOptimizer\.remapParts\(original, optimized\.bytes, previous\.parts\)/);
+    assert.match(editor, /settings\.cacheOrder = false;/, 'the fallback stops touching the triangle list');
+    assert.match(editor, /previous\.parts = remappedParts;/);
+
+    const uiManager = fs.readFileSync(path.join(srcRoot, 'UIManager.js'), 'utf8');
+    assert.match(uiManager, /title = 'Import 3D Model'/, 'the dialog still defaults to the import wording');
+    assert.match(uiManager, /titleEl\.textContent = tt\(title\);/);
+});
+
+test('analyze reports what makes a model expensive, not just its triangles', () => {
+    // The cost panel is only as good as this: a model can be slow for its draw
+    // calls or its rig with a modest triangle count, and the panel has to be
+    // able to say so.
+    const analysis = Optimizer.analyze(skinnedTriangle());
+    assert.equal(analysis.primitives, 1, 'draw calls counted');
+    assert.equal(analysis.meshes, 1);
+    assert.equal(analysis.materials, 1);
+    assert.equal(analysis.skinned, true);
+    assert.equal(analysis.bones, 1);
+    assert.equal(analysis.animations, 1);
+    assert.equal(analysis.animated, true);
+
+    const editor = fs.readFileSync(path.join(srcRoot, 'database', 'Database3DEditor.js'), 'utf8');
+    assert.match(editor, /class="r3d-stats"/, 'the panel is on screen');
+    assert.match(editor, /renderModelStats\(\)/);
+    assert.match(editor, /modelStats\(entry\)/);
+    // Cached on the file's identity, so re-selecting a model costs nothing and
+    // a model changed on disk is re-read.
+    assert.match(editor, /\$\{filePath\}\|\$\{stat\.size\}\|\$\{stat\.mtimeMs\}/);
+    assert.match(editor, /stats: \['\.r3d-stats'\]/, 'the section folds like the others');
 });

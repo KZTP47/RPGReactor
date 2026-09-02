@@ -4552,6 +4552,18 @@ Spriteset_Map.prototype.updateReactor3D = function() {
     const state = this._reactor3d;
     if (!state) return;
 
+    // Everything past this point exists to produce the frame that is about
+    // to be shown: it syncs the camera, the character instances and the
+    // animation frame from current game state, then renders the passes.
+    // All of it is recomputed from scratch each time and none of it
+    // accumulates, so on a catch-up tick whose results are overwritten
+    // before anyone sees them it is pure waste — and the expensive kind,
+    // being two full-screen scene renders on the GPU.
+    if (typeof SceneManager !== "undefined" && SceneManager.isFinalUpdateOfFrame
+        && !SceneManager.isFinalUpdateOfFrame()) {
+        return;
+    }
+
     // _realX/_realY interpolate between cells, so the camera glides rather than
     // stepping a whole tile at a time.
     this.updateReactor3DCamera();

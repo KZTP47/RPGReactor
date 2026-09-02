@@ -273,6 +273,61 @@ test('FsAtomic uses random exclusive no-follow temp files, fsyncs, and cleans fa
     }
 });
 
+// A Dropbox/OneDrive client, an antivirus scanner or the search indexer opens
+// a file the instant it appears or changes, and Windows refuses to rename a
+// file any other process holds without delete sharing. Playtesting a project
+// inside a synced folder failed on System.json — which is rewritten on every
+// save — with EPERM out of renameSync, losing the save for no better reason
+// than a scan that would have finished microseconds later.
+test('FsAtomic retries a rename held by a sync client or scanner', () => {
+    const writeAtomic = require(path.join(editorRoot, 'src', 'utils', 'FsAtomic.js'));
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-atomic-lock-'));
+    const destination = path.join(tempRoot, 'System.json');
+    const lockedFor = failures => {
+        const wrapped = Object.create(fs);
+        let left = failures;
+        wrapped.renameSync = (from, to) => {
+            if (left-- > 0) {
+                const error = new Error(`EPERM: operation not permitted, rename '${from}' -> '${to}'`);
+                error.code = 'EPERM';
+                throw error;
+            }
+            return fs.renameSync(from, to);
+        };
+        return wrapped;
+    };
+    const litter = () => fs.readdirSync(tempRoot).filter(name => name.includes('.tmp-rr-'));
+    try {
+        writeAtomic(lockedFor(5), destination, 'saved', 'utf8');
+        assert.equal(fs.readFileSync(destination, 'utf8'), 'saved');
+        assert.deepEqual(litter(), [], 'a retried write leaves no temp file');
+
+        // A lock that outlives the budget must still fail rather than write
+        // in place: the previous good file is the thing being protected.
+        const started = Date.now();
+        assert.throws(
+            () => writeAtomic(lockedFor(Infinity), destination, 'never', 'utf8'),
+            error => error.code === 'EPERM' && /stayed locked by another program/.test(error.message)
+        );
+        const spent = Date.now() - started;
+        assert.ok(spent >= 2000, `retries for the full budget, spent ${spent}ms`);
+        assert.ok(spent < 6000, `gives up rather than hanging the editor, spent ${spent}ms`);
+        assert.equal(fs.readFileSync(destination, 'utf8'), 'saved');
+        assert.deepEqual(litter(), [], 'an abandoned write leaves no temp file');
+
+        // Only a held handle is worth waiting on. Anything else — a full
+        // disk, a cross-device path — fails immediately.
+        const broken = Object.create(fs);
+        broken.renameSync = () => { throw new Error('rename failed'); };
+        const failedAt = Date.now();
+        assert.throws(() => writeAtomic(broken, destination, 'bad', 'utf8'), /rename failed/);
+        assert.ok(Date.now() - failedAt < 500, 'a non-lock error is not retried');
+        assert.equal(fs.readFileSync(destination, 'utf8'), 'saved');
+    } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
 test('TilemapManager ignores a stale map load that completes after a newer map', async () => {
     const loads = new Map();
     const PIXI = {

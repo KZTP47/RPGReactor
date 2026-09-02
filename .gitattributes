@@ -1,0 +1,8 @@
+# Line endings: this working copy lives in Dropbox and is shared between
+# Windows, macOS and Linux. Shell launchers die on CRLF, so everything Git
+# sees as text is checked out with LF on every platform.
+* text=auto eol=lf
+
+# Third-party plugins ship as they came; never rewrite their line endings.
+template/*/js/plugins/** -text
+template/*/js/BACKUP/** -text

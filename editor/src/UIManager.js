@@ -1119,11 +1119,15 @@ class UIManager {
     }
 
     /**
-     * Import-time GLB shrink choices. Resolves to 'keep' | 'optimize' |
-     * 'aggressive', or null when the user cancels the import outright.
-     * `analysis` comes from RRGlbOptimizer.analyze.
+     * GLB shrink choices. Resolves to 'keep' | 'optimize' | 'aggressive', or
+     * null when the user cancels outright. `analysis` comes from
+     * RRGlbOptimizer.analyze. The wording is overridable because the same
+     * choices are offered twice: once for a file arriving at import, and once
+     * for a model already sitting in the project.
      */
-    showModelOptimizeDialog({ fileName = '', analysis = null } = {}) {
+    showModelOptimizeDialog({ fileName = '', analysis = null,
+        title = 'Import 3D Model', confirmLabel = 'Import',
+        keepLabel = 'Import as-is', keepDetail = 'Keep every byte of the original file.' } = {}) {
         const tt = text => (typeof window !== 'undefined' && window.I18n) ? window.I18n.tText(text) : text;
         const previouslyFocused = document.activeElement;
         const megabytes = value => `${(value / 1048576).toFixed(1)}MB`;
@@ -1143,7 +1147,7 @@ class UIManager {
         const titleEl = document.createElement('div');
         titleEl.id = 'rr-model-optimize-title';
         titleEl.className = 'rr-modal-title';
-        titleEl.textContent = tt('Import 3D Model');
+        titleEl.textContent = tt(title);
         const closeButton = document.createElement('button');
         closeButton.type = 'button';
         closeButton.className = 'rr-modal-close';
@@ -1197,11 +1201,10 @@ class UIManager {
             radios.push(radio);
         };
         addChoice('optimize', tt('Optimize (recommended)'),
-            tt('Resize textures to 2K, compact skin weights, drop unused data, weld duplicate vertices. No visible change.'), true);
+            tt('Resize textures to 2K, compact skin weights, drop unused data, and cut the mesh to about 60% of its triangles by collapsing the edges that change the shape least. Seams and silhouette are held.'), true);
         addChoice('aggressive', tt('Optimize aggressively'),
-            tt('Everything above plus mesh simplification. May soften very fine detail.'), false);
-        addChoice('keep', tt('Import as-is'),
-            tt('Keep every byte of the original file.'), false);
+            tt('Everything above, cut to about a quarter of the triangles. May soften very fine detail.'), false);
+        addChoice('keep', tt(keepLabel), tt(keepDetail), false);
         body.append(summary, choices);
 
         const footer = document.createElement('div');
@@ -1213,7 +1216,7 @@ class UIManager {
         const okButton = document.createElement('button');
         okButton.type = 'button';
         okButton.className = 'rr-button-primary';
-        okButton.textContent = tt('Import');
+        okButton.textContent = tt(confirmLabel);
         footer.append(cancelButton, okButton);
         modal.append(header, body, footer);
         overlay.appendChild(modal);

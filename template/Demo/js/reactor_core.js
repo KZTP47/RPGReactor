@@ -1455,6 +1455,14 @@ Graphics.canvasPixelRatio = function() {
 Graphics.maxCanvasPixelRatio = 4;
 
 /**
+ * The same ceiling for a weak GPU. Two backing pixels a side is a game
+ * enlarged to a 1080p or 1440p window drawn at the pixels on screen — the
+ * case that actually happens — while a 4K panel stops short of the nine
+ * times its own scale would ask for.
+ */
+Graphics.weakMaxCanvasPixelRatio = 2;
+
+/**
  * The GPU's class, read once from the renderer string when the app is
  * created: "weak" for integrated and software renderers, "full" otherwise,
  * "unknown" when the string cannot be read. A weak GPU keeps the 3D passes
@@ -1468,12 +1476,29 @@ Graphics.maxCanvasPixelRatio = 4;
 Graphics.gpuTier = "unknown";
 Graphics.gpuTierOverride = null;
 Graphics.weakGpuPattern = /\b(Intel|UHD|Iris|HD Graphics|Mali|Adreno|PowerVR|VideoCore|SwiftShader|llvmpipe|Software|Microsoft Basic Render|Mesa)\b/i;
+/**
+ * AMD's integrated parts, which the list above missed entirely — the most
+ * common integrated GPU family after Intel's, and the one every Ryzen laptop
+ * and handheld ships. They are named for the die, not the class: a Ryzen
+ * 5650U reports `ANGLE (AMD, AMD Radeon(TM) Graphics (0x00001638) Direct3D11
+ * ...)`, a 4700U `Radeon(TM) Vega 8 Graphics`, a Steam Deck `AMD Custom GPU
+ * 0405`. All of them end in "Graphics" or name a Vega/APU die, where every
+ * discrete Radeon names a model instead — `Radeon RX 6700 XT`, `Radeon Pro
+ * W6800`, `Radeon R9 380` — so matching the trailing "Graphics" separates
+ * them without demoting a real card.
+ */
+Graphics.weakAmdPattern = /\bRadeon(?:\s*\(TM\))?(?:\s+(?:RX\s+)?Vega\s*\d*)?\s+Graphics\b|\bVega\s*\d+\s+Graphics\b|\bAMD Custom GPU\b|\bRadeon\(TM\)\s+R[2-7]\b/i;
 
 Graphics._sampleGpuTier = function(renderer) {
     let description = "";
     try {
         const gl = renderer && (renderer.gl || (renderer.context && renderer.context.gl));
-        if (gl) {
+        // Reactor3D reads the same string for the editor, which has no
+        // Graphics; one reader, so the two hosts cannot disagree about what
+        // a renderer is called.
+        if (gl && typeof Reactor3D !== "undefined" && Reactor3D.rendererDescription) {
+            description = Reactor3D.rendererDescription(gl);
+        } else if (gl) {
             const info = gl.getExtension("WEBGL_debug_renderer_info");
             description = String((info && gl.getParameter(info.UNMASKED_RENDERER_WEBGL)) || gl.getParameter(gl.RENDERER) || "");
         }
@@ -1481,11 +1506,28 @@ Graphics._sampleGpuTier = function(renderer) {
         description = "";
     }
     this.gpuDescription = description;
-    const tier = this.gpuTierOverride || (!description ? "unknown" : (this.weakGpuPattern.test(description) ? "weak" : "full"));
+    // And one classifier, for the same reason. The patterns above stay the
+    // canonical pair; `Reactor3D.classifyGpu` reads them when Graphics is
+    // present and falls back to its own copies only in the editor.
+    const classified = typeof Reactor3D !== "undefined" && Reactor3D.classifyGpu
+        ? Reactor3D.classifyGpu(description)
+        : (!description ? "unknown"
+            : ((this.weakGpuPattern.test(description) || this.weakAmdPattern.test(description)) ? "weak" : "full"));
+    const tier = this.gpuTierOverride || classified;
     this.gpuTier = tier;
     if (tier === "weak") {
-        this.maxCanvasPixelRatio = Math.min(this.maxCanvasPixelRatio, 1);
-        if (typeof Reactor3D !== "undefined" && Reactor3D.renderTargetSamples > 2) Reactor3D.renderTargetSamples = 2;
+        // A weak GPU keeps its sharpness and gives up its edge smoothing,
+        // not the other way round. Rendering the 3D passes at game size and
+        // letting the browser stretch them puts a blur over the whole scene
+        // when a window is enlarged, which reads far worse than aliasing on
+        // a hard edge — and the arithmetic favours the sharp choice anyway:
+        // a 1280x720 pass at 4x multisampling is 3.7M samples, where the
+        // same window at a native 1920x1080 with none is 2.1M. So the pass
+        // follows the pixels actually on screen and stops multisampling.
+        // The ratio is still capped, because a 4K panel would otherwise ask
+        // this class of GPU for nine times the game's pixels.
+        this.maxCanvasPixelRatio = Math.min(this.maxCanvasPixelRatio, this.weakMaxCanvasPixelRatio);
+        if (typeof Reactor3D !== "undefined" && Reactor3D.renderTargetSamples > 0) Reactor3D.renderTargetSamples = 0;
     }
     return tier;
 };

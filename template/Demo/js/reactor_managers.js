@@ -2258,11 +2258,32 @@ SceneManager.update = function(deltaTime) {
     try {
         const n = this.determineRepeatNumber(deltaTime);
         for (let i = 0; i < n; i++) {
+            // Which pass of the catch-up loop this is. Game logic must run
+            // every time — that is the whole point of the loop, and what
+            // keeps a slow machine's game running at sixty logical ticks —
+            // but work that only exists to put pixels on the screen must
+            // not, because the screen is only painted once however many
+            // times the logic ran. See `Spriteset_Map.updateReactor3D`,
+            // which was rendering the entire 3D scene once per tick: a
+            // frame slow enough to ask for two ticks paid for two full
+            // scene renders, which made it slower, which kept it asking.
+            this._finalUpdateOfFrame = i === n - 1;
             this.updateMain();
         }
     } catch (e) {
         this.catchException(e);
+    } finally {
+        this._finalUpdateOfFrame = true;
     }
+};
+
+/**
+ * Whether this update is the one whose results will actually be displayed.
+ * True outside the catch-up loop as well, so anything calling `updateMain`
+ * directly (a plugin, a test) still draws.
+ */
+SceneManager.isFinalUpdateOfFrame = function() {
+    return this._finalUpdateOfFrame !== false;
 };
 
 SceneManager.determineRepeatNumber = function(deltaTime) {

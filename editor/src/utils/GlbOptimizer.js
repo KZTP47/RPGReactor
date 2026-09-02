@@ -38,10 +38,36 @@
         SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4, MAT2: 4, MAT3: 9, MAT4: 16
     };
 
-    /** Import-dialog presets. `meshCells` is the cluster grid across the model's largest axis (0 = leave geometry alone). */
+    /**
+     * How far apart two vertices may sit and still be treated as the same
+     * point, as a fraction of the model's largest dimension.
+     *
+     * Measured on a generated 1.9M-triangle prop that arrives with 64,446 open
+     * edges: 0.0002 closes 8% of them, 0.0005 closes 71% while moving 8% of
+     * the vertices, 0.001 closes 92% but moves 38%, and 0.002 moves 61%. Past
+     * about 0.0005 the tolerance reaches the model's own triangle size, so it
+     * stops closing cracks and starts flattening detail - which is the mistake
+     * the weld grid used to make. Half a thousandth is the balance: on a
+     * two-metre prop, a millimetre.
+     */
+    const DEFAULT_WELD_TOLERANCE = 0.0005;
+
+    /**
+     * Import-dialog presets. `meshRatio` is the share of triangles to keep by
+     * edge collapse (0 = skip); `meshCells` is the fallback cluster grid
+     * across the model's largest axis, used only for primitives the collapse
+     * refuses (0 = leave geometry alone).
+     *
+     * `buildLods` is off. A distance level is a second and third copy of the
+     * geometry written beside the model, which grows a project faster than the
+     * reduction shrinks it - a 54 MB prop pays another 15 MB for levels it may
+     * never be far enough away to use, and every copy ships. Reducing the model
+     * itself is the cheaper trade: it costs nothing on disk and applies at
+     * every distance. `lods()` is still here for anyone who wants the files.
+     */
     const PRESETS = {
-        optimize: { textureSize: 2048, textureQuality: 0.85, dropTangents: true, quantizeWeights: true, meshCells: 1600, cacheOrder: true },
-        aggressive: { textureSize: 2048, textureQuality: 0.85, dropTangents: true, quantizeWeights: true, meshCells: 700, cacheOrder: true }
+        optimize: { textureSize: 2048, textureQuality: 0.85, dropTangents: true, quantizeWeights: true, meshRatio: 0.6, meshCells: 1600, cacheOrder: true, buildLods: false, weldTolerance: DEFAULT_WELD_TOLERANCE },
+        aggressive: { textureSize: 2048, textureQuality: 0.85, dropTangents: true, quantizeWeights: true, meshRatio: 0.25, meshCells: 700, cacheOrder: true, buildLods: false, weldTolerance: DEFAULT_WELD_TOLERANCE }
     };
 
     /**
@@ -144,7 +170,17 @@
             floatWeightBytes: 0,
             triangles: 0,
             vertices: 0,
-            animated: (json.animations || []).length > 0
+            animated: (json.animations || []).length > 0,
+            // What the frame actually pays, beyond triangles: one primitive is
+            // one draw call, and a skinned mesh is posed on the CPU every
+            // frame and carries no distance levels.
+            primitives: 0,
+            meshes: (json.meshes || []).length,
+            materials: (json.materials || []).length,
+            animations: (json.animations || []).length,
+            skinned: (json.skins || []).length > 0,
+            bones: (json.skins || []).reduce((most, skin) =>
+                Math.max(most, (skin.joints || []).length), 0)
         };
         for (const image of json.images || []) {
             const data = imageData(json, bin, image);
@@ -161,6 +197,7 @@
         for (const mesh of json.meshes || []) {
             for (const prim of mesh.primitives || []) {
                 const attrs = prim.attributes || {};
+                result.primitives++;
                 result.tangentBytes += tally(attrs.TANGENT);
                 const weights = attrs.WEIGHTS_0 != null ? json.accessors[attrs.WEIGHTS_0] : null;
                 if (weights && weights.componentType === 5126) result.floatWeightBytes += tally(attrs.WEIGHTS_0);
@@ -195,6 +232,287 @@
         if ((accessor.byteOffset || 0) !== 0) return false;
         if (json.bufferViews[accessor.bufferView].byteStride) return false;
         return !json.accessors.some((other, at) => at !== index && other.bufferView === accessor.bufferView);
+    }
+
+    /**
+     * Close hairline cracks by snapping near-coincident vertices onto one
+     * position. Generated and scanned models arrive stitched only
+     * approximately: two sides of a join sit a ten-thousandth apart, which
+     * reads as a hole in the surface and, worse, as a mesh boundary to
+     * anything that reduces the model - so the crack is preserved and widened
+     * rather than closed. Positions move, nothing merges: each vertex keeps
+     * its own index, its own UV and its own skin weights, so a texture seam is
+     * not smeared. Once snapped, the two sides are exactly coincident, which
+     * means seamVertices() below pins them and the reduction holds them shut.
+     *
+     * `epsilon` is a distance in model units. Returns how many moved.
+     */
+    function weldNearby(positions, count, epsilon) {
+        if (!(epsilon > 0) || count < 2) return 0;
+        const cell = epsilon;
+        const limit = epsilon * epsilon;
+        // An integer spatial hash, not a string key: this runs 27 lookups per
+        // vertex and a million-vertex mesh would spend minutes building the
+        // keys alone. Two cells can collide onto one bucket, which costs a few
+        // extra distance checks and nothing else - every candidate is measured
+        // before it is accepted.
+        const buckets = new Map();
+        const hash = (cx, cy, cz) => (((cx * 73856093) ^ (cy * 19349663) ^ (cz * 83492791)) >>> 0);
+        let moved = 0;
+        for (let i = 0; i < count; i++) {
+            const x = positions[i * 3], y = positions[i * 3 + 1], z = positions[i * 3 + 2];
+            const cx = Math.floor(x / cell), cy = Math.floor(y / cell), cz = Math.floor(z / cell);
+            // A match can sit in any touching cell: two points a hair apart
+            // very often straddle a cell boundary.
+            let found = -1;
+            for (let dx = -1; dx <= 1 && found < 0; dx++) {
+                for (let dy = -1; dy <= 1 && found < 0; dy++) {
+                    for (let dz = -1; dz <= 1 && found < 0; dz++) {
+                        const list = buckets.get(hash(cx + dx, cy + dy, cz + dz));
+                        if (!list) continue;
+                        for (let k = 0; k < list.length; k++) {
+                            const j = list[k];
+                            const ddx = positions[j * 3] - x;
+                            const ddy = positions[j * 3 + 1] - y;
+                            const ddz = positions[j * 3 + 2] - z;
+                            if (ddx * ddx + ddy * ddy + ddz * ddz <= limit) { found = j; break; }
+                        }
+                    }
+                }
+            }
+            if (found >= 0) {
+                if (positions[i * 3] !== positions[found * 3]
+                    || positions[i * 3 + 1] !== positions[found * 3 + 1]
+                    || positions[i * 3 + 2] !== positions[found * 3 + 2]) {
+                    positions[i * 3] = positions[found * 3];
+                    positions[i * 3 + 1] = positions[found * 3 + 1];
+                    positions[i * 3 + 2] = positions[found * 3 + 2];
+                    moved++;
+                }
+            } else {
+                const key = hash(cx, cy, cz);
+                const list = buckets.get(key);
+                if (list) list.push(i); else buckets.set(key, [i]);
+            }
+        }
+        return moved;
+    }
+
+    /** Every primitive in declaration order: how a part's mesh index counts. */
+    function flatPrimitives(json) {
+        const out = [];
+        for (const mesh of json.meshes || []) {
+            for (const prim of mesh.primitives || []) out.push(prim);
+        }
+        return out;
+    }
+
+    /** Triangle centres of a primitive, as a flat array of x,y,z. */
+    function triangleCentroids(json, bin, prim) {
+        const attrs = prim.attributes || {};
+        if (attrs.POSITION == null) return null;
+        const pos = accessorArray(json, bin, new Map(), attrs.POSITION);
+        let idx = null;
+        if (prim.indices != null) idx = accessorArray(json, bin, new Map(), prim.indices);
+        const count = Math.floor((idx ? idx.length : pos.length / 3) / 3);
+        const out = new Float32Array(count * 3);
+        for (let t = 0; t < count; t++) {
+            const a = idx ? idx[t * 3] : t * 3;
+            const b = idx ? idx[t * 3 + 1] : t * 3 + 1;
+            const c = idx ? idx[t * 3 + 2] : t * 3 + 2;
+            for (let k = 0; k < 3; k++) {
+                out[t * 3 + k] = (pos[a * 3 + k] + pos[b * 3 + k] + pos[c * 3 + k]) / 3;
+            }
+        }
+        return out;
+    }
+
+    /** Boolean membership per triangle, from a part's [start, count] runs. */
+    function runsToFlags(runs, count) {
+        const flags = new Uint8Array(count);
+        for (const [start, length] of runs || []) {
+            for (let t = start; t < start + length && t < count; t++) flags[t] = 1;
+        }
+        return flags;
+    }
+
+    /** Membership back to the compact [start, count] runs the sidecar stores. */
+    function flagsToRuns(flags) {
+        const runs = [];
+        let start = -1;
+        for (let t = 0; t <= flags.length; t++) {
+            if (t < flags.length && flags[t]) { if (start < 0) start = t; }
+            else if (start >= 0) { runs.push([start, t - start]); start = -1; }
+        }
+        return runs;
+    }
+
+    /**
+     * Re-derive carved parts across a reduction.
+     *
+     * A part is stored as runs of triangle indices, and a reduction destroys
+     * those outright: the triangles they name no longer exist. But an index is
+     * only how the part is written down - a part is really a *region of the
+     * surface*, and that survives. Each surviving triangle takes the
+     * membership of the original triangle nearest its centre, so the region
+     * comes back where it was. Its boundary can shift by a triangle, which is
+     * the same tolerance the reduction already applies to the silhouette.
+     *
+     * `parts` is the sidecar's array. Returns a new array, or null if the
+     * models cannot be paired (different primitive counts), in which case the
+     * caller should leave the geometry alone rather than write a broken part.
+     */
+    function remapParts(originalBytes, resultBytes, parts) {
+        if (!Array.isArray(parts) || !parts.length) return parts || [];
+        const before = parseGlb(originalBytes);
+        const after = parseGlb(resultBytes);
+        if (!before || !after) return null;
+        const oldPrims = flatPrimitives(before.json);
+        const newPrims = flatPrimitives(after.json);
+        if (!oldPrims.length || oldPrims.length !== newPrims.length) return null;
+
+        const mapped = parts.map(part => ({
+            name: part.name, pivot: part.pivot, meshes: {}
+        }));
+        // Which primitives any part actually mentions; the rest cost nothing.
+        const wanted = new Set();
+        for (const part of parts) {
+            for (const key of Object.keys(part.meshes || {})) wanted.add(Number(key));
+        }
+
+        for (const index of wanted) {
+            if (!(index >= 0) || index >= oldPrims.length) return null;
+            const oldCentroids = triangleCentroids(before.json, before.bin, oldPrims[index]);
+            const newCentroids = triangleCentroids(after.json, after.bin, newPrims[index]);
+            if (!oldCentroids || !newCentroids) return null;
+            const oldCount = oldCentroids.length / 3;
+            const newCount = newCentroids.length / 3;
+            if (!oldCount || !newCount) return null;
+
+            const flagsPerPart = parts.map(part =>
+                runsToFlags((part.meshes || {})[index], oldCount));
+
+            // A grid over the original centres, sized so a cell holds a
+            // handful of triangles: dense enough to keep the search local,
+            // coarse enough that a neighbour is nearly always in reach.
+            const extent = positionExtent(oldCentroids, oldCount) || 1;
+            const cell = extent / Math.max(8, Math.cbrt(oldCount) * 2);
+            const hash = (cx, cy, cz) => (((cx * 73856093) ^ (cy * 19349663) ^ (cz * 83492791)) >>> 0);
+            const grid = new Map();
+            for (let t = 0; t < oldCount; t++) {
+                const key = hash(
+                    Math.floor(oldCentroids[t * 3] / cell),
+                    Math.floor(oldCentroids[t * 3 + 1] / cell),
+                    Math.floor(oldCentroids[t * 3 + 2] / cell));
+                const list = grid.get(key);
+                if (list) list.push(t); else grid.set(key, [t]);
+            }
+
+            const newFlags = parts.map(() => new Uint8Array(newCount));
+            for (let t = 0; t < newCount; t++) {
+                const x = newCentroids[t * 3], y = newCentroids[t * 3 + 1], z = newCentroids[t * 3 + 2];
+                const cx = Math.floor(x / cell), cy = Math.floor(y / cell), cz = Math.floor(z / cell);
+                let best = -1, bestDistance = Infinity;
+                // Widen the search until something is found: a reduced
+                // triangle can sit a little away from any original centre.
+                for (let ring = 1; ring <= 4 && best < 0; ring++) {
+                    for (let dx = -ring; dx <= ring; dx++) {
+                        for (let dy = -ring; dy <= ring; dy++) {
+                            for (let dz = -ring; dz <= ring; dz++) {
+                                // Only the shell of each ring after the first.
+                                if (ring > 1 && Math.abs(dx) !== ring && Math.abs(dy) !== ring && Math.abs(dz) !== ring) continue;
+                                const list = grid.get(hash(cx + dx, cy + dy, cz + dz));
+                                if (!list) continue;
+                                for (let k = 0; k < list.length; k++) {
+                                    const o = list[k];
+                                    const ddx = oldCentroids[o * 3] - x;
+                                    const ddy = oldCentroids[o * 3 + 1] - y;
+                                    const ddz = oldCentroids[o * 3 + 2] - z;
+                                    const d = ddx * ddx + ddy * ddy + ddz * ddz;
+                                    if (d < bestDistance) { bestDistance = d; best = o; }
+                                }
+                            }
+                        }
+                    }
+                }
+                if (best < 0) continue;
+                for (let p = 0; p < parts.length; p++) {
+                    if (flagsPerPart[p][best]) newFlags[p][t] = 1;
+                }
+            }
+
+            for (let p = 0; p < parts.length; p++) {
+                if (!(parts[p].meshes || {})[index]) continue;
+                const runs = flagsToRuns(newFlags[p]);
+                if (runs.length) mapped[p].meshes[index] = runs;
+            }
+        }
+
+        // A part that came back empty would silently stop animating; say so by
+        // refusing the whole remap rather than writing a part that selects
+        // nothing.
+        for (let p = 0; p < parts.length; p++) {
+            if (Object.keys(parts[p].meshes || {}).length && !Object.keys(mapped[p].meshes).length) return null;
+        }
+        return mapped;
+    }
+
+    /** glTF requires min/max on POSITION, and rewritten positions need new ones. */
+    function setPositionBounds(json, index, positions) {
+        const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+        for (let i = 0; i < positions.length; i += 3) {
+            for (let k = 0; k < 3; k++) {
+                if (positions[i + k] < min[k]) min[k] = positions[i + k];
+                if (positions[i + k] > max[k]) max[k] = positions[i + k];
+            }
+        }
+        json.accessors[index].min = min;
+        json.accessors[index].max = max;
+    }
+
+    /** The largest span of a set of positions, used to scale a tolerance. */
+    function positionExtent(positions, count) {
+        let minX = Infinity, minY = Infinity, minZ = Infinity;
+        let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+        for (let i = 0; i < count; i++) {
+            const x = positions[i * 3], y = positions[i * 3 + 1], z = positions[i * 3 + 2];
+            if (x < minX) minX = x; if (x > maxX) maxX = x;
+            if (y < minY) minY = y; if (y > maxY) maxY = y;
+            if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+        }
+        return Math.max(maxX - minX, maxY - minY, maxZ - minZ, 0);
+    }
+
+    /**
+     * Flag every vertex whose exact position is shared by another vertex.
+     * Those are the UV/normal seam duplicates: one point in space stored
+     * twice so each island can carry its own texture coordinate. They read as
+     * mesh boundaries in index space even though the surface is continuous
+     * there, so a decimator left to itself collapses the two copies in
+     * different directions and cracks the model open along every seam.
+     */
+    function seamVertices(positions, count) {
+        const seen = new Map();
+        const locked = new Uint8Array(count);
+        for (let i = 0; i < count; i++) {
+            const key = positions[i * 3].toFixed(5) + ',' + positions[i * 3 + 1].toFixed(5) + ',' + positions[i * 3 + 2].toFixed(5);
+            const first = seen.get(key);
+            if (first === undefined) seen.set(key, i);
+            else { locked[first] = 1; locked[i] = 1; }
+        }
+        return locked;
+    }
+
+    /** Triangles across every primitive, counting unindexed ones by vertex. */
+    function triangleCount(json) {
+        let total = 0;
+        for (const mesh of json.meshes || []) {
+            for (const prim of mesh.primitives || []) {
+                if (prim.indices != null) total += json.accessors[prim.indices].count / 3;
+                else if (prim.attributes && prim.attributes.POSITION != null) total += json.accessors[prim.attributes.POSITION].count / 3;
+            }
+        }
+        return Math.floor(total);
     }
 
     function substitute(json, replacements, index, array, type, componentType, extra) {
@@ -469,14 +787,15 @@
      * `target` triangles (see QuadricDecimator.js). Same guards as the weld.
      * Returns true when the geometry was rewritten.
      */
-    function decimatePrimitive(json, bin, replacements, prim, target, notes) {
+    function decimatePrimitive(json, bin, replacements, prim, target, notes, tolerance) {
         const decimator = quadricDecimator();
         if (!decimator) return false;
+        const weldTolerance = tolerance === undefined ? DEFAULT_WELD_TOLERANCE : tolerance;
         const attrs = prim.attributes || {};
         if (prim.indices == null || attrs.POSITION == null) return false;
         if (prim.mode != null && prim.mode !== 4) return false;
         if (prim.targets && prim.targets.length) return false;
-        const handled = ['POSITION', 'NORMAL', 'TEXCOORD_0'];
+        const handled = ['POSITION', 'NORMAL', 'TEXCOORD_0', 'JOINTS_0', 'WEIGHTS_0'];
         if (Object.keys(attrs).some(name => handled.indexOf(name) < 0)) {
             notes.push('extra vertex attributes present; geometry left alone');
             return false;
@@ -486,26 +805,47 @@
         const positions = accessorArray(json, bin, replacements, attrs.POSITION);
         const normals = attrs.NORMAL != null ? accessorArray(json, bin, replacements, attrs.NORMAL) : null;
         const uvs = attrs.TEXCOORD_0 != null ? accessorArray(json, bin, replacements, attrs.TEXCOORD_0) : null;
+        const joints = attrs.JOINTS_0 != null ? accessorArray(json, bin, replacements, attrs.JOINTS_0) : null;
+        const weights = attrs.WEIGHTS_0 != null ? accessorArray(json, bin, replacements, attrs.WEIGHTS_0) : null;
         const indices = accessorArray(json, bin, replacements, prim.indices);
         const before = Math.floor(indices.length / 3);
-        if (before <= target) return false;
-        const result = decimator.decimate({ positions, normals, uvs, indices }, target);
+        const vertexCount = Math.floor(positions.length / 3);
+        // Repair before reducing. A crack left in the surface is a boundary as
+        // far as the collapse is concerned, so it would be carefully preserved
+        // and then widened as the triangles around it grew.
+        const weldDistance = weldTolerance > 0 ? weldTolerance * positionExtent(positions, vertexCount) : 0;
+        const closed = weldNearby(positions, vertexCount, weldDistance);
+        if (closed) notes.push(`closed ${closed} cracked vertices before reducing`);
+        if (before <= target) {
+            // Nothing to reduce, but the repair is still worth keeping.
+            if (!closed) return false;
+            substitute(json, replacements, attrs.POSITION, positions, 'VEC3', 5126);
+            setPositionBounds(json, attrs.POSITION, positions);
+            return true;
+        }
+        const locked = seamVertices(positions, vertexCount);
+        const result = decimator.decimate({ positions, normals, uvs, joints, weights, indices, locked }, target);
         if (!result || !result.triangles || result.triangles >= before) return false;
+        // Pinned seams put a floor under the reduction; say so rather than
+        // letting a level silently miss its budget.
+        if (result.stopped !== 'target') {
+            notes.push('seam-limited: reached ' + result.triangles + ' of ' + target + ' triangles with seams held');
+        }
         substitute(json, replacements, attrs.POSITION, result.positions, 'VEC3', 5126);
         if (normals && result.normals) substitute(json, replacements, attrs.NORMAL, result.normals, 'VEC3', 5126);
         if (uvs && result.uvs) substitute(json, replacements, attrs.TEXCOORD_0, result.uvs, 'VEC2', 5126);
+        // Skin channels keep the component type they arrived with: joints are
+        // integer bone indices and weights are often normalized bytes/shorts,
+        // so writing either as float would break the accessor's contract.
+        if (joints && result.joints) {
+            substitute(json, replacements, attrs.JOINTS_0, result.joints, 'VEC4', json.accessors[attrs.JOINTS_0].componentType);
+        }
+        if (weights && result.weights) {
+            substitute(json, replacements, attrs.WEIGHTS_0, result.weights, 'VEC4', json.accessors[attrs.WEIGHTS_0].componentType);
+        }
         substitute(json, replacements, prim.indices, result.indices, 'SCALAR', result.indices instanceof Uint16Array ? 5123 : 5125);
         // Bounds are required on POSITION; the compacted set has new ones.
-        const accessor = json.accessors[attrs.POSITION];
-        const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
-        for (let i = 0; i < result.positions.length; i += 3) {
-            for (let k = 0; k < 3; k++) {
-                if (result.positions[i + k] < min[k]) min[k] = result.positions[i + k];
-                if (result.positions[i + k] > max[k]) max[k] = result.positions[i + k];
-            }
-        }
-        accessor.min = min;
-        accessor.max = max;
+        setPositionBounds(json, attrs.POSITION, result.positions);
         notes.push(`mesh ${before} -> ${result.triangles} triangles (quadric collapse)`);
         return true;
     }
@@ -532,16 +872,6 @@
         if ((probe.json.accessors || []).some(a => a.sparse)) return [];
         if ((probe.json.animations || []).length || (probe.json.skins || []).length) return [];
         const minTriangles = settings.minTriangles === undefined ? LOD_MIN_TRIANGLES : settings.minTriangles;
-        const triangleCount = json => {
-            let total = 0;
-            for (const mesh of json.meshes || []) {
-                for (const prim of mesh.primitives || []) {
-                    if (prim.indices != null) total += json.accessors[prim.indices].count / 3;
-                    else if (prim.attributes && prim.attributes.POSITION != null) total += json.accessors[prim.attributes.POSITION].count / 3;
-                }
-            }
-            return Math.floor(total);
-        };
         const baseTriangles = triangleCount(probe.json);
         if (baseTriangles < minTriangles) return [];
         const out = [];
@@ -560,7 +890,7 @@
                     let done = false;
                     if (budget > 0 && prim.indices != null) {
                         const share = json.accessors[prim.indices].count / 3 / Math.max(1, currentTriangles);
-                        done = decimatePrimitive(json, bin, replacements, prim, Math.max(4, Math.round(budget * share)), notes);
+                        done = decimatePrimitive(json, bin, replacements, prim, Math.max(4, Math.round(budget * share)), notes, settings.weldTolerance);
                     }
                     if (!done && level.meshCells > 0) clusterPrimitive(json, bin, replacements, prim, level.meshCells, notes);
                     delete prim.material;
@@ -650,10 +980,25 @@
         const replacements = new Map();
         // Tangents go first so the vertex-weld pass sees a clean attribute set.
         if (settings.dropTangents) dropTangents(json, replacements, notes);
-        if (settings.meshCells > 0) {
+        // Edge collapse first when a ratio is asked for: it cannot open a hole,
+        // because a collapse removes an edge's two triangles and rewires their
+        // neighbours. The weld grid merges by proximity with no regard for
+        // connectivity, so it tears the surface into pinholes. The weld stays
+        // as the fallback for primitives the collapse refuses (a shared buffer
+        // view, morph targets, an attribute set it does not rewrite).
+        if (settings.meshRatio > 0 || settings.meshCells > 0) {
+            const baseTriangles = triangleCount(json);
+            const budget = settings.meshRatio > 0 ? Math.max(4, Math.round(baseTriangles * settings.meshRatio)) : 0;
             for (const mesh of json.meshes || []) {
                 for (const prim of mesh.primitives || []) {
-                    clusterPrimitive(json, bin, replacements, prim, settings.meshCells, notes);
+                    let done = false;
+                    if (budget > 0 && prim.indices != null) {
+                        const share = json.accessors[prim.indices].count / 3 / Math.max(1, baseTriangles);
+                        done = decimatePrimitive(json, bin, replacements, prim, Math.max(4, Math.round(budget * share)), notes, settings.weldTolerance);
+                    }
+                    if (!done && settings.meshCells > 0) {
+                        clusterPrimitive(json, bin, replacements, prim, settings.meshCells, notes);
+                    }
                 }
             }
         }
@@ -768,7 +1113,7 @@
             .catch(() => lods(bytes, options));
     }
 
-    const api = { PRESETS, LOD_LEVELS, LOD_MIN_TRIANGLES, analyze, optimize, lods, lodsAsync, canvasEncoder, parseGlb };
+    const api = { PRESETS, LOD_LEVELS, LOD_MIN_TRIANGLES, analyze, optimize, lods, lodsAsync, canvasEncoder, parseGlb, remapParts };
 
     root.RRGlbOptimizer = api;
 

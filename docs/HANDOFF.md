@@ -1,10 +1,976 @@
 # Handoff - 0.98.5 In Progress
 
-Last updated 2026-08-31. 0.98.4 shipped 2026-08-31. Carried into 0.98.5:
+## Done on the Linux box, 2026-09-02
+
+All three items below are settled. `npm test` runs **2,337 tests, all
+passing**; the two `remapParts` tests pass in 74 ms and 1 ms, so the Windows
+timeout was the harness, not the ring search. The runtime is synced into all
+11 bundled projects. `.gitattributes` now pins `* text=auto eol=lf`, with
+`template/*/js/plugins/**` and `template/*/js/BACKUP/**` left `-text` so the
+third-party files keep the CRLF they shipped with.
+
+**Two files came back from Windows damaged and were repaired**:
+`runtime/reactor_3d.js` had CRLF endings, a UTF-8 BOM, and every non-ASCII
+character double-encoded (`—` had become `â€”`, 373 times); `reactor_main.js`
+had the BOM and one such dash. Both are restored byte-for-byte to HEAD's
+characters and re-synced. Whatever editor wrote them there reads UTF-8 as
+Windows-1252 on save — check before trusting a file it touched.
+
+Sixteen tests failed on the first run, none of them on the new code: ten
+pinned runtime revision `20260901.4`, one expected the deleted `.lod*.glb`
+files (their deletion is now staged), three matched code that was
+deliberately changed (`pickLod`'s screen pair, `shouldMeasure`'s settled
+interval, the weak-tier policy of a capped ratio and no multisampling), one
+counted the 3D card's headers before the cost panel, and one flagged the two
+rewritten optimize-dialog descriptions, now hand-translated in all 17
+locales.
+
+## Do these first (next session, on the Linux box) — DONE, kept for the record
+
+1. **`npm test`.** Two tests written this session have **never been executed** —
+   the Windows box has no Node. They are the only verification that
+   `RRGlbOptimizer.remapParts` works, and it is wired into the Optimize action:
+   *"a carved part is re-derived across a reduction, not lost"* and *"remapping
+   refuses rather than guessing when the models cannot be paired"* in
+   `editor/tests/glb-optimizer.test.cjs`. An end-to-end run on Windows timed
+   out without explanation; if the first test hangs or fails, the widening ring
+   search in `remapParts` is the place to look. **Do not trust the part remap
+   until this passes.** Six other new tests in the same file are also unrun.
+   Also unrun there: *"FsAtomic retries a rename held by a sync client or
+   scanner"* in `editor/tests/lifecycle-data-safety.test.cjs` — but unlike the
+   remap tests, its assertions **have** been executed verbatim, under NW.js
+   (see the sync-folder note below), so it is expected to pass as written. It
+   deliberately spends ~2 s proving the give-up budget.
+2. **`node editor/build-scripts/sync-runtime.cjs`**, then refresh the test count
+   in both READMEs (was 2,069).
+3. `core.autocrlf = true` is still unresolved and the repo has **no
+   `.gitattributes`**, which is the actual hazard: this working copy is inside
+   Dropbox and is shared with a Mac/Linux box, so the moment Git rewrites a
+   `.sh` or `.command` file it lands on the other machine with CRLF and dies at
+   `bash: \r: command not found`. Nothing has been converted yet (Git warns
+   "LF will be replaced by CRLF the **next** time Git touches it"), so the
+   window to fix it cleanly is still open: add a `.gitattributes` pinning
+   `* text=auto eol=lf`.
+
+   **The "unrelated modified files" were not modified — this is done.** They
+   were pure mode noise: `git diff --summary` showed each as `mode change
+   100755 => 100644`, with blob hashes identical to HEAD (`git hash-object
+   editor/images/icon.png` == `git rev-parse HEAD:editor/images/icon.png`).
+   Dropbox on Windows cannot preserve the executable bit and `core.filemode`
+   was `true`, so Git called the whole set changed — the images, the `.sh` and
+   `.command` launchers, the `.desktop` file. **`git config core.filemode
+   false` is now set in this clone**, which took `git status` from 70 entries
+   to 37, and all 37 remaining are genuine 0.98.5 work. Do not commit those
+   mode changes if they reappear on another clone: committing them strips `+x`
+   from the shell launchers on the machines where it matters.
+
+**Asset state, for the commit.** `template/Demo/3d` is **200.8 MB -> 84.8 MB**,
+optimized, with the `.orig` working copies deliberately cleared once the result
+was checked. Git history is the way back to an original, not a sibling file.
+That 116 MB is not only frame time: download size is an itch.io budget the
+owner spends deliberately, which is also why separate `.lod*.glb` files were
+rejected — they spend the same budget the reduction just freed. What is on disk
+now is the good state:
+
+| model | live | what it is |
+|---|---|---|
+| Aether Core Tower | 17.2 MB | 1,895,089 -> 506,341, crack repair on |
+| RPGReactor-Computer-01 | 16.4 MB | 1,887,267 -> 488,186, crack repair on |
+| Carol / Fleagus / Mascot | 8.7 / 9.1 / 4.8 MB | 75% each, skinning intact |
+| Oth97_CNO_Consul | 11.4 MB | textures only, triangle list untouched (has parts) |
+| RPGReactor-MonitorArm | 2.3 MB | restored, triangle list untouched (has parts) |
+| kawashaki_ninja_h2 | 8.6 MB | refused: shared buffer views |
+| Sword_Fleagus | 6.3 MB | tangents dropped |
+
+Last updated 2026-09-02. 0.98.4 shipped 2026-08-31. Carried into 0.98.5:
 the fs-backed editor prefs store (so future NW bumps stop resetting prefs),
 `refreshMap3DView`'s awaiting fire-and-forget reconcile + full setEnabled
 cycle on project change, and (optional) a web audio extension manifest to
 silence the one-per-track BGM probe 404.
+
+## 2026-09-02 — Playtest could not save inside Dropbox (EPERM on rename)
+
+Playtest failed with *"not all the database files could be saved"*:
+
+```
+DatabaseManager.js:383 Error saving System.json: Error: EPERM: operation not
+permitted, rename '...\data\System.json.tmp-rr-2984-2f481ec...' -> '...\data\System.json'
+    at Object.renameSync (node:fs:1014:11)
+    at writeFileAtomicSync (src/utils/FsAtomic.js:44:16)
+```
+
+**Not a permissions bug, and not a bug in the write.** Windows will not rename
+a file — either end of the rename — while another process holds a handle to it
+without delete sharing, and a Dropbox/OneDrive client, an antivirus scanner and
+the search indexer all open a file the instant it appears or changes. This
+atomic write invites exactly that at both ends: the temp file is brand new, and
+the destination was just modified. `System.json` gets hit hardest because
+`saveJSON` gives it a fresh `versionId` on every save, so it is the file the
+sync client is most often mid-upload on. The write itself was complete and
+correct on disk.
+
+The fix is in `editor/src/utils/FsAtomic.js`, which is the single helper every
+project write goes through (maps, database, plugins, `project.rpgreactor`,
+optimized GLBs — 12 call sites), so all of them gain it:
+
+- `renameWithRetry` retries `EPERM`/`EACCES`/`EBUSY` with a doubling backoff
+  (1 ms to 64 ms) for a 2 s budget. **A lock that outlives the budget still
+  throws** — no in-place fallback, because the previous good file is the whole
+  point of the atomic write — and appends to the message that a program is
+  holding the file, since the bare errno reads like an editor bug.
+- Any other rename error is not retried at all (a full disk or cross-device
+  path will not improve by waiting).
+- `unlinkWithRetry` gives the failure-path cleanup the same wait on a 250 ms
+  budget, so a failed save cannot leave `.tmp-rr-*` litter in the project for
+  the sync client to upload.
+
+**`Atomics.wait` is unavailable here.** Chrome forbids it on a renderer's main
+thread, which is exactly where the editor calls this from — verified, it throws
+— so the sync sleep spins on `Date.now()`. That is the live path, not the
+fallback. It only ever runs on the error path.
+
+**The fault reproduces on demand, and the fix absorbs it.** A second harness
+ran 200 atomic writes of a System.json-shaped payload into the real, live
+`template/Demo/data` folder (to a scratch filename — the project's own
+`System.json` was never touched), wrapping `renameSync` to count what the
+filesystem actually did: **209 rename attempts for 200 writes — 9 genuine
+`EPERM` rejections by Dropbox, every one absorbed, 0 failed writes, no temp
+litter.** That ~4.5% per-file rejection rate is why this looked like it failed
+*every* playtest: `saveAllData` writes the whole database file list, so a save
+of ~20 files had better than a 60% chance of hitting at least one.
+
+**Verified under NW.js**, not just by syntax check: a harness in the renderer
+main thread (`scratchpad/fsatomic-harness`, an `nw.exe` app that requires the
+real `FsAtomic.js`) ran six cases, all passing — 5 injected EPERMs absorbed in
+40 ms; a sustained EPERM giving up at 2056 ms with the old file intact, the
+errno preserved, the message explaining the lock and no litter; a non-lock
+error failing in under 500 ms; an ordinary write unchanged; and a locked temp
+file not stalling cleanup past its budget. The same assertions are now
+`editor/tests/lifecycle-data-safety.test.cjs` → *"FsAtomic retries a rename
+held by a sync client or scanner"*, still to be run under `npm test`.
+
+## 2026-09-02 — Demo characters reduced: 100 Hz reached
+
+The skinned characters were 70% of GPU time (see the timing note below) and
+had no distance levels because `lods()` refuses skins. **They did not need
+the decimator extended — the weld path already carries them.**
+
+`GlbOptimizer`'s merge handles `JOINTS_0`/`WEIGHTS_0` verbatim (it always
+did; the comment at the top of `mergeVertices` says so), so `optimize()`
+reduces a skinned model safely. What was wrong is only the **preset**:
+`aggressive` uses `meshCells: 700`, which on a character is far too fine —
+it took Carol from 596,461 triangles to 592,621. A tenth of a percent.
+
+Measured on Carol, skin and all 20 animations intact at every level
+(`JOINTS_0`, `WEIGHTS_0`, `skins: 1`, `animations: 20` all present after):
+
+| meshCells | triangles | reduction | size |
+|---|---|---|---|
+| original | 596,461 | — | 23.2 MB |
+| 700 (`aggressive`) | 592,621 | 0.6% | 23.0 MB |
+| 400 | 334,214 | 44% | 14.1 MB |
+| **250** | **148,566** | **75%** | **7.6 MB** |
+| 150 | 57,782 | 90% | 3.9 MB |
+
+Applied at **250** to the Demo's three actors (Carol, Fleagus, Mascot):
+1,447,281 -> 475,004 triangles, 58.2 MB -> 24.1 MB, 0.2 s each. **Originals
+are kept beside each file as `<name>.glb.orig`** — restore by copying them
+back over the `.glb`.
+
+**Result on the Demo's start map**: triangles drawn a frame 2,215,438 ->
+838,813, draw calls 90 -> 54, the 3D passes 5.89 -> 2.65 ms of GPU, and the
+frame 16.6 -> 10.6 ms — **100 Hz, which is this display's ceiling**. The
+in-game counter read 104. The character reads correctly at gameplay
+distance; a close inspection of faces and hands is still owed, since a weld
+grid distorts UVs where it merges and that is where it would show.
+
+**Why this is safe here specifically**: `lightGlsl` has no N·L term, so
+normals never reach the image (see the open-threads note). A weld grid's
+usual cost — shading breaking up over the merged surface — cannot appear.
+Only silhouette and UV distortion matter. **That stops being true the moment
+anything reads a normal**, so revisit this if the shader gains real lighting.
+
+**Superseded the same day — the weld punched the model full of pinholes.**
+See the next section. The reduction is now done by edge collapse and the
+`.glb` files have been rebuilt from their `.orig` backups.
+
+## 2026-09-02 — The pinholes, and why both reducers made them
+
+Reported from play: the reduced characters looked right but had "little pin
+holes punched through the model throughout". They were real and they were
+everywhere. Counting **boundary edges** — an edge used by exactly one
+triangle, after welding by exact position so UV splits cannot masquerade as
+holes — puts a number on it:
+
+| Carol | triangles | boundary edges | open |
+|---|---|---|---|
+| original | 596,461 | **216** | 0.02% |
+| weld, 400 cells | 334,214 | 51,224 | 9.7% |
+| weld, 250 cells (shipped) | 148,566 | **42,355** | **17.4%** |
+| weld, 150 cells | 57,782 | 23,213 | 23.9% |
+
+A finer grid does not help, so this was never a tuning problem. Swapping in
+quadric edge collapse did not help either — 43,533 boundary edges at the same
+triangle count — which killed the assumption that a collapse preserves
+topology by construction and forced the real question.
+
+**The cause is the source mesh, not the reducer.** Carol has 347,910 vertices
+but only 298,269 distinct positions: **14.3% are duplicates**, one per side of
+every UV seam, so each island can carry its own texture coordinate. In index
+space the mesh therefore reads as **96,420 boundary edges** where in position
+space there are **216**. Both reducers work on indices, so both see a surface
+already torn into islands, and both let the two copies of a seam vertex
+collapse in different directions. The seam opens. Every seam, everywhere —
+which is exactly what a scatter of pinholes across a whole model looks like.
+
+**The fix is to pin the seams.** `seamVertices()` in `GlbOptimizer` flags every
+vertex sharing its position with another; `QuadricDecimator.decimate` takes
+that as `mesh.locked` and will never remove or move a flagged vertex — an edge
+with one pinned end folds the free end into the pinned one, and an edge with
+two is refused outright. The rest of the mesh reduces around a fixed seam
+network instead of tearing away from it. Result at the same 75%:
+
+| Carol | triangles | boundary edges | open |
+|---|---|---|---|
+| original | 596,461 | 216 | 0.02% |
+| **collapse, seams pinned** | **149,114** | **185** | **0.08%** |
+
+Below the original, because the collapse also closes pre-existing slivers.
+
+Applied to all three actors, rebuilt from `.orig`: Carol 596,461 -> 149,114
+(216 -> 185 open), Fleagus 595,341 -> 148,835 (423 -> 249), Mascot 255,479 ->
+63,870 (113 -> 26). 58.2 MB -> 22.6 MB. Verified in the running game: all four
+skinned meshes load at the reduced counts with `skinIndex`/`skinWeight`
+present, 24 bones each, all four animating, 96 FPS on the 100 Hz panel.
+
+**Two things came with it.** `QuadricDecimator` now carries `JOINTS_0` and
+`WEIGHTS_0` through a collapse, taken whole from the surviving endpoint and
+never blended — a joint channel is a bone index, so the average of bones 3 and
+9 is bone 6, an unrelated bone that would fling the vertex across the model.
+Verified: no joint index out of range, no accessor desynced from `POSITION`.
+And `optimize()` now prefers the collapse: `meshRatio` (0.6 on `optimize`,
+0.25 on `aggressive`) is the share of triangles to keep, with `meshCells`
+demoted to the fallback for primitives the collapse refuses. Because skins are
+no longer a barrier, `lods()` could now build real distance levels for
+characters instead of one flat reduction.
+
+**The cost of pinning**: seams cannot be removed, so they put a floor under the
+reduction. Carol stops at 105,938 triangles (82%) however hard she is pushed;
+a run that misses its budget says so in the notes as `seam-limited`. The floor
+is well past where these models need to go.
+
+Pinning holds a vertex against being collapsed away. It cannot save one whose
+surrounding triangles have all gone, so at a near-total reduction (an
+18-triangle test grid cut to 6) a seam vertex can still be orphaned. Open
+edges never rise, so this is not a tear — but it is why the test fixture asks
+for a real reduction rather than the deepest the grid will take.
+
+## 2026-09-02 — The optimizer reaches models already in a project
+
+Importing was the only way in, which is no use for the models people actually
+accumulate: copied into `3d/` by hand, taken from an asset pack, or imported
+before the optimizer could reduce a mesh at all. **Optimize**, beside the model
+list in the 3D database, runs the same choices over the selected model in
+place (`Database3DEditor.optimizeSelectedModel`).
+
+`UIManager.showModelOptimizeDialog` now takes `title`, `confirmLabel`,
+`keepLabel` and `keepDetail`, defaulting to the import wording, so both callers
+share one dialog. Its descriptions were also wrong after the change above -
+they still promised a vertex weld.
+
+Care taken, because this writes over a file the user already has: the original
+is copied to `<name>.glb.orig` once and never overwritten by a second run;
+distance levels are rebuilt from the new geometry with the stale ones deleted
+and the sidecar's `lods` rewritten, since levels cut from the old mesh would
+snap a prop back to its old shape as it recedes; and `_templates`,
+`RREventPreviewModels` and the map's 3D view are all dropped, or the editor
+keeps drawing the geometry it loaded at startup. Declining writes nothing.
+
+## 2026-09-02 — Distance-level FILES are off; the cost panel; the Demo's props
+
+**Level files are no longer written on import** (`buildLods: false` on both
+presets, gated in `ResourceManager`). The owner's objection is the right one: a
+level is another whole copy of the geometry beside the model, so the approach
+grows a project faster than the reduction shrinks it, and every copy ships. Now
+that the collapse reduces a mesh properly, reducing the base model is the
+cheaper trade — nothing extra on disk, and it applies at every distance.
+`lods()`, `lodsAsync`, `model-lods.cjs` and the runtime's level swapping are all
+untouched, so turning `buildLods` back on restores the old behaviour exactly.
+
+**Still open — the owner's own suggestion, and it is the right shape**: let a
+level be *how the runtime interprets the model it already has* at a distance,
+rather than another file. The runtime half already exists (`pickLod` swaps
+geometry by distance); only the source of the levels would change, from files
+to something derived in memory. The one hard constraint is cost: the decimator
+takes 17-26 s on a 1.9M-triangle mesh and about 5 s at 600k, so this cannot
+happen synchronously while a map loads. The shape that works is to derive
+levels in the existing worker *after* the map is up, and cache them per machine
+(keyed on the file's mtime, beside the thumbnail cache) so it is paid once and
+never ships. Worth confirming the cache location before building it.
+
+**A cost panel in the 3D database** (`modelStats` / `renderModelStats`). Read
+off the file with `analyze`, cached on size+mtime. `analyze` gained
+`primitives`, `meshes`, `materials`, `animations`, `skinned` and `bones` -
+draw calls and rigs are half of why a model is expensive and it reported
+neither. The notes matter more than the numbers: they name the *cause*
+(posed every frame, no reduction, texture weight, draw calls) rather than
+leaving someone to infer it from a triangle count.
+
+**The Demo's props, reduced.** The panel immediately found them: the tower at
+1,895,089 triangles / 54.2 MB and the computer at 1,887,267 / 53.6 MB, the
+computer placed three times. Both are raw generator exports and neither was
+ever watertight - the tower has **64,446 open edges before anything touches
+it**, so the boundary-edge metric reads as a *relative* check on these, not an
+absolute one. Reduction only lowers it (56,607 at a quarter, 45,039 at a tenth).
+
+| tower | triangles | size | open edges |
+|---|---|---|---|
+| original | 1,895,089 | 54.2 MB | 64,446 |
+| 0.25 | 473,771 | 16.3 MB | 56,607 |
+| **0.10 (applied)** | **189,509** | **8.5 MB** | 45,039 |
+| 0.05 | 129,248 (seam-limited) | 6.8 MB | 36,287 |
+
+Applied at a tenth to both, textures recapped on the rest: **4,031,130 ->
+627,009 triangles and 142.6 -> 45.4 MB** across the Demo's models. Verified in
+the running game: the scene draws 189,509 and 3x188,726 for the props, 98 FPS,
+and a screenshot of the console at 90% reduction shows crisp panel edges and no
+faceting.
+
+**One model refused: `kawashaki_ninja_h2`** (226,754 triangles, 35 draw calls).
+Every primitive came back `mesh attributes share buffer views; geometry left
+alone` - `decimatePrimitive` bails when an accessor's buffer view is shared,
+because rewriting one primitive's attributes would corrupt its neighbours.
+Splitting shared views before reducing is the fix and would unlock a whole
+class of exports; nothing else in the Demo is affected.
+
+**On the `.orig` files.** They are working copies, not archives: the owner
+clears them once a result has been checked, and did. Git history is the way
+back to an original. Worth remembering when describing the Optimize action as
+reversible — say *git*, because the sibling file is not meant to live long, and
+leaving it there spends the download budget the reduction just freed.
+
+## 2026-09-02 — Crack repair, and the reduction floor it exposes
+
+Reported from play: holes and waviness in the reduced props. Both are real and
+both come from the same place — **those props were never watertight**. The
+tower arrives with 64,446 open edges. The seam pin only protects vertices at
+*exactly* the same position, so pre-existing cracks were not pinned, and a 90%
+cut widened them.
+
+`weldNearby` closes them: near-coincident vertices are snapped onto one
+position before reducing. Positions move, nothing merges, so every vertex keeps
+its own UV and skin weights and no texture seam smears. The repaired join is
+then exactly coincident, so the seam pin holds it shut through the reduction.
+An integer spatial hash, not string keys — the first cut took minutes on a
+million vertices; it now runs in **4.6 s**.
+
+Tolerance, measured on the tower (fraction of the model's largest dimension):
+
+| tolerance | vertices moved | open edges (from 64,446) |
+|---|---|---|
+| 0.0002 | 3,875 | 59,524 |
+| **0.0005 (default)** | 77,941 (8%) | **18,441** |
+| 0.001 | 378,151 (38%) | 4,965 |
+| 0.002 | 616,167 (61%) | 2,290 |
+
+Past about 0.0005 the tolerance reaches the model's own triangle size, so it
+stops closing cracks and starts flattening detail — the mistake the weld grid
+used to make. Hence the default.
+
+**The catch, and it is the next thing to fix.** Repair creates ~80,000 newly
+coincident vertices, the pin refuses to remove any of them, and the mesh hits a
+wall: the tower comes out at **506,341 triangles at 0.15, 0.10 and 0.05 alike**
+— the same number, seam-limited every time. Repair on, holes close (64,446 ->
+14,981) but the floor is 506k. Repair off, it reaches 189k but cracks widen to
+45,039. Neither is right.
+
+**The fix is to stop pinning and start locking.** A pin says "never remove this
+vertex", which is far stronger than what is needed. What is actually needed is
+"the copies of this point move together": collapse coincident duplicates as a
+unit, redirecting each split of the removed vertex to the split of the survivor
+with the nearest UV. The seam then simplifies without separating, and the floor
+goes away. This is what meshoptimizer does and it is the honest version of the
+whole feature — the pin was the cheap approximation. It is real surgery on
+`decimate`'s bookkeeping: triangles stay in split space, quadrics and collapse
+decisions move to welded space, and each welded vertex keeps the list of its
+splits.
+
+Current state on disk: every model rebuilt from `.orig` at 0.25 with repair on.
+**5,478,411 -> 1,605,120 triangles, 200.8 -> 84.8 MB.** The two props are
+506,341 and 488,186, which is a heavier frame than the 189k version that
+measured 98 FPS — that earlier version had the holes.
+
+`kawashaki_ninja_h2` still refuses entirely (35 primitives, all
+`mesh attributes share buffer views`). Splitting shared views before reducing
+would unlock it and every export shaped like it.
+
+## 2026-09-02 — Carved parts: the bug, and re-deriving them
+
+Reported from play: a monitor arm on the wall showing "one copy that stays in
+place, and another duplicate copy moves right through it". Not a duplicate at
+all — **a bug this session introduced.**
+
+A carved part is stored in `model.json` as *positional triangle runs* into the
+primitive's own triangle list: `parts[0].meshes["0"] = [[0,13],[19,4],…]`, 1,378
+runs indexing triangles 0–14,443. `reorderForCache` (Tipsify) reorders that
+list, so every run then names a different triangle. The piece that animates
+became a scattered wrong set swinging through the model while the real monitor
+stood still. `carveModelParts` splits a part into its own mesh, which is why
+the scene showed `9,945 ×8` and `4,502 ×8` — 9,945 + 4,502 = 14,447, one arm.
+
+Note this only bites a model that **already has parts**, so importing is safe
+(nothing is carved yet). It is re-optimizing in place that is dangerous, which
+is exactly what the new Optimize action does.
+
+Three Demo models carry parts: `Map-Objects/RPGReactor-MonitorArm`,
+`Vehicles/Oth97_CNO_Consul`, `Enemies/monster-plant`. The first two were
+rebuilt with `cacheOrder` off and verified **byte-for-byte identical index
+buffers** against the originals their parts were carved against; the Consul
+kept its 17.6 -> 11.4 MB texture win.
+
+**The fix is not to refuse.** An index is only how a part is written down — a
+part is a *region of the surface*, and the region survives a reduction even
+though the indices do not. `RRGlbOptimizer.remapParts(originalBytes,
+resultBytes, parts)` re-derives it: every surviving triangle takes the
+membership of the original triangle nearest its centre (spatial hash, widening
+ring search), and the memberships are written back as fresh `[start, count]`
+runs. The boundary can shift by a triangle, which is the tolerance the
+reduction already applies to the silhouette. It returns null rather than guess
+when the two models cannot be paired, or when a part would come back empty —
+the caller then falls back to the passes that leave the triangle list alone.
+
+**UNVERIFIED — do this first.** The remapper compiles and is wired in, but the
+end-to-end run against the monitor arm timed out on the Windows box and the
+cause is not yet known (a 14k-triangle model should take about a second, so
+either the ring search or the harness is at fault). Two Node tests were written
+to settle it and **have never been executed** — this box has no Node:
+  - *a carved part is re-derived across a reduction, not lost* — builds a plane
+    whose first half of triangles is exactly its left half, reduces to 0.3,
+    remaps, and asserts the part stays on its own half and keeps its share.
+  - *remapping refuses rather than guessing when the models cannot be paired*.
+
+Run `npm test` before trusting `remapParts`. If the first test fails or hangs,
+the ring search in `remapParts` is the place to look.
+
+## 2026-09-02 — Harness note: what actually costs the ten minutes
+
+The measurement scaffolding, not the optimizer. `openEdges` in the scratchpad
+builds a string key per vertex *and* per edge — about 5.7M string allocations
+on a 1.9M-triangle prop, called before and after every run. Launch-and-settle
+adds another 15-25 s, and the two 54 MB props parse slowly. The real work is
+small beside it: 17-38 s to reduce a 1.9M mesh, 4.6 s to weld it. Anyone
+picking this up should port `openEdges` to the integer spatial hash
+`weldNearby` uses before running another sweep.
+
+## 2026-09-02 — A carried light follows the model, not the facing
+
+Reported from play: the player's torch "looks like a flashlight at the foot of
+the actor and stays fixed in direction". Two separate things, and the second
+was the real one. `nativeLights` read `facingYaw(carrier.direction())` - one of
+four discrete headings, changing in a single frame - while the mesh eases
+between headings at `MODEL_TURN_SPEED` over about a quarter second. The light
+and the character it belonged to were turning by different rules.
+
+Whichever path draws the model (the 3D scene's `holder.smoothYaw`, or the
+billboard path's `state.smoothYaw`) now calls `Reactor3D.noteModelFacing`, and
+`carrierFacingYaw` reads that back for the light. Two details worth keeping:
+the model spec's own yaw is an art correction for a model authored facing the
+wrong way, so it comes back off before the light sees it; and a reading older
+than `CARRIER_FACING_STALE_FRAMES` is refused, so a model that stopped updating
+cannot pin a light to a heading its owner left long ago. A character drawn as a
+sprite has no model heading and keeps the discrete facing.
+
+Measured: a 180° turn sweeps the light from -90° to +90° over 31 frames in
+steps of 5.73°, which is exactly `MODEL_TURN_SPEED` in degrees. The light's
+yaw equals the model's at every sampled frame.
+
+**Harness note**: none of this needed Node. `nwjs-win\nw.exe` pointed at a
+throwaway app directory runs the editor's own `GlbOptimizer` with `require
+('fs')` available, driven over CDP. The app's scripts must be **copied into
+that directory** — an NW app runs on an extension origin and silently
+refuses `file:///` scripts from outside it ("error loading extension").
+
+## 2026-09-02 — Skinned frustum culling REVERTED (runtime 20260902.6)
+
+Owner: "the main actors disappear when they should still be in the camera's
+view." That is the culling switched on earlier the same day in
+`presetSkinnedBounds`, and it is now off again.
+
+**Why it cannot work that way.** The sphere it tested is the REST pose in
+the geometry's own space, and a glTF skin puts its vertices wherever the
+bones say — through inverse binds, an armature scale, and the identity bind
+this loader deliberately uses (see `applyRestSkins`, and the note in
+`buildAnimatedGlbTemplate` about an armature's 0.01 scale hiding inside the
+inverse binds). `Frustum.intersectsObject` transforms that sphere by the
+mesh's own `matrixWorld`, which for a skinned mesh is the node's transform
+and **not where the skin ends up**. The test was being made against the
+wrong place, so `SKINNED_BOUNDS_MARGIN` only made the failure rarer and
+harder to reproduce — which is exactly how it slipped through: a check that
+counted draws per frame showed the meshes drawing 1/frame and one correctly
+skipped, and that was read as working.
+
+`presetSkinnedBounds` still computes the sphere, which three wants for depth
+sorting and which is why the function exists (`SkinnedMesh.
+computeBoundingSphere` skins every vertex on the CPU — a third of a second
+for a 600k-vertex character).
+
+**Worth redoing correctly**, because the number was real: 137 -> 90 draw
+calls, 2.53M -> 2.22M triangles. The right shape is a WORLD-space sphere
+built from what the instance is actually doing — its placed position and
+`instanceSpan` — tested in `syncCharacterModels`, where both are already
+known, rather than handed to three per mesh. Same idea as the light cull,
+same accessor (`Reactor3D.sphereInView`). The failure mode is a character
+who is not there, so it wants a visual check across a walk, not a draw count.
+
+## 2026-09-02 — Single-face spot shadows: measured, NOT worth building
+
+Listed on 2026-09-02 as the next win on the reasoning that a 45-degree cone
+is drawn into all six faces of a cube. **Measured afterwards, and the
+premise is wrong** — do not build this.
+
+With GPU timer queries at a light-rich viewpoint (24,45, facing the lit
+wall, 8.8 lights in view, 2 shadow slots busy):
+
+| | GPU ms/frame | statics rendered | dynamics rendered |
+|---|---|---|---|
+| shadows on | 15.06 | **0** | **0** |
+| shadows off | 13.48 | — | — |
+
+Shadows cost **1.58 ms while rendering no shadow maps at all**. The caching
+added on 2026-09-01/02 means the maps are drawn once and held; per frame the
+render cost really is zero. The 1.58 ms is **per-pixel sampling** in the lit
+fragment shader — a `samplerCubeShadow` lookup per casting light per lit
+fragment — and a single-face spot map costs exactly the same to sample.
+
+So the change would add a second sampler kind and a second shader path (the
+thing `_makeLight`'s comment deliberately avoided: "spots use a cube too —
+one sampler kind, one code path") to optimise a number that is already 0.
+The only way it pays is a scene that re-renders shadow maps constantly,
+which is the thing to fix directly if it ever shows up.
+
+**What the same measurement does say.** At that viewpoint the frame is
+13.5 ms with shadows off and ~4.2 ms at a viewpoint with one light in view,
+for the same geometry — roughly **1.1 ms per visible light per frame** at
+1280x720. Every lit fragment runs the full loop over every uploaded light,
+when most surfaces are within reach of one or two. **Per-object light lists
+are the remaining lossless win and are worth several times what single-face
+shadows would have been.** The obstacle is that `lightUniforms()` is one
+shared uniform block bound to every lit program; per-object lists need the
+list packed per draw (a mesh `onBeforeRender` rewriting the shared arrays
+and `rrLightCount`, or per-material uniform objects). That is a real change
+to the lighting path and wants the test suite.
+
+## 2026-09-02 — Frustum-culled lights: 12.7 → 4.2 ms GPU (runtime 20260902.4)
+
+Owner asked for more speed with **no perceived loss in quality**, which
+rules out decimation and compressed textures and leaves only waste. This is
+waste: `syncVolumeLights` uploaded every light on the map and every lit
+fragment looped over all of them. **Nine of the Demo's ten lights are off
+screen at any moment** (measured: `uploaded 10, inView 1`, every sample).
+
+A light whose sphere of reach does not intersect the view frustum cannot
+light any visible fragment — every visible fragment is inside the frustum by
+definition — so skipping it is *identical output*, not a setting. Its
+glowing body sits at the same place and is skipped with it.
+
+- `Reactor3D.viewFrustum()` / `sphereInView(x, y, z, r)`, rebuilt at most
+  once a frame; `syncVolumeLights` `continue`s on a miss, before the light
+  takes a uniform slot, a body or a shadow candidate.
+- **`Reactor3D.activeCamera()` is the camera accessor everything culling
+  must use.** It returns `Reactor3D.cullCamera` first, then the viewport's.
+  `MapEditor3D.render` sets `cullCamera` on every frame. Reaching straight
+  for `Reactor3D.viewport()` is now the **third** bug of exactly this shape
+  in one day (GPU tier, LOD screen, this) — the editor loads
+  `reactor_3d.js` alone, so it has no `Graphics` and no `Viewport`.
+
+**Result**: lights uploaded 10 → 1; 3D passes **12.7 → 4.2 ms GPU a frame**;
+wall 15.6 ms / 62 Hz → 11.2 ms / 96 Hz. Verified identical by pixel-sampling
+four regions with culling on and off — 24.70 / 22.33 / 21.11 / 12.44 in both.
+(PNG hashes still differ: the map's lights flicker, so no two captures
+seconds apart are byte-identical. Sample regions, not hashes.)
+
+This also changes what lighting *costs a project*. The old shape was "every
+light on the map, every frame, for ever"; the new one is "the lights that
+can reach the screen", so a corridor of fifty lamps costs the few near the
+player. `SHADER_LIGHTS` remains the ceiling on simultaneous visible lights.
+
+## 2026-09-02 — GPU timer queries: where the frame actually goes
+
+Owner reported the GPU pinned at 95% and asked what else can be squeezed.
+Everything below is **`EXT_disjoint_timer_query_webgl2`**, not wall clock,
+on the Demo's start map at 1280x720 standing among the props.
+
+**Read this before trusting any GPU timing here.** WebGL2 allows exactly
+**one `TIME_ELAPSED` query open at a time**, and the shadow flush runs
+*nested inside* `renderInto` (the sentinel's `onBeforeRender`). A naive
+per-stage wrapper therefore nests queries, which fails silently and returns
+nonsense — the first run reported the whole 3D pass at **0.27 ms** when it
+is really **12.6**. Gate every query on an `open` flag and rotate which
+stage is measured across frames.
+
+**Where the frame goes.**
+
+| stage | GPU ms / frame |
+|---|---|
+| `below:world` pass | **12.6** |
+| `above:overlay` pass | **0.009** (1 mesh, 0 triangles — already free) |
+| PIXI's own render | 0.9 |
+
+And inside that world pass, by switching features off:
+
+| configuration | GPU ms | wall Hz |
+|---|---|---|
+| everything | 12.7 | 62 |
+| no shadows | 9.6 | 78 |
+| no shadows, no lights | 7.7 | 93 |
+
+**The finding that matters, and it reverses an earlier conclusion.** Blank
+the geometry properly — swap in an empty `BufferGeometry`, which `setPass`
+cannot undo, unlike setting `visible = false`, which it restores — and:
+
+| blanked | triangles removed | GPU ms | wall Hz |
+|---|---|---|---|
+| nothing | — | 13.2 | 59 |
+| **the 4 skinned characters** | 1,702,760 | **4.0** | **100** |
+| every mesh over 50k | 2,517,078 | 2.2 | 100 |
+| all geometry | 2,831,693 | 0.13 | 100 |
+
+**The four skinned character models are ~70% of all GPU time.** Removing
+them alone reaches the display's own ceiling. The 2026-09-02 note above says
+"we are fill-bound, hiding geometry saves nothing" — **that was wrong**, and
+wrong for a specific reason: the test hid them via `visible = false`, which
+`setPass` puts back before the pass draws. This is a **vertex/geometry**
+bound frame, which is also why dropping `renderScale` barely moved it.
+
+The models: 4 skinned meshes, 24 bones each, ~1.0M vertices, `position /
+normal / uv / skinIndex / skinWeight`, and — worth noting —
+`MeshBasicMaterial`, so they are not even taking the light shader. The cost
+is vertex transform plus skinning, paid again in every shadow map they enter.
+
+**So the single highest-value work left is skinned-mesh decimation**, and it
+is now measured rather than assumed: worth roughly **9 ms a frame, 59 Hz to
+100**. `lods()` refuses skins up front and `QuadricDecimator` leaves them
+alone because JOINTS/WEIGHTS read as an extra attribute. The extension is
+contained — carry `skinIndex`/`skinWeight` from the surviving endpoint
+through a collapse, exactly as UVs already are — but it is **offline work
+that needs Node**, and it must be verified on an animated model before it
+ships: a collapse that mixes weights across a joint boundary tears a mesh
+only once it moves. Do not blind-ship it.
+
+**WebGPU: measured answer, still parked.** It would not help this. The frame
+is vertex-bound on ~1.0M skinned vertices; WebGPU runs the same shading on
+the same silicon and saves *driver* overhead, and the CPU here is already
+~55% idle. Worse, the interop question has a hard answer: a canvas has one
+context type, WebGL and WebGPU **cannot share textures or buffers**, and
+this engine's whole design is three rendering into PIXI's *same* GL context
+(`useSharedContext`, `_initializeShared` passing `context: pixi.gl`). PIXI's
+WebGPU renderer and three's `WebGPURenderer` each create and own their own
+`GPUDevice`, so a mixed frame would need a CPU round-trip per frame — the
+very pattern that costs 7 ms in the anchored-effect path. The eventual
+WebGPU argument is compute (skinning once into a cached buffer, GPU culling,
+clustered lights), not raster; most of that is reachable in WebGL2 first.
+
+## 2026-09-02 — LOD thrash, walking spikes, the editor's missing view (runtime 20260902.3)
+
+Owner: "still getting lag spikes while walking around, also it seems a bit
+worse in the editor than in the gameplay", on a **100 Hz** Dell.
+
+**First, a measurement correction that reframes everything before it.** The
+earlier passes treated ~16.6 ms as the floor because that is what an empty
+rAF loop returned — on a 60 Hz panel. On the Dell an empty loop returns
+**10.0 ms / 97.8 Hz**, so "we reached 60, done" was measuring against a
+ceiling that no longer exists. `Win32_VideoController` still reports 60
+(that is the internal laptop panel), so ask the browser, not Windows.
+Walking measured 19.0 ms / 41.8 Hz against a 10 ms floor.
+
+- **The LOD rule oscillated, and every swap re-rendered all static
+  shadows.** `staticRendersPerFrame` was **2 on a still camera** — the
+  cache that the 2026-09-01 work exists to maintain was being invalidated
+  every frame. Cause: the budget hysteresis added on 2026-09-02 was
+  asymmetric. It gave a finer level extra allowance *only while that level
+  was not selected* (`current > i`), so level 1 fitted, was chosen, then
+  stopped fitting and was dropped — **123 swaps in 40 frames, nothing
+  moving**. `_lodSwaps` is in the static shadow hash, so each swap
+  re-rendered every prop into both cube maps. Fixed by measuring both
+  directions against the same current level: refining below it must clear
+  `1 / LOD_BUDGET_HYSTERESIS`, holding or coarsening uses the plain budget.
+  123 swaps → 2; static renders → 0.
+- **The editor never applied the budget at all.** `pickLod` read its camera
+  and target size from `Reactor3D.viewport()`, and the editor's map view has
+  none — it builds its own `THREE.WebGLRenderer` and camera in
+  `MapEditor3D`. So the factor came back 0, the screen-coverage half of the
+  rule was skipped, and only the distance half applied — which, as the
+  2026-09-01 note says, can never coarsen a large model on a small map. The
+  editor was drawing every prop at full detail, ~7.5M triangles, beside a
+  game drawing 2.2M. **That is the "worse in the editor" report.**
+  `Reactor3D.lodScreen(camera, w, h)` now builds the pair from any camera,
+  `pickLod` takes it as a fifth argument, and `pickPropLods` computes it
+  once per frame from its own renderer. Same shape of bug as the GPU tier
+  earlier the same day: **the editor loads `reactor_3d.js` alone, so
+  anything that reaches for `Graphics` or `Reactor3D.viewport()` is silently
+  wrong there.**
+- **The learning cadence for an effect's reach was the other walking
+  spike.** Settling takes `MEASURE_HISTORY` looks at one per
+  `MEASURE_EVERY` frames — thirty looks ten frames apart, i.e. a readback
+  every tenth frame for three hundred frames, and a readback is 30-70 ms
+  here. Seven of nine spikes in a 600-frame walk were this.
+  `MEASURE_EVERY_WEAK = 30` and `MEASURE_HISTORY_WEAK = 8` on a weak GPU:
+  eight looks over 240 frames instead of thirty over 300.
+
+**Result.** Walking **19.0 → 13.0 ms (41.8 → 59.2 Hz)**; the tour now reads
+**up to 77 fps (engine counter 82)** with a mean of 61.5, which is the first
+time anything here has gone past 60 — because 60 was never the ceiling, the
+panel was.
+
+**Remaining, in order.** Dynamic shadow re-renders while moving are now the
+largest spike source (35 of 51 in a 600-frame walk): a moving character must
+redraw its map, but **a spot light is drawn into a full cube — six faces
+where a 45-degree cone needs one**. Giving spots a single-face shadow is the
+next real win and is the reason the code comment says "one sampler kind, one
+code path". After that, per-object light culling as noted on 2026-09-01.
+
+**Harness trap, do not chase it.** Every walk run reports a ~2030 ms max
+frame. That is the harness: `last = performance.now()` is set at script
+evaluation and the first tick runs after a 2000 ms settle, so the first
+delta swallows the wait. The real worst frame is ~66 ms. Fix the probe
+before believing any "first frame" stall.
+
+## 2026-09-02 — Carried lights: facing and body (runtime 20260902.2)
+
+Owner: "I see what looks like a flashlight at the foot of the actor and
+stays fixed in direction no matter what direction they're walking in, looks
+defective." Two separate faults behind one symptom, both in the native
+light path, plus Demo content authored around them.
+
+- **Attachment moved a light and stopped there.** `nativeLights` resolved
+  `attach` for position only (`x += carrier._realX + 0.5`) and passed `yaw`
+  straight through, so a spot riding the player kept its authored compass
+  bearing for ever. Now an attached **cone** adds `facingYaw(carrier
+  .direction())` to its authored yaw, which becomes an offset (90 = held
+  out to the left). `followFacing: false` restores a fixed bearing. Points
+  are untouched — no direction to get wrong — and so are unattached spots,
+  which is the regression to watch: the Demo's `door-beam` must stay at
+  -180 through every player facing, and that is the control in the check
+  below.
+- **Every light drew a glowing body, including carried ones.** Right for a
+  lamp on a wall, wrong for a torch: it renders as a bright blob at the
+  carrier's feet, which is literally what was reported. New `body` flag,
+  defaulting to **false when the light is attached** and true otherwise;
+  `bodies.place` is now indexed by its own `bodyCount` so the pool stays
+  packed when a light opts out, and `bodies.trim(bodyCount)`.
+- **Demo content** (`template/Demo/data/Map001.r3d.json`, the `torch`
+  light) was authored against the broken behaviour: `height` absent (so
+  level with the floor), `yaw: 180`, and an intensity picked when the cone
+  lit almost nothing. Now `height: 1.2, pitch: -30, yaw: 0, radius: 5,
+  angle: 45, intensity: 0.9` — a pool on the ground ahead of the player.
+
+**Verifying this is harder than it looks; three attempts were wrong.**
+`$gamePlayer.setDirection(d)` does **not** stick — the third-person camera
+drives facing and puts it back, so the first A/B compared two identical
+frames. `setDirectionFix(true)` after setting it does stick. Synthetic
+`Input._currentState[key] = true` does not move the player either, because
+`Input.update()` rebuilds the state from real key events each frame. And
+reading `rrLightAim` in the same call that sets the direction reads **one
+frame stale** — the uniforms are written by the next `syncVolumeLights`, so
+every reading looked like it lagged a step until that was accounted for.
+The reliable check is: lock the facing, wait several frames, screenshot,
+and **pixel-sample regions around the player** (`sample.ps1` in the session
+scratchpad) rather than eyeballing a dark image — facing east must brighten
+the east region and west the west, with `door-beam` unmoved throughout.
+
+**Cost.** Measured directly by setting the torch's intensity to 0 and back
+at the same spot: ~1 ms a frame, which is what a torch that actually lights
+something costs. A 58 → 51 swing seen across runs that day was **not** this
+— with the torch fully off the frame measured the same 19 ms — it is
+run-to-run drift on a thermally limited laptop after hours of sustained 3D.
+Worth remembering before attributing a few frames to the last edit.
+
+## 2026-09-02 — Potato-PC pass: 2.4 → 59 fps (runtime 20260902.1)
+
+Owner reported 3 fps in-game on their own laptop — a Ryzen 5 PRO 5650U with
+integrated Radeon (Vega), 15 GB, 1920x1080. Reproduced at 2.4 fps and taken
+to **58-60 fps at all seven sampled positions** on the Demo's start map
+(median 16.6 ms, p95 18 ms, worst spot 58.1). Nothing disabled; the same
+viewpoint as the original 3 fps capture renders identically. Seven faults,
+all of them invisible on the hardware this was developed on.
+
+**How it was measured, since there is no harness in the repo for this.**
+No Node and no Git on that machine (see *Environment* below), so: launch
+`nwjs-win\nw.exe template\Demo` with `--remote-debugging-port=9222
+--remote-allow-origins=*` plus the three backgrounding flags, and drive it
+over CDP from a PowerShell `ClientWebSocket`. `nwjc.exe in.js out.bin` is a
+real compile check for runtime files (exit 0 = parses; its V8 log on stderr
+is not an error). Two PowerShell 5.1 traps cost an hour: piping a string to
+`ConvertTo-Json` wraps it in `{"value":...,"Length":...}` (use
+`-InputObject`), and `New-Object System.ArraySegment[byte] -ArgumentList
+@(,$b)` hangs where `[System.ArraySegment[byte]]::new($b,0,$b.Length)` works.
+The `isGameActive` stale-frame trap recorded in the shadow-map section below
+bit again immediately — force it true or every number is from a frozen game.
+
+**The faults.**
+- **`weakGpuPattern` had no AMD in it** (`reactor_core.js`). Intel, Mali,
+  Adreno, PowerVR, SwiftShader, Mesa — and nothing for the second most
+  common integrated family. `ANGLE (AMD, AMD Radeon(TM) Graphics ...)`
+  matched none, so every Ryzen laptop, AMD handheld and desktop APU ran at
+  `maxCanvasPixelRatio` 4, `renderTargetSamples` 4 and full shadow quality.
+  New `weakAmdPattern` matches the APU naming (`Radeon(TM) Graphics`,
+  `Vega n Graphics`, `AMD Custom GPU`, `Radeon(TM) R2-7`) and not discrete
+  Radeons, which name a model instead of ending in "Graphics". Validated
+  against 22 real renderer strings in-page before shipping.
+- **The 3D scene rendered twice per displayed frame.** `SceneManager.update`
+  runs `updateMain` up to twice when a frame runs long (stock MZ, capped at
+  2 by `Math.min(deltaTime, 2)`), and `updateScene` reaches
+  `Spriteset_Map.updateReactor3D`, which does the GPU passes. A slow frame
+  bought two full scene renders, which made it slower, which kept it asking
+  for two — a loop that only closes on weak hardware. `SceneManager.
+  isFinalUpdateOfFrame()` (true outside the loop, so a plugin calling
+  `updateMain` still draws) gates the whole of `updateReactor3D`; everything
+  past its `state` guard is recomputed from current game state and
+  accumulates nothing, so skipping a tick whose output is overwritten is
+  free. Alone: 73 → 29 ms median. **Rule: logic per tick, pixels per frame.**
+- **LOD never triggered.** `LOD_DISTANCES` ([4, 10]) multiplies the model's
+  own size, so a 20-tile tower needed the camera 80 tiles out on a 50-tile
+  map. Every instance sat at level 0 with levels built and unused: 7.5M
+  triangles/frame. Added a screen-coverage rule beside the distance one
+  (`LOD_TRIANGLES_PER_PIXEL = 1`) taking the coarser of the two. Two things
+  learned the hard way: 0.5 is too aggressive (a screen-filling model went
+  to 0.1 tri/covered-pixel, where silhouettes facet — the tower takes the
+  quarter level at 1.0 and the small consoles are unaffected either way);
+  and the covered-pixel figure **must be clamped to the pass's pixel count**
+  (`_lodScreenPixels`), because a projected sphere grows without bound as
+  the camera nears it and "covers several screens" made level 0 affordable
+  again from a tile away.
+- **Dynamic shadow maps redrew every frame with nothing moving, unbudgeted.**
+  Statics were cached; characters were not. 1.93M triangles of casters into
+  up to 4 cubes x 6 faces = 289 ms of a 392 ms frame, still. Now
+  `_dynamicChanged()` hashes casting roots' `matrixWorld` **plus two bones
+  per skinned root** — a character animating on the spot never moves its
+  root, and hashing transforms alone would freeze its shadow, which is the
+  exact artefact the dynamic map exists to prevent. `_budgetDynamic(focus)`
+  picks nearest-the-eye first (not cheapest-first: the shadow a player looks
+  for is the one under their own feet) to `quality.dynamicTriangles`, with
+  `SHADOW_DYNAMIC_CEILING = 4` refusing even the nearest caster past 4x the
+  budget — the Demo's 595k-triangle player is 3.6M a redraw and no shadow is
+  worth that. Casters are held with hysteresis so walking past a lamp does
+  not flicker a shadow on and off.
+- **Skinned meshes had `frustumCulled = false`** (`presetSkinnedBounds`), on
+  the note "One character is never worth frustum culling either" — true of a
+  character built like one, false of a 596k-triangle export. Two 255k models
+  22 and 28 tiles *behind* the camera were drawn in full every frame.
+  Culling restored against the rest sphere x `SKINNED_BOUNDS_MARGIN` (2);
+  three tests `object.boundingSphere` before the geometry's, so an animated
+  pose has room and cannot pop out at the screen edge.
+- **Anchored Effekseer effects cost a cross-context copy every frame.** The
+  overlay is a second WebGL context, so its pixels reach three by going out
+  to a 2D canvas and back up as a texture — 640x360 of that per frame, ~7 ms,
+  for an effect that had not lit a pixel in 50 looks (`misses: 59`,
+  `lastLit: 0`). `EMPTY_AFTER = 3`: an effect whose picture keeps coming
+  back empty is skipped between looks, on exactly the cadence
+  `shouldMeasure` already backs off to. For a genuinely visible effect the
+  cost is the box, and it scales — 212k px = 49 fps, 111k = 55, 55k = 60,
+  nothing below — so `BUDGET_WEAK = 0.06` on weak GPUs.
+- **`measure`'s readback was the last thing breaking 60.** Over 400 frames
+  there were exactly 4 slow frames and **all 4 were `measure`**, 31-42 ms
+  each (zero from shadows, zero from LOD swaps, none unexplained). The code
+  budgets ten, which is the discrete-card price. `SETTLED_EVERY_WEAK = 300`
+  (x `MEASURE_EVERY` = every 3000 frames, ~50 s) once a reach has settled;
+  it is already the widest of thirty looks. Also added `MEASURE_MISS_BACKOFF`
+  — a track whose box comes back empty never settles, so without a backoff
+  it paid the readback every 10 frames for ever.
+
+**Two dead ends, both recorded in the code so they are not retried.**
+Watching an empty effect cheaply *every* frame at 96 px measured **worse**
+than the full-size copy (41 ms vs 24): the GPU **sync** is the cost, not the
+pixels, so adding a sync per frame is strictly bad. Skip-and-recheck every 6
+frames gave a 16 ms median with a 56 ms p95 — a stutter twice a second,
+worse than a steady cost.
+
+**Profiling lessons.** A synchronous readback shows up as the top CPU line
+while really just absorbing the GPU backlog: `getImageData` was 38 % of the
+profile and removing it moved the wait rather than removing it (`minMs` 26 →
+349). Attribute GPU cost by toggling subsystems and comparing frame time.
+Three of my own toggles were wrong and cost hours: `setPass()` re-shows
+objects, so "hide the scene" was silently undone; "1/16 resolution saved
+2 ms" correctly ruled out fill but I over-read it as ruling out geometry;
+and run-to-run variance on this iGPU is ~40 %, which exceeded several
+effects I tried to measure. **`renderer.info.render.triangles`, read inside
+`renderInto`, is the number that settles it** — it should be the first thing
+consulted, not the last (7.46M → 2.22M drawn, 137 → 90 calls).
+
+**Sharpness, settled with the owner.** "Sharp but jaggy from lower
+resolution looks better in 3d than blurring the fuck out of it when
+enlarging the window for sure." Weak tier no longer clamps
+`maxCanvasPixelRatio` to 1; it caps at `weakMaxCanvasPixelRatio` (2, so a 4K
+panel cannot demand 9x the game's pixels) and drops `renderTargetSamples` to
+0 instead. This is not a trade — at a 1904x993 window the blurred path
+measured 55.8 ms against 47.9 native-with-none, because 720p x4 MSAA is
+3.7M samples where native is 1.75M and the upscale adds a filter pass.
+
+**Not done / next.** The four skinned characters are ~1.7M of the 2.2M
+triangles still drawn, because `lods()` refuses skinned meshes so they have
+no levels at all. It no longer costs frames (we are vsync-bound) but it is
+the headroom for a busier map, a larger window or a weaker GPU. Extending
+`QuadricDecimator` to carry JOINTS/WEIGHTS through a collapse — from the
+surviving endpoint, exactly as UVs already are — is the next real win and
+needs Node. Also untouched: the anchored-effect path could render into a
+three render target in the shared context instead of copying between
+contexts, which would remove that cost entirely rather than bounding it.
+
+**Later the same day — the tier did not reach the editor.** Every cost above
+that is settled by GPU class read `Graphics.gpuTier` directly, and
+`MapEditor3D.loadLibraries` injects only `pako`, `three` and
+`reactor_3d.js` — no `reactor_core.js`, so **there is no `Graphics` in the
+editor at all** and every one of those checks took the full-power branch:
+the map view ran four shadow slots at 512 with five taps on the same laptop
+the game had just been tuned to two at 256. Now `Reactor3D.tier()` /
+`isWeakGpu()` is what the 3D code asks (override → `Graphics.gpuTier` →
+"full", so an unknown GPU stays sharp rather than being quietly demoted),
+`Reactor3D.classifyGpu` / `rendererDescription` are the single reader and
+classifier — `Graphics._sampleGpuTier` delegates to them, and `classifyGpu`
+still honours `Graphics.weakGpuPattern` if a project replaced it — and
+`MapEditor3D.reportGpuTier()` samples its own context after either renderer
+is built and sets `gpuTierOverride`. **Anything added later that varies by
+GPU class must go through `Reactor3D.tier()`, not `Graphics.gpuTier`, or it
+will silently be wrong in the editor.**
+
+Also fixed: `_lodScreenFactor` cached on `Graphics.frameCount`, which reads
+as -1 for ever in the editor — the factor was computed once and never
+followed a resized viewport or a changed fov. It is now keyed on the fov and
+target size themselves, which both hosts have.
+
+**Where the ceiling actually is.** At the game's own 1280x720 this map holds
+60 everywhere. **Maximised to 1765x993 it holds 47-55**, and that is
+fill, not geometry: at that size shadows measure ~2.9 ms, the light loop
+~2.6 ms, and hiding every skinned character saves *nothing*. Dropping
+`renderScale` recovers it (0.75 → 51-53, 0.5 → 56, 0.25 → 60) but that is
+the upscale blur the owner explicitly rejected, so it was not taken. The
+honest next win is **per-object or clustered light culling**: the shader
+loops all ten of the map's lights for every pixel when most pixels are
+reached by one or two, and it is worth ~2.6 ms at that resolution at no
+cost in quality. It needs per-object light lists where the uniforms are
+shared globals today, so it is a real piece of work rather than a knob.
+
+**Verification status.** All five changed files compile under `nwjc`; the
+game was driven through seven map positions, idle and moving, with the
+engine's own F2 counter agreeing with independent rAF timing (56.4-60.8).
+**`npm test` has NOT been run** — no Node on that machine. The
+`SceneManager.update` change touches the core loop and the skinned-culling
+change is the one most able to hide something that should be visible; both
+want the suite before this is tagged.
+
+Files: `runtime/reactor_core.js`, `reactor_3d.js`, `reactor_managers.js`,
+`reactor_sprites.js`, `reactor_main.js` (revision stamp), plus
+`editor/src/MapEditor3D.js` for the tier report.
+
+**Before the suite runs, run `node editor/build-scripts/sync-runtime.cjs`.**
+`runtime/` is the source of truth and every project under `template/` keeps
+its own copy in `js/`; the Demo's was updated by hand here (it is tracked, so
+those edits are wanted), but the nine local corpus projects — Star Shift x3,
+Project2/3, MZ3D, Parallax, Hendrix, Barebones, ccv2 — are still on the old
+runtime. `runtime-template-sync.test.cjs` checks **every** bundled project
+present on the machine, not only the tracked Demo, so on the Linux box the
+suite will fail on those nine until the sync is run. They are gitignored, so
+this is a local-only step that never shows up in a diff.
 
 ## 2026-09-01 — Shadow maps (runtime 20260901.4)
 
@@ -803,11 +1769,28 @@ no longer places (it is `kawashaki_ninja_h2`'s event now). Tests:
   Chromium profile).
 - **0.98.5** is open in `editor/package.json`, both READMEs, and the
   `[Unreleased - 0.98.5]` sections of both changelogs: native lighting
-  (phase 1 quads → the Lighting tool → lights in volume, 2026-09-01), the
-  3D performance audit, SE variants everywhere, MP/TP recovery sounds,
+  (phase 1 quads → the Lighting tool → lights in volume, 2026-09-01),
+  shadow maps, distance levels and the quadric decimator, the 3D
+  performance audit, the potato-PC pass (2026-09-02, runtime
+  `20260902.1`), SE variants everywhere, MP/TP recovery sounds,
   still-image media surfaces, the animation timing-row fix, vehicle sprite
   previews. Carried over: the fs-backed prefs store, the awaited
   `refreshMap3DView` reconcile, the optional web audio extension manifest.
+- The **root changelog's 0.98.5 section was empty until 2026-09-02** and has
+  now been written. It is the section `publish-release.yml` turns into the
+  GitHub release, so a tag cut before that point would have published a
+  blank release note — worth a glance each cycle, since the editor changelog
+  fills up continuously and the root one does not. Its pre-2026-09-02
+  entries were summarised *from* the editor changelog rather than written
+  alongside the work, so they are worth a read for emphasis and accuracy.
+- **Runtime revision is `20260902.1`** (`runtime/reactor_main.js`, and
+  `RPG_REACTOR_RUNTIME_REVISION` in the F12 console).
+- **The suite has not been run since 2026-08-29.** The count in the READMEs
+  (2,069) predates volume lights, shadow maps, distance levels, the BVH, the
+  update-loop change and the potato-PC pass, and at least two suites were
+  added in that time (`volume-lights`, `system1-vehicle-art`). It must be
+  re-run and the count refreshed in both READMEs before a release commit —
+  `cut-release.cjs` asserts on it.
 - The 0.98.4 tree, for the record — in addition to the custom
   interfaces, GitHub fixes, PIXI 8 compatibility, 3D performance, browser-save,
   localization, plugin schema, database, audio, animation, and Resource Manager
@@ -1508,7 +2491,71 @@ no longer places (it is `kawashaki_ninja_h2`'s event now). Tests:
   spinner without losing keyboard stepping, and recent System/audio/plugin
   controls preserve theme, focus, Escape, backdrop, and responsive behavior.
 
+## Environment
+
+The owner's Windows laptop (the Dropbox-synced working copy) has **no Node,
+no npm and no Git on PATH** — PATH is the system directories plus
+`~/.local/bin`, and there is nothing under Program Files. So `npm test`,
+`cut-release.cjs` and every `.cjs` build script **cannot run there**; the
+Linux box is the one that can (handoff notes referencing `/var/tmp/rr-scratch`
+are from it). What does work on Windows, and is enough to profile and verify
+the running game, is written up in the 2026-09-02 section above:
+`nwjs-win\nw.exe` with `--remote-debugging-port` driven over CDP, and
+`nwjs-win\nwjc.exe` as a compile check. It is also a genuinely useful
+reference machine — a Ryzen 5 PRO 5650U with integrated Radeon is exactly
+the "potato PC" the owner wants the engine to run well on, and four of the
+seven faults found on 2026-09-02 were invisible anywhere else.
+
 ## Open Threads (pick up from here)
+
+Performance, highest value first:
+
+- **The lit shader never reads a normal.** `lightGlsl` builds
+  `rrLight(p)` from distance and cone angle only — there is no N·L term, and
+  the materials it patches are `MeshBasicMaterial`. So a model's normals do
+  not reach the image at all: geometry buys **silhouette and UV mapping**,
+  nothing else. That is the licence to decimate hard — the usual reason to
+  keep triangles on a character (shading breaking up over a low-poly
+  surface) does not apply here, and normal maps would do nothing either
+  until the shader gains a lighting term. Worth re-reading this note before
+  anyone adds one.
+- **Skinned meshes get no distance levels — now measured at ~9 ms a frame,
+  59 Hz to 100.** GPU timer queries (see the 2026-09-02 timing note) put the
+  Demo's four skinned characters at **70% of all GPU time**; blanking their
+  geometry alone reaches the display's ceiling. `lods()` refuses skins up
+  front and `QuadricDecimator` leaves them alone (JOINTS/WEIGHTS read as an
+  extra attribute), so a 596k-triangle character stays 596k at any distance.
+  Carry `skinIndex`/`skinWeight` from the surviving endpoint through a
+  collapse, exactly as UVs already are. Needs Node to generate, and must be
+  checked on an *animated* model — a collapse that mixes weights across a
+  joint boundary only tears once the mesh moves. **This is the single
+  biggest remaining win in the engine.**
+- **Per-object light lists.** Measured at roughly **1.1 ms per visible light
+  per frame** at 1280x720: a viewpoint with one light in view renders in
+  ~4.2 ms of GPU, one with nine in view takes ~13.5 ms for the same
+  geometry. Every lit fragment loops over every uploaded light although most
+  surfaces are reached by one or two. Frustum culling (2026-09-02) removed
+  the lights that reach nothing visible; this removes the ones that reach
+  nothing *on this object*. Output is identical. The obstacle:
+  `lightUniforms()` is one shared block bound to every lit program, so the
+  list has to be packed per draw — a mesh `onBeforeRender` rewriting the
+  shared arrays and `rrLightCount`, or per-material uniform objects. Wants
+  the test suite. **This is the largest lossless win left.**
+- **Anchored effects copy between WebGL contexts every frame.** The overlay
+  is its own context, so an effect's pixels go out to a 2D canvas and back
+  up as a texture. 2026-09-02 bounded the cost (`BUDGET_WEAK`) rather than
+  removing it; rendering the effect into a three render target in the shared
+  context would remove it, and would also retire the readback that is still
+  the single most expensive call in the frame.
+- **Single-face spot shadows: measured and rejected**, see the dated note.
+  Shadow map *rendering* is already 0 per frame; the cost is sampling, which
+  a single-face map does not reduce.
+- **A frame-time governor.** The GPU tier is a name denylist, which by
+  construction fails open — it missed the second most common integrated
+  family for a whole release cycle, and will miss the next one. Something
+  that watches actual frame time and steps settings down would catch an
+  unknown GPU without anyone having to name it. `adaptiveResolution` is the
+  shape of this but is resolution-only and off by default.
 
 Feature work, in the order the owner has been asking:
 
@@ -1540,9 +2587,19 @@ Feature work, in the order the owner has been asking:
 - **Diagonal strut runs as single planes** (measured 2026-08-16, under
   *Event 3D Models* below): a run whose art descends across many rows needs
   per-column depth. Design answer known, not built.
-- **WebGPU**: parked. Three's WebGPURenderer is a different bundle and
-  material surface; our offscreen-renderer → Bitmap → PIXI pipeline is
-  portable in principle but not a drop-in swap.
+- **WebGPU**: parked, and 2026-09-02 measurement supports keeping it parked.
+  Three's WebGPURenderer is a different bundle and material surface; our
+  offscreen-renderer → Bitmap → PIXI pipeline is portable in principle but
+  not a drop-in swap. Two harder facts on top of that: a canvas has one
+  context type and WebGL/WebGPU **cannot share textures or buffers**, while
+  this engine's design is three rendering into PIXI's *same* GL context — and
+  PIXI's WebGPU renderer and three's each own their own `GPUDevice`, so a
+  mixed frame needs a CPU round-trip, the pattern that already costs 7 ms in
+  the anchored-effect path. And it would not help the current bottleneck
+  anyway: the frame is vertex-bound with the CPU ~55% idle, and WebGPU saves
+  driver overhead, not shading. Its real argument is compute — skinning once
+  into a cached buffer, GPU culling, clustered lights — most of which is
+  reachable in WebGL2 first.
 
 Content and tooling:
 

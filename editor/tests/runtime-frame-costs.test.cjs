@@ -133,6 +133,8 @@ test('a settled in-scene effect is re-measured every five seconds, not twice a s
     const three = read('runtime/reactor_3d.js');
     const at = three.indexOf('shouldMeasure(frames, track) {');
     const body = three.slice(at, three.indexOf('},', at));
-    assert.match(body, /return frames % \(settled \? this\.MEASURE_EVERY \* 30 : this\.MEASURE_EVERY\) === 0;/);
+    assert.match(body, /const every = settled\s+\? this\.learnInterval\(\) \* this\.settledInterval\(\)\s+: this\.learnInterval\(\);\s+return frames % every === 0;/);
     assert.match(three, /MEASURE_EVERY: 10,/);
+    assert.match(three, /SETTLED_EVERY: 30,/);
+    assert.match(three, /SETTLED_EVERY_WEAK: 300,/);
 });
