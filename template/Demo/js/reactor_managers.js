@@ -2827,6 +2827,7 @@ BattleManager.startBattle = function() {
     $gameParty.onBattleStart(this._preemptive);
     $gameTroop.onBattleStart(this._surprise);
     this.displayStartMessages();
+    ReactorEvents.emit("battleStart", { preemptive: this._preemptive, surprise: this._surprise });
 };
 
 BattleManager.displayStartMessages = function() {
@@ -2950,6 +2951,7 @@ BattleManager.startTurn = function() {
         this._logWindow.startTurn();
         this._inputting = false;
     }
+    ReactorEvents.emit("turnStart", { turn: $gameTroop.turnCount() });
 };
 
 BattleManager.updateTurn = function(timeActive) {
@@ -3026,6 +3028,7 @@ BattleManager.endTurn = function() {
     this._phase = "turnEnd";
     this._preemptive = false;
     this._surprise = false;
+    ReactorEvents.emit("turnEnd", { turn: $gameTroop.turnCount() });
 };
 
 BattleManager.updateTurnEnd = function() {
@@ -3094,6 +3097,7 @@ BattleManager.startAction = function() {
     subject.useItem(action.item());
     this._action.applyGlobal();
     this._logWindow.startAction(subject, action, targets);
+    ReactorEvents.emit("actionStart", { subject, action, targets: targets.slice() });
 };
 
 BattleManager.updateAction = function() {
@@ -3106,6 +3110,7 @@ BattleManager.updateAction = function() {
 };
 
 BattleManager.endAction = function() {
+    ReactorEvents.emit("actionEnd", { subject: this._subject });
     this._logWindow.endAction(this._subject);
     this._phase = "turn";
     if (this._subject.numActions() === 0) {
@@ -3295,6 +3300,7 @@ BattleManager.endBattle = function(result) {
         $gameSystem.onBattleEscape();
     }
     $gameTemp.clearCommonEventReservation();
+    ReactorEvents.emit("battleEnd", { result, escaped: !!this._escaped });
 };
 
 BattleManager.updateBattleEnd = function() {
