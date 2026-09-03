@@ -8,13 +8,13 @@
         "part": "",
         "offset": [
           -0.012,
-          1.592,
+          1.595,
           0.072
         ]
       },
       "scale": [
-        0.28,
-        0.3,
+        0.32,
+        0.34,
         0.25
       ],
       "loop": true,
@@ -32,7 +32,7 @@
         "volume": 100
       },
       "type": "video",
-      "trigger": "action"
+      "trigger": "always"
     }
   ],
   "lods": [

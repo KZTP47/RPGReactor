@@ -399,8 +399,14 @@ Reactor3D.Viewport.prototype.initialize = function() {
 };
 
 Reactor3D.useSharedContext = true;
-/** MSAA samples for the shared-context targets at full scale; fewer as the scale drops. */
-Reactor3D.renderTargetSamples = 4;
+/**
+ * MSAA samples for the shared-context targets at full scale; fewer as the
+ * scale drops. Zero by default: multisampling is a smoothing filter on
+ * every model edge, and enlarged into the frame afterwards it reads as
+ * blur - the owner wants the hard edge. A project that prefers smoothed
+ * edges sets 2 or 4 (a script call or plugin).
+ */
+Reactor3D.renderTargetSamples = 0;
 /**
  * Resolution of the 3D passes relative to the screen, 1 = native.
  *
@@ -412,6 +418,18 @@ Reactor3D.renderTargetSamples = 4;
  * `renderScale` set below 1 holds a fixed saving either way.
  */
 Reactor3D.renderScale = 1;
+/**
+ * The most backing pixels a 3D pass draws per game pixel, whatever the
+ * canvas draws at. One: the world is rendered at game size on every screen
+ * and enlarged into the frame pixel for pixel, so a 1280x720 game on a
+ * 1440p screen is a clean 2x2 block per world pixel — the owner's judgement
+ * over a native-resolution pass, which softens the same models through
+ * texture filtering and antialiasing, and a fraction of its cost. The
+ * canvas itself still draws at the screen's resolution, so windows, text
+ * and pictures enlarge smoothly as they always have. 0 lets the passes
+ * follow the canvas (native); a script or plugin sets either at any time.
+ */
+Reactor3D.maxPassPixelRatio = 1;
 Reactor3D.adaptiveResolution = false;
 Reactor3D.minRenderScale = 0.5;
 
@@ -528,12 +546,32 @@ Reactor3D.Viewport.prototype.setRenderScale = function(scale) {
  * pixels actually on screen instead of upscaling a game-sized pass.
  */
 Reactor3D.Viewport.prototype.targetSize = function() {
-    const ratio = typeof Graphics !== "undefined" && Graphics.canvasPixelRatio
-        ? Graphics.canvasPixelRatio() : 1;
+    const ratio = this.passPixelRatio();
     return {
         width: Math.max(1, Math.round(this._width * this._scale * ratio)),
         height: Math.max(1, Math.round(this._height * this._scale * ratio))
     };
+};
+
+/**
+ * Backing pixels per game pixel the passes draw at: the canvas's, capped
+ * by `maxPassPixelRatio`. The cap holds at every enlargement, whole-number
+ * or not: at 1.5x nearest-neighbour doubles every other pixel, and the
+ * owner judged that sharper and better on a model than any smoothed
+ * enlargement - "just like resizing an image in Photoshop".
+ */
+Reactor3D.Viewport.prototype.passPixelRatio = function() {
+    const canvas = typeof Graphics !== "undefined" && Graphics.canvasPixelRatio
+        ? Graphics.canvasPixelRatio() : 1;
+    const cap = Reactor3D.maxPassPixelRatio;
+    return cap > 0 ? Math.min(canvas, cap) : canvas;
+};
+
+/** Whether the passes are drawn smaller than the canvas and enlarged into it. */
+Reactor3D.Viewport.prototype.passEnlarged = function() {
+    const canvas = typeof Graphics !== "undefined" && Graphics.canvasPixelRatio
+        ? Graphics.canvasPixelRatio() : 1;
+    return this.passPixelRatio() < canvas - 0.001;
 };
 
 /**
@@ -645,17 +683,27 @@ Reactor3D.Viewport.prototype.renderer = function() {
 };
 
 /** A render target PIXI can sample as if it were an uploaded canvas. */
-Reactor3D.Viewport.prototype.createTarget = function(width, height, scale) {
+Reactor3D.Viewport.prototype.createTarget = function(width, height, scale, options) {
     const gl = this._pixi.gl;
     let samples = Reactor3D.samplesForScale(scale === undefined ? 1 : scale);
     try { samples = Math.min(samples, gl.getParameter(gl.MAX_SAMPLES) || 0); } catch (e) { samples = 0; }
+    // The sampling filter has to be set HERE, on three's side: PIXI samples
+    // this texture through the GL object three created and never applies
+    // its own style to a texture it did not make, so a `scaleMode` on the
+    // PIXI source changes nothing on the GPU. Nearest, always: a pass drawn
+    // smaller than the canvas is enlarged into it pixel for pixel, and one
+    // drawn at canvas size reads the same texel either way. Deciding this
+    // per target from the canvas ratio of the moment left a target born in
+    // a window sampling linear once the window was enlarged around it, and
+    // the enlargement then read as a blur over the whole world.
+    const filter = THREE.NearestFilter;
     const target = new THREE.WebGLRenderTarget(width, height, {
         samples,
         depthBuffer: true,
         stencilBuffer: false,
         colorSpace: THREE.SRGBColorSpace,
-        minFilter: THREE.LinearFilter,
-        magFilter: THREE.LinearFilter,
+        minFilter: filter,
+        magFilter: filter,
         generateMipmaps: false
     });
     // three encodes to sRGB in the shader only for the canvas and for an XR
@@ -686,6 +734,11 @@ Reactor3D.Viewport.prototype.passTexture = function(slot) {
         width: size.width,
         height: size.height,
         resolution: 1,
+        // A pass drawn smaller than the canvas is enlarged into it pixel
+        // for pixel, not smoothed: the world stays hard-edged while the
+        // 2D layer over it, drawn at the canvas's own size, stays smooth.
+        // (Informational: the GL texture three made carries the filter.)
+        scaleMode: "nearest",
         alphaMode: "premultiplied-alpha",
         autoGarbageCollect: false,
         label: "reactor3d-" + slot
@@ -890,6 +943,7 @@ Reactor3D.Viewport.prototype.resize = function() {
         // Reuse the engine's own centring so the two canvases cannot drift apart
         // when the window is resized or the game is scaled.
         Graphics._centerElement(this._canvas);
+        if (Graphics._applyUpscaleFilter) Graphics._applyUpscaleFilter(this._canvas);
     }
     if (this._camera && this._camera.isPerspectiveCamera) {
         this._camera.aspect = width / height;
@@ -6742,7 +6796,7 @@ Reactor3D.LIGHT_GLSL = Reactor3D.lightGlsl(false);
  * every fragment, and the diffuse colour multiplied by ambient plus every
  * light in reach — before the texel, so `texel * base * (ambient + lights)`.
  */
-Reactor3D.injectLightShader = function(shader) {
+Reactor3D.injectLightShader = function(shader, renderer) {
     const uniforms = this.lightUniforms();
     for (const key of Object.keys(uniforms)) shader.uniforms[key] = uniforms[key];
     // After projection, where `transformed` is final: skinned, billboarded,
@@ -6753,7 +6807,13 @@ Reactor3D.injectLightShader = function(shader) {
             "#include <project_vertex>",
             "#include <project_vertex>\n\tvRRWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;"
         );
-    const shadows = this.Shadows.active();
+    // Only the renderer that owns the maps takes the shadow variant. The
+    // editor draws the same lit materials from several renderers - the map
+    // view, the 3D database preview, the model pickers - and a depth cube
+    // belongs to the context that rendered it: another renderer handed the
+    // same texture object uploads it afresh as an empty colour cube, which a
+    // shadow sampler cannot be bound to, and every draw there is dropped.
+    const shadows = this.Shadows.appliesTo(renderer);
     shader.fragmentShader = (shadows ? this.lightGlsl(true, this.Shadows.quality().taps) : this.LIGHT_GLSL)
         + shader.fragmentShader.replace(
             "vec4 diffuseColor = vec4( diffuse, opacity );",
@@ -6774,7 +6834,7 @@ Reactor3D.litMaterial = function(material) {
     const earlier = material.onBeforeCompile;
     material.onBeforeCompile = function(shader, renderer) {
         if (typeof earlier === "function") earlier.call(this, shader, renderer);
-        Reactor3D.injectLightShader(shader);
+        Reactor3D.injectLightShader(shader, renderer);
     };
     const earlierKey = material.customProgramCacheKey;
     material.customProgramCacheKey = function() {
@@ -6923,10 +6983,13 @@ Reactor3D.SHADOW_SLOTS = 4;
  * concrete — ten dynamic casters totalling 1.93M triangles (two characters
  * of 595k each, two of 255k, all skinned) cost 289 ms of a 392 ms frame on
  * an integrated Radeon, and dropping them to the cheapest five took the
- * frame to 107 ms with everything else untouched.
+ * frame to 107 ms with everything else untouched. The full tier's budget
+ * is sized for a party: two characters reduced the way the import
+ * optimizer reduces them (about 150k each) both cast, on a GPU that can
+ * redraw a cube of that in the time a frame has to spare.
  */
 Reactor3D.SHADOW_QUALITY = {
-    full: { slots: 4, size: 512, taps: 5, dynamicTriangles: 120000 },
+    full: { slots: 4, size: 512, taps: 5, dynamicTriangles: 320000 },
     weak: { slots: 2, size: 256, taps: 1, dynamicTriangles: 30000 }
 };
 /** The cube camera's near plane, in tiles; far is the light's reach. */
@@ -6996,6 +7059,16 @@ Reactor3D.Shadows = {
 
     active() {
         return this._active;
+    },
+
+    /**
+     * Whether a program compiled for `renderer` should carry the shadow
+     * samplers: only while shadows are on, and only in the renderer whose
+     * context the maps were rendered in. Programs are cached per renderer,
+     * so the same material compiles plain elsewhere under the same key.
+     */
+    appliesTo(renderer) {
+        return this._active && (renderer == null || renderer === this._renderer);
     },
 
     /** Something in the static maps changed in a way the transform hash cannot see. */
@@ -7135,7 +7208,35 @@ Reactor3D.Shadows = {
         this._cameras = { static: probe(Reactor3D.SHADOW_LAYER_STATIC), dynamic: probe(Reactor3D.SHADOW_LAYER_DYNAMIC) };
         this._sentinel = this._makeSentinel();
         this._slots = slots;
+        this._primeMaps(renderer, slots);
         return slots;
+    },
+
+    /**
+     * Give every slot's two maps a real depth cube before any program can
+     * name them. A lit program declares a `samplerCubeShadow` per slot, and
+     * a sampler of that type must be bound to a depth texture in compare
+     * mode — three's fallback for a null one is its empty RGBA cube, which
+     * the driver rejects at draw time as a texture/sampler mismatch and the
+     * draw is dropped. On a map with fewer casting lights than slots that
+     * is every lit surface, every frame, drawn as nothing. The maps are
+     * rendered once here from an empty scene, through three's own shadow
+     * pass so they are built exactly as the real ones are; an empty depth
+     * map reads as fully lit, which is what an unassigned slot should say.
+     */
+    _primeMaps(renderer, slots) {
+        const lights = [];
+        for (const slot of slots) lights.push(slot.light, slot.dyn);
+        const empty = new THREE.Scene();
+        const wasEnabled = renderer.shadowMap.enabled;
+        renderer.shadowMap.enabled = true;
+        try {
+            renderer.shadowMap.render(lights, empty, this._cameras.static);
+        } finally {
+            renderer.shadowMap.enabled = wasEnabled;
+        }
+        // A slot's first real render must still happen.
+        for (const light of lights) light.shadow.needsUpdate = true;
     },
 
     disposeSlots() {
@@ -7213,6 +7314,15 @@ Reactor3D.Shadows = {
      * lets everything cast, exactly as it did before the budget existed.
      */
     _focusPoint(scene) {
+        // The player's own model first: in third person the camera stands
+        // behind the party, so a follower is nearer the eye than the player
+        // and a budget measured from the eye spends itself on the follower
+        // and refuses the one shadow the player is actually looking at.
+        for (const root of this._dynamic) {
+            if (!root.userData || !root.userData.reactorPlayer || !root.parent) continue;
+            const e = root.matrixWorld.elements;
+            return { x: e[12], y: e[13], z: e[14] };
+        }
         try {
             const viewport = Reactor3D.viewport ? Reactor3D.viewport() : null;
             const camera = viewport && viewport._camera;
@@ -7292,10 +7402,9 @@ Reactor3D.Shadows = {
         // could refuse the only shadow on screen is worse than one frame of
         // honest cost — but only so far past it. A cube is six faces, so a
         // caster costs six times its triangles every time its map is redrawn:
-        // the Demo's player model is 595k triangles (skinned models are the
-        // one thing the import optimizer cannot decimate), which is 3.6M a
-        // redraw, and no shadow is worth that on an integrated GPU. Past the
-        // ceiling it casts nothing and the model wants decimating instead.
+        // an unreduced 595k-triangle character is 3.6M a redraw, and no
+        // shadow is worth that on an integrated GPU. Past the ceiling it
+        // casts nothing and the model wants reducing instead.
         const ceiling = budget * Reactor3D.SHADOW_DYNAMIC_CEILING;
         let spent = 0;
         const wanted = new Set();
@@ -14547,6 +14656,8 @@ Reactor3D.MapScene.prototype.syncCharacterModels = function(characters) {
                 // A prop never moves; its map is cached. An event walks.
                 Reactor3D.Shadows.markCaster(object, !(typeof character.eventId === "function"
                     && character.eventId() >= Reactor3D.PROP_EVENT_BASE));
+                // The shadow budget is measured from the player, not the eye.
+                object.userData.reactorPlayer = typeof $gamePlayer !== "undefined" && character === $gamePlayer;
                 object.traverse(child => {
                     const mats = child.material
                         ? (Array.isArray(child.material) ? child.material : [child.material])

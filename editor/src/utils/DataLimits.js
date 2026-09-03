@@ -23,6 +23,7 @@ globalThis.RR_LIMITS = Object.freeze({
         tilesets: 1000,
         commonEvents: 9999,
         userInterfaces: 9999,
+        quests: 9999,
         elements: 512,
         skillTypes: 128,
         weaponTypes: 256,

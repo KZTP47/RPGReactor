@@ -1,5 +1,69 @@
 # Handoff - 0.98.5 In Progress
 
+## 2026-09-02 — Quest system (GitHub #9), first cut
+
+Reactor's own, not an editor for a plugin's data: `data/Quests.json` (a
+project gains the file when it authors a quest; absent reads as none),
+`runtime/reactor_quests.js` (loads it like `reactor_ui.js` loads
+interfaces; `$gameSystem.quests()` is the saved progress, class
+`Game_Quests` on `window` so JsonEx restores it; rules run from
+`Game_Map.update`), `Scene_Quest` (category strip, list active → complete
+→ failed, scrolling detail, OK toggles tracking), four plugin commands
+under `RPGReactor`, and Database › Quests (`DatabaseQuestEditor.js`) with
+**Import from VisuStella…** (`QuestImporter.js`, layer-by-layer decode of
+the plugin's `Categories` parameter; verified against the plugin's own
+twelve sample quests in a local project, which the test does not depend on
+because that project is gitignored).
+
+**Left for next time, in order of value:**
+- An on-map tracker window for the tracked quest's open objectives (the
+  `tracked` state exists; nothing draws it on the map yet).
+- The log's labels (Objectives/Rewards/Complete/Failed/Tracked, All) read
+  from `System.reactorQuests.labels` with English fallbacks; no editor
+  field for them yet.
+- Rewards are text only; a "give the reward" action (gold/items) is not
+  modelled - VisuStella's are text too, so the import loses nothing.
+- Importers for other systems (Yanfly/Olivia, Cyclone) once someone has a
+  project with one.
+- Category is free text on each quest; a picker of existing names is a
+  `datalist`, not a managed list.
+
+**Guards touched:** runtime root count 13 → 14 (`reactor-3d-foundation`),
+`save-safety` knows Quests.json is optional like UserInterfaces.json, the
+template slicer in `database-record-templates` cannot cope with an
+apostrophe inside a comment in `getDefaultTemplates`.
+
+
+### 2026-09-02, late: the owner's fullscreen still reads soft — open
+
+The owner's 18:47 and 19:06 playtest screenshots (Demo, 2449x1324 region of
+a fullscreen window) are interpolated at the single-pixel level: no 2x2
+blocks anywhere. Every reproduction from this side is blocky and reports
+`3D pass 1280x720 nearest into the store, MSAA 0, tier full (RTX 5070)`:
+same `nwjs-linux/nw`, the editor's own playtest profile
+(`PlaytestProfile/nwjs-0.107.0/f56758ae500e29d4`), a real F4 through
+Chromium's input path, Continue from the autosave, captured both from the
+framebuffer (CDP) and from the compositor (Spectacle, identical). Display
+scale is 1 on all three monitors, XWayland scale 1, no GPU environment on
+either side. The box has two GPUs (RTX 5070 and the AMD iGPU, which the
+weak pattern matches); a launch that landed on the AMD would explain a
+weak tier but not smooth sampling. Project3 has no 3D maps, so its 20:03
+playtest is unrelated.
+
+Done meanwhile, runtime `20260902.11`: pass targets are `NearestFilter`
+unconditionally (`createTarget` no longer takes `{ nearest }`), so no
+creation order can leave a linear target; and in test mode
+`Graphics._showScalingToast` draws the scaling line, GPU included, top
+left for six seconds after every resize/F4. **Next: ask the owner for a
+screenshot with the toast visible**, or the console line. If it says
+`tier weak` the game ran on the AMD iGPU; if the store is smaller than
+the window and `enlarged linear`, `upscaleFilterInUse` chose linear for
+a full-tier GPU on a 1x store (then look at `maxCanvasPixelRatio`).
+Harnesses: scratchpad `playtest-like-f4.cjs` (real F4 + Spectacle),
+`playtest-like-save.cjs` (Continue route), `playtest-like-filters.cjs`
+(MZ's three ColorFilter passes on/off — they do not blur; bounds clamp to
+the screen).
+
 ## Done on the Linux box, 2026-09-02
 
 All three items below are settled. `npm test` runs **2,337 tests, all

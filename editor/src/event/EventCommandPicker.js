@@ -252,7 +252,11 @@ class EventCommandPicker {
                                 // system's commands, live under Game Flow.
                                 title: 'Game Flow',
                                 commands: [
-                                    { name: 'Scoped Wait', code: 357, reactor: 'ScopedWait' }
+                                    { name: 'Scoped Wait', code: 357, reactor: 'ScopedWait' },
+                                    { name: 'Quest', code: 357, reactor: 'QuestSet' },
+                                    { name: 'Quest Objective', code: 357, reactor: 'QuestObjective' },
+                                    { name: 'Quest Reward', code: 357, reactor: 'QuestReward' },
+                                    { name: 'Open Quest Log', code: 357, reactor: 'OpenQuestLog' }
                                 ]
                             },
                             {

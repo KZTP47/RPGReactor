@@ -1442,25 +1442,96 @@ Graphics._canRender = function() {
  * store — and capped so a video wall cannot demand an enormous framebuffer.
  */
 Graphics.canvasPixelRatio = function() {
-    const scale = this._realScale || 1;
+    // The display's own scale counts: on a desktop scaled to 125% or 150%
+    // a CSS pixel is more than one screen pixel, and a store sized in CSS
+    // pixels was enlarged by the compositor's smooth filter — a blur over
+    // the whole game, in a window and in fullscreen alike, on exactly the
+    // laptops that ship scaled.
+    const scale = (this._realScale || 1) * this.displayPixelRatio();
     return Math.max(1, Math.min(scale, this.maxCanvasPixelRatio || 4));
 };
 
+/** Screen pixels per CSS pixel, 1 when the browser does not say. */
+Graphics.displayPixelRatio = function() {
+    const ratio = typeof window !== "undefined" ? window.devicePixelRatio : 1;
+    return ratio > 0 ? ratio : 1;
+};
+
 /**
- * Ceiling for the backing-store scale. A project that would rather trade
- * the native-resolution enlargement for frame rate on weak GPUs sets this
- * to 1 (a script call or plugin): the canvas renders at game size again
- * and the browser stretches it as it did before.
+ * Ceiling for the backing-store scale. The canvas draws at the screen's
+ * own resolution, so windows, text and pictures enlarge smoothly as they
+ * always have; the 3D passes inside it draw at game size and are enlarged
+ * pixel for pixel (`Reactor3D.maxPassPixelRatio`), which is where the
+ * sharpness the owner asked for comes from. Capped so a video wall cannot
+ * demand an enormous framebuffer. A weak GPU takes 1 (below): there the
+ * whole frame is rendered at game size and enlarged as hard-edged blocks,
+ * the 2D layer included, because the saving has to include it.
  */
 Graphics.maxCanvasPixelRatio = 4;
 
 /**
- * The same ceiling for a weak GPU. Two backing pixels a side is a game
- * enlarged to a 1080p or 1440p window drawn at the pixels on screen — the
- * case that actually happens — while a 4K panel stops short of the nine
- * times its own scale would ask for.
+ * The same ceiling for a weak GPU: one, so the frame is rendered at game
+ * size however large the window is, and enlarged by the nearest-neighbour
+ * filter below rather than the browser's smooth one. A 1280x720 frame
+ * stretched to 1080p that way keeps every rendered pixel a hard-edged
+ * block — it reads as sharp, the way a lower resolution on a CRT did —
+ * for a fraction of what drawing the 3D passes at 1920x1080 costs.
  */
-Graphics.weakMaxCanvasPixelRatio = 2;
+Graphics.weakMaxCanvasPixelRatio = 1;
+
+/**
+ * How the finished frame is enlarged when the window is bigger than the
+ * backing store. "nearest" keeps every rendered pixel a hard-edged block;
+ * "linear" is the browser's smooth stretch, which lays a blur over the
+ * whole game; "auto" is nearest on a weak GPU (whose store stays at game
+ * size and so is always enlarged in a big window) and linear elsewhere
+ * (where the store already matches the screen and nothing is enlarged
+ * until the ratio's ceiling). The world's own sharpness does not depend
+ * on this: the 3D passes are enlarged pixel for pixel inside the frame on
+ * every GPU (`Reactor3D.maxPassPixelRatio`). A script or plugin sets it at
+ * any time; the next resize or fullscreen switch applies it.
+ */
+Graphics.upscaleFilter = "auto";
+
+/** Whether the canvas is shown larger than its backing store. */
+Graphics.isUpscaled = function() {
+    return (this._realScale || 1) * this.displayPixelRatio() > this.canvasPixelRatio() + 0.001;
+};
+
+/** The filter the setting resolves to right now. */
+Graphics.upscaleFilterInUse = function() {
+    if (this.upscaleFilter === "nearest" || this.upscaleFilter === "linear") return this.upscaleFilter;
+    return this.gpuTier === "weak" ? "nearest" : "linear";
+};
+
+/**
+ * One line saying how the frame reaches the screen right now: the canvas
+ * store and its ratio, the 3D pass size and its filter, the display scale
+ * and the GPU tier. Printed to the console whenever it changes (a resize,
+ * F4), so a report of "it looks blurry" can carry the numbers.
+ */
+Graphics.scalingReport = function() {
+    const real = this._realScale || 1;
+    const dpr = this.displayPixelRatio();
+    const ratio = this.canvasPixelRatio();
+    const canvas = this._canvas;
+    const viewport = typeof Reactor3D !== "undefined" && Reactor3D.viewport ? Reactor3D.viewport() : null;
+    const pass = viewport && viewport.targetSize ? viewport.targetSize() : null;
+    const enlarged = viewport && viewport.passEnlarged ? viewport.passEnlarged() : false;
+    return "RPG Reactor scaling: window " + Math.round(this._width * real * dpr) + "x" + Math.round(this._height * real * dpr) + " screen px (scale " + real.toFixed(2) + ", display " + dpr.toFixed(2) + "x)"
+        + " | canvas store " + (canvas ? canvas.width + "x" + canvas.height : "?") + " at " + ratio.toFixed(2) + "x, enlarged " + (this.isUpscaled() ? this.upscaleFilterInUse() : "no")
+        + " | 3D pass " + (pass ? pass.width + "x" + pass.height : "?") + (enlarged ? " nearest into the store" : " 1:1")
+        + (typeof Reactor3D !== "undefined" ? ", MSAA " + (Reactor3D.samplesForScale ? Reactor3D.samplesForScale(1) : Reactor3D.renderTargetSamples) : "")
+        + " | tier " + (this.gpuTier || "?") + (this.gpuDescription ? " (" + String(this.gpuDescription).replace(/^ANGLE \(/, "").replace(/\)$/, "").slice(0, 80) + ")" : "")
+        + " | " + (typeof RPG_REACTOR_RUNTIME_REVISION !== "undefined" ? RPG_REACTOR_RUNTIME_REVISION : "");
+};
+
+/** Give an on-screen canvas the enlargement filter in use, or none when it is not enlarged. */
+Graphics._applyUpscaleFilter = function(element) {
+    if (!element || !element.style) return;
+    const nearest = this.isUpscaled() && this.upscaleFilterInUse() === "nearest";
+    element.style.imageRendering = nearest ? "pixelated" : "auto";
+};
 
 /**
  * The GPU's class, read once from the renderer string when the app is
@@ -1517,18 +1588,20 @@ Graphics._sampleGpuTier = function(renderer) {
     this.gpuTier = tier;
     if (tier === "weak") {
         // A weak GPU keeps its sharpness and gives up its edge smoothing,
-        // not the other way round. Rendering the 3D passes at game size and
-        // letting the browser stretch them puts a blur over the whole scene
-        // when a window is enlarged, which reads far worse than aliasing on
-        // a hard edge — and the arithmetic favours the sharp choice anyway:
-        // a 1280x720 pass at 4x multisampling is 3.7M samples, where the
-        // same window at a native 1920x1080 with none is 2.1M. So the pass
-        // follows the pixels actually on screen and stops multisampling.
-        // The ratio is still capped, because a 4K panel would otherwise ask
-        // this class of GPU for nine times the game's pixels.
+        // not the other way round. Rendering at game size and letting the
+        // browser's smooth filter stretch the frame laid a blur over the
+        // whole scene in a big window, which reads far worse than aliasing
+        // on a hard edge. The frame is still rendered at game size — that
+        // is the whole saving — but enlarged pixel for pixel (see
+        // `upscaleFilter`), so it stays sharp; and multisampling stops,
+        // because a 1280x720 pass at 4x is 3.7M samples where the same pass
+        // at 1x is 0.9M.
         this.maxCanvasPixelRatio = Math.min(this.maxCanvasPixelRatio, this.weakMaxCanvasPixelRatio);
         if (typeof Reactor3D !== "undefined" && Reactor3D.renderTargetSamples > 0) Reactor3D.renderTargetSamples = 0;
     }
+    // The tier decides the enlargement filter; a canvas already on screen
+    // takes it now rather than at the next resize.
+    if (this._canvas) this._applyUpscaleFilter(this._canvas);
     return tier;
 };
 
@@ -1631,7 +1704,39 @@ Graphics._updateCanvas = function() {
     // the on-screen size is always the game size times the display scale.
     this._canvas.style.width = this._width * this._realScale + "px";
     this._canvas.style.height = this._height * this._realScale + "px";
+    this._applyUpscaleFilter(this._canvas);
     this._updateEffekseerCanvas();
+    // Say what changed, once per change: the line a "looks blurry" report needs.
+    try {
+        const report = this.scalingReport();
+        if (report !== this._lastScalingReport) {
+            this._lastScalingReport = report;
+            console.info(report);
+            this._showScalingToast(report);
+        }
+    } catch (e) { /* the report is a convenience */ }
+};
+
+/**
+ * In a playtest, the same line drawn on screen for a few seconds after
+ * every resize or fullscreen switch, so a screenshot of "it looks blurry"
+ * carries the numbers with it. Never in a shipped game.
+ */
+Graphics._showScalingToast = function(report) {
+    if (typeof Utils === "undefined" || !Utils.isOptionValid || !Utils.isOptionValid("test")) return;
+    if (!document.body) return;
+    let toast = document.getElementById("rrScalingToast");
+    if (!toast) {
+        toast = document.createElement("div");
+        toast.id = "rrScalingToast";
+        toast.style.cssText = "position:fixed;left:8px;top:8px;z-index:11;padding:4px 8px;background:rgba(0,0,0,0.75);color:#fff;"
+            + "font:12px/1.4 monospace;white-space:pre-wrap;max-width:60vw;pointer-events:none;border-radius:3px;";
+        document.body.appendChild(toast);
+    }
+    toast.textContent = report.replace(" | ", "\n");
+    toast.style.display = "block";
+    if (this._scalingToastTimer) clearTimeout(this._scalingToastTimer);
+    this._scalingToastTimer = setTimeout(() => { toast.style.display = "none"; }, 6000);
 };
 
 Graphics._updateEffekseerCanvas = function() {
@@ -1641,6 +1746,9 @@ Graphics._updateEffekseerCanvas = function() {
     // z-index 2 = above game canvas (z=1), below loading spinner / video.
     this._effekseerCanvas.style.zIndex = 2;
     this._centerElement(this._effekseerCanvas);
+    // The same enlargement as the frame beneath it, or the effects would
+    // sit smooth over a sharp world.
+    this._applyUpscaleFilter(this._effekseerCanvas);
 };
 
 Graphics._updateVideo = function() {

@@ -184,6 +184,8 @@ class DatabaseSkillEditor {
 
         // ── Damage Section ──
         const damage = skill.damage || { type: 0, elementId: -1, formula: '', variance: 20, critical: false };
+        // Built outside the template: the note is read to find its element tag, and the field escapes what it shows.
+        const elementField = ActionElements.fieldHtml('skill', skill.id, elementNames, damage, skill.note);
         const damageSection = document.createElement('div');
         damageSection.className = 'database-section';
         damageSection.innerHTML = `
@@ -205,10 +207,7 @@ class DatabaseSkillEditor {
                         </span>
                         <span class="db-col">
                             <label>${tt('Element')}</label>
-                            <select class="database-field-value" data-field="damage.elementId" data-skill-id="${skill.id}">
-                                <option value="-1" ${damage.elementId === -1 ? 'selected' : ''}>${tt('Normal Attack')}</option>
-                                ${elementNames.map((name, idx) => idx > 0 && name ? `<option value="${idx}" ${damage.elementId === idx ? 'selected' : ''}>${rrEscapeHtml(name)}</option>` : '').join('')}
-                            </select>
+                            ${elementField}
                         </span>
                         <span class="db-col">
                             <label>${tt('Variance %')}</label>
@@ -290,6 +289,11 @@ class DatabaseSkillEditor {
         // Add event listeners for all editable fields
         setTimeout(() => {
             AnimationPickerModal.bindTriggers(container, this.databaseManager, this.projectManager);
+            ActionElements.bindTriggers(container, {
+                names: elementNames,
+                record: id => { const record = this.databaseManager.getSkill(parseInt(id)); return record ? { damage: record.damage, note: record.note } : {}; },
+                onChange: (id, ids) => this.updateSkillField(parseInt(id), 'damage.elementIds', ids)
+            });
             const editableFields = container.querySelectorAll('[data-skill-id]');
             editableFields.forEach(field => {
                 field.addEventListener('change', (e) => {
@@ -322,8 +326,19 @@ class DatabaseSkillEditor {
                 skill.damage[subField] = value;
             } else if (subField === 'critical') {
                 skill.damage[subField] = !!value;
+            } else if (subField === 'elementIds') {
+                // The whole list at once: elementId follows its first entry,
+                // and the array exists only for two or more. This arm has to
+                // come before the numeric one - parseInt([2, 11]) is 2, and
+                // the second element would have vanished without a word.
+                ActionElements.write(skill.damage, value);
+            } else if (subField === 'elementId') {
+                // A single element written directly retires any list that
+                // no longer starts with it, so the two never disagree.
+                skill.damage.elementId = parseInt(value) || 0;
+                if (Array.isArray(skill.damage.elementIds) && skill.damage.elementIds[0] !== skill.damage.elementId) delete skill.damage.elementIds;
             } else {
-                // type, elementId, variance
+                // type, variance
                 skill.damage[subField] = parseInt(value) || 0;
             }
             console.log(`Updated skill ${skillId} damage.${subField} to:`, skill.damage[subField]);

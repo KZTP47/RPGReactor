@@ -58,6 +58,21 @@ test('the five editors mark their fields and the dispatcher decorates them once'
     assert.match(read('utils/TextCodeMenu.js'), /RRIconPicker\.show\(/);
 });
 
+test('the reference panel\'s filter box stays inside the card on a database form', () => {
+    // .db-form gives every text input `width: 100%` (border-box), and the
+    // filter also carries 6px of margin a side, so without an inline width
+    // it ran 12px past the card on Items, Skills, Weapons, Armors and States.
+    const menu = read('utils/TextCodeMenu.js');
+    const at = menu.indexOf("filter.placeholder = tt('Filter codes');");
+    assert.ok(at > 0, 'the filter box exists');
+    const style = menu.slice(at, menu.indexOf('`;', menu.indexOf('filter.style.cssText', at)));
+    assert.match(style, /margin: 0 6px 6px 6px;/);
+    assert.match(style, /width: auto; align-self: stretch; box-sizing: border-box; min-width: 0;/,
+        'the input fills the flex column between its margins rather than 100% plus them');
+    const css = fs.readFileSync(path.join(editorRoot, 'css', 'styles.css'), 'utf8');
+    assert.match(css, /\.db-form input\[type="text"\],[\s\S]*?width: 100%;/, 'the rule this guards against is still there');
+});
+
 test('a programmatic insert reaches the editor\'s change persistence; typing is left alone', () => {
     const Decorator = require(src('database/DatabaseTextCodes.js'));
     class FakeInputEvent extends Event {}

@@ -134,8 +134,31 @@ test('a lit material takes the shadow variant only while shadows are active, and
         assert.match(shader.fragmentShader, /samplerCubeShadow rrShadowMap0/);
         assert.equal(shader.uniforms.rrShadowMap0, uniforms.rrShadowMap0, 'the shared value object, not a copy');
         assert.equal(shader.uniforms.rrLightShadow, uniforms.rrLightShadow);
+        // Only the renderer whose context holds the maps declares the
+        // samplers. The editor draws the same materials from the 3D
+        // database preview and the model pickers, each with its own
+        // renderer; a depth cube from another context would be re-uploaded
+        // there as an empty colour cube and every draw refused.
+        const owner = {};
+        const other = {};
+        shadows._renderer = owner;
+        const compileFor = renderer => {
+            const shader = {
+                uniforms: {},
+                vertexShader: 'void main() {\n#include <project_vertex>\n}',
+                fragmentShader: 'void main() {\n\tvec4 diffuseColor = vec4( diffuse, opacity );\n}'
+            };
+            material.onBeforeCompile(shader, renderer);
+            return shader.fragmentShader;
+        };
+        assert.match(compileFor(owner), /samplerCubeShadow rrShadowMap0/);
+        assert.doesNotMatch(compileFor(other), /samplerCubeShadow/, 'a second renderer compiles the plain light term');
+        assert.match(compileFor(other), /rrLight\(vRRWorldPos\)/, 'and still takes the lights');
+        assert.equal(shadows.appliesTo(other), false);
+        assert.equal(shadows.appliesTo(owner), true);
     } finally {
         shadows._active = false;
+        shadows._renderer = null;
         shadows._quality = null;
     }
 });
@@ -276,6 +299,64 @@ test('a character in reach of a light is what makes its dynamic map render', () 
     shadows._dynamic.clear();
 });
 
+test('every slot gets a real depth cube the moment the slots exist, so no shadow sampler is ever bound to an RGBA cube', () => {
+    // A lit program declares a samplerCubeShadow per slot. three's fallback
+    // for a null one is its empty RGBA cube, which the driver rejects at
+    // draw time as a texture/sampler mismatch and drops the draw: on a map
+    // with fewer casting lights than slots, every lit surface vanished.
+    const three = read('runtime/reactor_3d.js');
+    assert.match(three, /this\._slots = slots;\n\s*this\._primeMaps\(renderer, slots\);\n\s*return slots;/, 'primed before the slots are handed out');
+    const at = three.indexOf('_primeMaps(renderer, slots) {');
+    const body = three.slice(at, three.indexOf('\n    },', at));
+    assert.match(body, /for \(const slot of slots\) lights\.push\(slot\.light, slot\.dyn\);/, 'the static and the dynamic map of every slot');
+    assert.match(body, /renderer\.shadowMap\.render\(lights, empty, this\._cameras\.static\);/, "through three's own shadow pass, so the maps match the real ones");
+    assert.match(body, /renderer\.shadowMap\.enabled = wasEnabled;/);
+    assert.match(body, /for \(const light of lights\) light\.shadow\.needsUpdate = true;/, 'a primed map is still owed its first real render');
+});
+
+test('the dynamic budget is measured from the player, and a party of two reduced characters both cast on the full tier', () => {
+    const shadows = Reactor3D.Shadows;
+    const layersOf = () => {
+        const on = new Set([0]);
+        return { enable: l => on.add(l), disable: l => on.delete(l), has: l => on.has(l) };
+    };
+    const walker = (x, z, triangles, extra) => {
+        const mesh = { isMesh: true, layers: layersOf(), geometry: { index: { count: triangles * 3 } } };
+        return Object.assign({ parent: {}, visible: true, userData: {}, mesh,
+            matrixWorld: { elements: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, 0, z, 1] },
+            traverse(fn) { fn(this); fn(mesh); } }, extra || {});
+    };
+    // The camera stands behind the party, so the follower is nearer to it.
+    const player = walker(10, 10, 149000, { userData: { reactorPlayer: true } });
+    const follower = walker(10, 12, 149000);
+    shadows._dynamic.clear();
+    shadows._casting = new Set();
+    shadows._dynamic.add(follower);
+    shadows._dynamic.add(player);
+    try {
+        const focus = shadows._focusPoint(null);
+        assert.deepEqual(focus, { x: 10, y: 0, z: 10 }, 'the focus is the player model, not the eye');
+
+        const saved = shadows._quality;
+        shadows._quality = { dynamicTriangles: 120000 };
+        let result = shadows._budgetDynamic(focus);
+        assert.equal(result.casters, 1, 'one character fits a 120k budget');
+        assert.ok(shadows._casting.has(player), 'and it is the player, however near the follower stands to the camera');
+        assert.ok(!shadows._casting.has(follower));
+
+        shadows._quality = null;
+        delete global.Graphics;
+        result = shadows._budgetDynamic(focus);
+        assert.equal(result.casters, 2, 'the full tier fits both reduced characters');
+        assert.ok(shadows._casting.has(follower) && shadows._casting.has(player));
+        shadows._quality = saved;
+    } finally {
+        shadows._dynamic.clear();
+        shadows._casting = new Set();
+        shadows._quality = null;
+    }
+});
+
 test('both viewports render the maps once a frame before the first pass, and the game marks its casters', () => {
     const three = read('runtime/reactor_3d.js');
     assert.match(three, /scene\.updateMatrixWorld\(\);\n\s*\/\/ The shadow maps, while every group is still visible\.\n\s*if \(mapScene\.renderShadows\) mapScene\.renderShadows\(this\._renderer, null\);/);
@@ -297,5 +378,5 @@ test('both viewports render the maps once a frame before the first pass, and the
     assert.match(editor, /if \(sprite && Reactor3D\.Shadows\) Reactor3D\.Shadows\.markCaster\(mesh, false\);/);
     assert.equal((editor.match(/Reactor3D\.Shadows\.markCaster\(object, !!template\.userData\.animated\);/g) || []).length, 2, 'event models and props');
 
-    assert.match(read('runtime/reactor_main.js'), /runtime revision: 20260902\.7/);
+    assert.match(read('runtime/reactor_main.js'), /runtime revision: 20260902\.10/);
 });

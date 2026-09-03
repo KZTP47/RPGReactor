@@ -163,6 +163,8 @@ class DatabaseItemEditor {
 
         // --- Damage Section ---
         const damage = item.damage || { type: 0, elementId: -1, formula: '0', variance: 20, critical: false };
+        // Built outside the template: the note is read to find its element tag, and the field escapes what it shows.
+        const elementField = ActionElements.fieldHtml('item', item.id, elements, damage, item.note);
         const damageSection = document.createElement('div');
         damageSection.className = 'database-section';
         damageSection.innerHTML = `
@@ -184,10 +186,7 @@ class DatabaseItemEditor {
                         </span>
                         <span class="db-col">
                             <label>${tt('Element')}</label>
-                            <select class="database-field-value" data-field="damage.elementId" data-item-id="${item.id}">
-                                <option value="-1" ${damage.elementId === -1 ? 'selected' : ''}>${tt('Normal Attack')}</option>
-                                ${elements.map((name, idx) => idx > 0 && name ? `<option value="${idx}" ${damage.elementId === idx ? 'selected' : ''}>${rrEscapeHtml(name)}</option>` : '').join('')}
-                            </select>
+                            ${elementField}
                         </span>
                         <span class="db-col">
                             <label>${tt('Variance %')}</label>
@@ -269,6 +268,11 @@ class DatabaseItemEditor {
         // Add event listeners for all editable fields
         setTimeout(() => {
             AnimationPickerModal.bindTriggers(container, this.databaseManager, this.projectManager);
+            ActionElements.bindTriggers(container, {
+                names: elements,
+                record: id => { const record = this.databaseManager.getItem(parseInt(id)); return record ? { damage: record.damage, note: record.note } : {}; },
+                onChange: (id, ids) => this.updateItemField(parseInt(id), 'damage.elementIds', ids)
+            });
             const editableFields = container.querySelectorAll('[data-item-id]');
             editableFields.forEach(field => {
                 field.addEventListener('change', (e) => {
@@ -299,6 +303,15 @@ class DatabaseItemEditor {
             // String sub-fields
             else if (subField === 'formula') {
                 item.damage[subField] = value;
+            }
+            // The element list: before the numeric arm, which would flatten
+            // it to its first entry (parseInt([2, 11]) is 2).
+            else if (subField === 'elementIds') {
+                ActionElements.write(item.damage, value);
+            }
+            else if (subField === 'elementId') {
+                item.damage.elementId = parseInt(value) || 0;
+                if (Array.isArray(item.damage.elementIds) && item.damage.elementIds[0] !== item.damage.elementId) delete item.damage.elementIds;
             }
             // Numeric sub-fields
             else {

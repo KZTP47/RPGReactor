@@ -324,28 +324,49 @@
                 // invisible particle dies, so there is no dark gap.
                 let ticks = 0, lastLit = 0;
                 const start = () => {
+                    this._plays = (this._plays || 0) + 1;
                     if (lastLit > 0) { this.visibleFrames = Math.max(this.visibleFrames || 0, lastLit); this._litPlays = (this._litPlays || 0) + 1; }
                     fx.handle = fx.ctx.play(effect);
                     alive = 0; dead = 0; ticks = 0; lastLit = 0;
                     this._applyHandleTransform();
                 };
+                // Whether anything is lit. Read at 96x96 with a low bar: a
+                // 32x32 look averaged a 1024-pixel canvas 32 pixels to a
+                // cell, and a beam a few pixels wide averaged to nothing -
+                // so the last lit frame was never found, and every loop
+                // waited out the effect's invisible tail plus a grace
+                // period, which read as a pause of seconds between plays.
+                const LIT = 96;
                 const lit = () => {
                     const mini = this._litMini || (this._litMini = document.createElement('canvas'));
-                    if (mini.width !== 32) { mini.width = 32; mini.height = 32; }
+                    if (mini.width !== LIT) { mini.width = LIT; mini.height = LIT; }
                     const ctx = mini.getContext('2d', { willReadFrequently: true });
-                    ctx.clearRect(0, 0, 32, 32);
-                    ctx.drawImage(this.fxCanvas, 0, 0, this.fxCanvas.width, this.fxCanvas.height, 0, 0, 32, 32);
+                    ctx.clearRect(0, 0, LIT, LIT);
+                    ctx.drawImage(this.fxCanvas, 0, 0, this.fxCanvas.width, this.fxCanvas.height, 0, 0, LIT, LIT);
                     let data;
-                    try { data = ctx.getImageData(0, 0, 32, 32).data; } catch (e) { return false; }
-                    for (let i = 3; i < data.length; i += 4) if (data[i] >= 4) return true;
+                    try { data = ctx.getImageData(0, 0, LIT, LIT).data; } catch (e) { return false; }
+                    for (let i = 3; i < data.length; i += 4) if (data[i] >= 2) return true;
                     return false;
                 };
                 start();
                 let last = Date.now(), acc = 0;
                 const step = 1000 / 60;
                 /** Draw the current frame into the canvas (also `drawNow`, for a caller that wants one on demand). */
+                // Effekseer keeps one "current" WebGL context for the whole
+                // runtime and switches it in draw() and loadEffect() only -
+                // not in update(), beginDraw() or drawHandle(). With more
+                // than one layer alive (the map view's placed effects, the
+                // database preview) the newest context stays current and
+                // every other layer's native renderer draws into it, which
+                // the browser refuses object by object ("does not belong to
+                // this context") and nothing appears. Switch before every
+                // call that touches GL.
+                const current = () => {
+                    if (fx.ctx && typeof fx.ctx._makeContextCurrent === 'function') fx.ctx._makeContextCurrent();
+                };
                 this._drawFrame = () => {
                     if (generation !== this.generation || !fx.ctx) return false;
+                    current();
                     const gl = fx.gl;
                     const rect = this.world && this.world.rect;
                     if (rect) {
@@ -390,6 +411,7 @@
                     acc += now - last;
                     last = now;
                     let n = 0;
+                    if (acc >= step) current();
                     while (acc >= step && n < 5) {
                         fx.ctx.update();
                         acc -= step;
@@ -402,7 +424,10 @@
                     if (drawn) {
                         dead = 0;
                         if (this.loop && this.visibleFrames > 0 && ticks >= this.visibleFrames && alive >= 3) start();
-                    } else if (++dead >= 20) {
+                    } else if (++dead >= 3) {
+                        // Nothing drawn for a few frames: the handle is
+                        // gone, or drew nothing. A loop starts over at once
+                        // rather than after a visible gap.
                         if (!this.loop || alive < 3) { this._finish(generation); return; }
                         start();
                     }

@@ -320,6 +320,9 @@ Scene_Boot.prototype.isPlayerDataLoaded = function() {
 
 Scene_Boot.prototype.start = function() {
     Scene_Base.prototype.start.call(this);
+    // Every plugin has loaded by now; an element plugin's list reader can
+    // be taught about multi-element skills and items.
+    Game_Action.installMultiElementShim();
     SoundManager.preloadImportantSounds();
     if (DataManager.isBattleTest()) {
         DataManager.setupBattleTest();

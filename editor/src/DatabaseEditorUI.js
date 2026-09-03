@@ -33,6 +33,8 @@ class DatabaseEditorUI {
         this.armorEditor = new DatabaseArmorEditor(databaseManager, { getCurrentProject: () => this.currentProject }, this.commonUI, this);
         this.enemyEditor = new DatabaseEnemyEditor(databaseManager, { getCurrentProject: () => this.currentProject }, this.commonUI, this);
         this.stateEditor = new DatabaseStateEditor(databaseManager, { getCurrentProject: () => this.currentProject }, this.commonUI, this);
+        this.questEditor = typeof DatabaseQuestEditor !== 'undefined'
+            ? new DatabaseQuestEditor(databaseManager, { getCurrentProject: () => this.currentProject }, this.commonUI, this) : null;
         this.animationEditor = new DatabaseAnimationEditor(databaseManager, { getCurrentProject: () => this.currentProject }, this.commonUI, this);
         const eventProjectManager = {
             getCurrentProject: () => this.currentProject,
@@ -483,9 +485,13 @@ class DatabaseEditorUI {
                 data = this.databaseManager.getUserInterfaces();
                 title = this._dbTitle(type, 'User Interfaces');
                 break;
+            case 'quests':
+                data = this.databaseManager.getQuests();
+                title = this._dbTitle(type, 'Quests');
+                break;
             case 'reactor3d': {
                 const { detailEl } = this.prepareDatabaseSection('reactor3d', this._dbTitle('reactor3d', '3D Models'), { showListPanel: false });
-                this.reactor3dEditor.projectController = { getCurrentProject: () => this.currentProject, mapEditor3D: this.callbacks.getMapEditor3D ? this.callbacks.getMapEditor3D() : (window.reactor && window.reactor.mapEditor3D) };
+                this.reactor3dEditor.projectController = { getCurrentProject: () => this.currentProject, mapEditor3D: this.callbacks.getMapEditor3D ? this.callbacks.getMapEditor3D() : (window.reactor && window.reactor.mapEditor3D), uiManager: window.reactor && window.reactor.uiManager };
                 this.reactor3dEditor.show(detailEl);
                 return;
             }
@@ -1542,6 +1548,7 @@ class DatabaseEditorUI {
             { name: '3D Models', type: 'reactor3d' },
             { name: 'Common Events', type: 'commonEvents' },
             { name: 'User Interfaces', type: 'userInterfaces' },
+            { name: 'Quests', type: 'quests' },
             { name: 'System 1', type: 'system1' },
             { name: 'System 2', type: 'system2' },
             { name: 'Types', type: 'types' },
@@ -1599,6 +1606,8 @@ class DatabaseEditorUI {
             this.commonEventEditor.showCommonEventDetail(detailEl, entry);
         } else if (type === 'userInterfaces') {
             this.userInterfaceEditor.showUserInterfaceDetail(detailEl, entry);
+        } else if (type === 'quests' && this.questEditor) {
+            this.questEditor.showQuestDetail(detailEl, entry);
         } else {
             // Generic display for other types
             this.showGenericDetail(detailEl, entry, type);
@@ -1618,7 +1627,7 @@ class DatabaseEditorUI {
     }
 
     get listIconTypes() {
-        return ['skills', 'items', 'weapons', 'armors', 'states', 'actors', 'enemies'];
+        return ['skills', 'items', 'weapons', 'armors', 'states', 'actors', 'enemies', 'quests'];
     }
 
     /**
@@ -1800,7 +1809,9 @@ class DatabaseEditorUI {
             commonEvents: { name: 'New Common Event', trigger: 0, switchId: 1, list: [{code:0,indent:0,parameters:[]}] },
             // Reactor section; the runtime (reactor_ui.js) fills in any field an
             // older record lacks, so this is the whole shape.
-            userInterfaces: { name: 'New Interface', mode: 'scene', background: 'blur', visible: { type: 'always' }, cancel: { type: 'close' }, firstFocus: 0, coordinateSpace: 'screen', nodes: [], note: '' }
+            userInterfaces: { name: 'New Interface', mode: 'scene', background: 'blur', visible: { type: 'always' }, cancel: { type: 'close' }, firstFocus: 0, coordinateSpace: 'screen', nodes: [], note: '' },
+            // Reactor quests: reactor_quests.js reads this shape as it is.
+            quests: { name: 'New Quest', key: '', category: '', iconIndex: 0, difficulty: '', from: '', location: '', description: '', objectives: [], rewards: [], subtext: '', quotes: '', activation: { type: 'command', switchId: 0, variableId: 0, operator: '>=', value: 0 }, completion: { type: 'command', switchId: 0 }, note: '' },
         };
     }
 
@@ -1811,7 +1822,7 @@ class DatabaseEditorUI {
             actors: 9999, classes: 9999, skills: 9999, items: 9999,
             weapons: 9999, armors: 9999, enemies: 9999, troops: 9999,
             states: 9999, animations: 5000, tilesets: 1000, commonEvents: 9999,
-            userInterfaces: 9999, elements: 512, skillTypes: 128, weaponTypes: 256,
+            userInterfaces: 9999, quests: 9999, elements: 512, skillTypes: 128, weaponTypes: 256,
             armorTypes: 256, equipTypes: 128
         }[type] || 0;
     }

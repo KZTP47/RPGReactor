@@ -550,10 +550,15 @@
         const filter = document.createElement('input');
         filter.type = 'text';
         filter.placeholder = tt('Filter codes');
+        // The panel is a flex column, so the input fills the width between
+        // its margins. That has to be said inline: a database form gives
+        // every text input `width: 100%`, and 100% plus 6px of margin a side
+        // runs 12px past the card.
         filter.style.cssText = `
             margin: 0 6px 6px 6px; padding: 4px 6px; background: var(--color-bg-input);
             color: var(--color-text); border: 1px solid var(--color-border-input);
             border-radius: 3px; font-size: 11px;
+            width: auto; align-self: stretch; box-sizing: border-box; min-width: 0;
         `;
 
         // Selecting without inserting is only obvious once you know it, and a

@@ -17,6 +17,7 @@ class DatabaseManager {
             tilesets: 1000,
             commonEvents: 9999,
             userInterfaces: 9999,
+            quests: 9999,
             elements: 512,
             skillTypes: 128,
             weaponTypes: 256,
@@ -67,6 +68,9 @@ class DatabaseManager {
             ['tilesets', 'Tilesets.json'],
             ['commonEvents', 'CommonEvents.json'],
             ['userInterfaces', 'UserInterfaces.json'],
+            // Reactor's quests, stored beside the MZ files; absent in a
+            // project that never authored one.
+            ['quests', 'Quests.json'],
             ['system', 'System.json']
         ];
 
@@ -87,6 +91,7 @@ class DatabaseManager {
             // Reactor's own database section, stored beside the MZ files;
             // absent in projects that never authored an interface.
             userInterfaces: [],
+            quests: [],
             system: null,
             mapInfos: [],
             // Per-tile 3D classification. Not one of the dataFiles: those are
@@ -141,6 +146,7 @@ class DatabaseManager {
                 const stock = typeof RRStockInterfaces !== 'undefined' ? RRStockInterfaces.build(loaded) : [];
                 loaded.userInterfaces = [null, ...stock];
             }
+            if (!Array.isArray(loaded.quests) || loaded.quests.length === 0) loaded.quests = [null];
             Object.assign(this.data, loaded);
             this.projectPath = projectPath;
             this.dataGeneration++;
@@ -478,6 +484,33 @@ class DatabaseManager {
         return this.data.tilesets[id] || null;
     }
 
+    getQuests() {
+        return (this.data.quests || []).filter(entry => entry !== null);
+    }
+
+    getQuest(id) {
+        return (this.data.quests || [])[id] || null;
+    }
+
+    hasQuests() {
+        return (this.data.quests || []).some(Boolean);
+    }
+
+    /** Append a quest record, giving it the next id; returns the stored record. */
+    addQuest(record) {
+        if (!Array.isArray(this.data.quests) || !this.data.quests.length) this.data.quests = [null];
+        const id = this.data.quests.length;
+        const quest = Object.assign({ id }, record, { id });
+        this.data.quests.push(quest);
+        this.mutationGeneration++;
+        return quest;
+    }
+
+    updateQuest(id, data) {
+        this.data.quests[id] = data;
+        this.mutationGeneration++;
+    }
+
     getUserInterfaces() {
         return this.data.userInterfaces.filter(entry => entry !== null);
     }
@@ -647,6 +680,11 @@ class DatabaseManager {
         for (const [key, filename] of this.dataFiles) {
             // A project that never authored an interface gains no file.
             if (key === 'userInterfaces' && !this.hasUserInterfaces()
+                && !this.fs.existsSync(this.path.join(projectPath, 'data', filename))) {
+                continue;
+            }
+            // Likewise a project that never authored a quest.
+            if (key === 'quests' && !this.hasQuests()
                 && !this.fs.existsSync(this.path.join(projectPath, 'data', filename))) {
                 continue;
             }

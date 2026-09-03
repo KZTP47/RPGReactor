@@ -217,7 +217,7 @@ test('a weak GPU is read once at boot, keeps the 3D passes sharp under a capped 
     assert.match(core, /this\._sampleGpuTier\(app\.renderer\);/);
     const start = core.indexOf('Graphics._sampleGpuTier = function(renderer) {');
     const end = core.indexOf('\n};', start) + 3;
-    const context = { Graphics: { maxCanvasPixelRatio: 4, weakMaxCanvasPixelRatio: 2, gpuTierOverride: null, weakGpuPattern: null, weakAmdPattern: null }, Reactor3D: { renderTargetSamples: 4 } };
+    const context = { Graphics: { maxCanvasPixelRatio: 4, weakMaxCanvasPixelRatio: 1, gpuTierOverride: null, weakGpuPattern: null, weakAmdPattern: null, _applyUpscaleFilter() {} }, Reactor3D: { renderTargetSamples: 4 } };
     vm.createContext(context);
     vm.runInContext(core.slice(start, end), context);
     const patternLine = core.match(/Graphics\.weakGpuPattern = (\/.*\/i);/);
@@ -233,7 +233,7 @@ test('a weak GPU is read once at boot, keeps the 3D passes sharp under a capped 
     assert.equal(context.Reactor3D.renderTargetSamples, 4);
 
     assert.equal(context.Graphics._sampleGpuTier({ gl: fakeGl('ANGLE (Intel, Intel(R) UHD Graphics 620 Direct3D11 vs_5_0 ps_5_0, D3D11)') }), 'weak');
-    assert.equal(context.Graphics.maxCanvasPixelRatio, 2, 'sharp stays, but a 4K panel cannot ask for nine times the pixels');
+    assert.equal(context.Graphics.maxCanvasPixelRatio, 1, 'the frame is rendered at game size and enlarged pixel for pixel');
     assert.equal(context.Reactor3D.renderTargetSamples, 0, 'edge smoothing is what a weak GPU gives up');
 
     context.Graphics.maxCanvasPixelRatio = 4; context.Reactor3D.renderTargetSamples = 4;
@@ -244,4 +244,104 @@ test('a weak GPU is read once at boot, keeps the 3D passes sharp under a capped 
     context.Graphics.maxCanvasPixelRatio = 4;
     assert.equal(context.Graphics._sampleGpuTier({ gl: fakeGl('SwiftShader') }), 'full', 'a plugin can pin it');
     assert.equal(context.Graphics.maxCanvasPixelRatio, 4);
+});
+
+test('a window larger than the backing store is enlarged pixel for pixel on a weak GPU, and smoothly elsewhere', () => {
+    const core = read('runtime/reactor_core.js');
+    const slice = name => { const at = core.indexOf(`Graphics.${name} = function`); return core.slice(at, core.indexOf('\n};', at) + 3); };
+    const context = { Graphics: { _realScale: 1, maxCanvasPixelRatio: 4, gpuTier: 'full', upscaleFilter: 'auto' }, window: { devicePixelRatio: 1 } };
+    vm.createContext(context);
+    vm.runInContext([slice('canvasPixelRatio'), slice('displayPixelRatio'), slice('isUpscaled'), slice('upscaleFilterInUse'), slice('_applyUpscaleFilter')].join('\n'), context);
+    assert.match(core, /Graphics\.weakMaxCanvasPixelRatio = 1;/, 'a weak GPU renders at game size');
+    assert.match(core, /Graphics\.maxCanvasPixelRatio = 4;/, 'a capable GPU keeps the canvas at the screen\'s resolution, so the 2D layer enlarges smoothly');
+    assert.match(core, /Graphics\.upscaleFilter = "auto";/);
+    assert.match(core, /Math\.min\(scale, this\.maxCanvasPixelRatio \|\| 4\)/);
+    const G = context.Graphics;
+    const canvas = { style: {} };
+    // A capable GPU at 1.5x: the store follows the screen, nothing is enlarged.
+    G._realScale = 1.5;
+    assert.equal(G.canvasPixelRatio(), 1.5);
+    assert.equal(G.isUpscaled(), false);
+    G._applyUpscaleFilter(canvas);
+    assert.equal(canvas.style.imageRendering, 'auto');
+    // A weak GPU at the same window: store at 1x, enlarged 1.5x, nearest.
+    G.gpuTier = 'weak'; G.maxCanvasPixelRatio = 1;
+    assert.equal(G.canvasPixelRatio(), 1);
+    assert.equal(G.isUpscaled(), true);
+    assert.equal(G.upscaleFilterInUse(), 'nearest');
+    G._applyUpscaleFilter(canvas);
+    assert.equal(canvas.style.imageRendering, 'pixelated');
+    // Windowed at 1x nothing is enlarged, so nothing is pixelated.
+    G._realScale = 1;
+    G._applyUpscaleFilter(canvas);
+    assert.equal(canvas.style.imageRendering, 'auto');
+    // A project can choose either way regardless of the tier.
+    G._realScale = 2; G.upscaleFilter = 'linear';
+    G._applyUpscaleFilter(canvas);
+    assert.equal(canvas.style.imageRendering, 'auto');
+    G.gpuTier = 'full'; G.maxCanvasPixelRatio = 1; G.upscaleFilter = 'nearest';
+    G._applyUpscaleFilter(canvas);
+    assert.equal(canvas.style.imageRendering, 'pixelated');
+    // A scaled desktop: a CSS pixel is 1.5 screen pixels. The store follows
+    // the screen pixels on a capable GPU (a 1280x720 window is 1920x1080 of
+    // them), and a weak GPU's 1x store is enlarged even in that window.
+    context.window.devicePixelRatio = 1.5;
+    G.gpuTier = 'full'; G.maxCanvasPixelRatio = 4; G.upscaleFilter = 'auto'; G._realScale = 1;
+    assert.equal(G.canvasPixelRatio(), 1.5, 'windowed on a scaled desktop renders at screen pixels');
+    assert.equal(G.isUpscaled(), false);
+    G._realScale = 4 / 3;
+    assert.equal(+G.canvasPixelRatio().toFixed(3), 2, 'fullscreen 1440p from a 720p game on a 1.5x desktop');
+    G.gpuTier = 'weak'; G.maxCanvasPixelRatio = 1; G._realScale = 1;
+    assert.equal(G.isUpscaled(), true, 'a 1x store on a 1.5x desktop is enlarged even windowed');
+    G._applyUpscaleFilter(canvas);
+    assert.equal(canvas.style.imageRendering, 'pixelated');
+    context.window.devicePixelRatio = 1;
+    // The frame beneath and the effects over it take the same filter.
+    assert.match(core, /this\._canvas\.style\.height = this\._height \* this\._realScale \+ "px";\n\s*this\._applyUpscaleFilter\(this\._canvas\);/);
+    assert.match(core, /this\._centerElement\(this\._effekseerCanvas\);\n[\s\S]{0,200}?this\._applyUpscaleFilter\(this\._effekseerCanvas\);/);
+    assert.match(read('runtime/reactor_3d.js'), /Graphics\._centerElement\(this\._canvas\);\n\s*if \(Graphics\._applyUpscaleFilter\) Graphics\._applyUpscaleFilter\(this\._canvas\);/);
+});
+
+test('the 3D passes draw at game size on every screen and are enlarged into the frame pixel for pixel', () => {
+    const three = read('runtime/reactor_3d.js');
+    assert.match(three, /Reactor3D\.maxPassPixelRatio = 1;/);
+    assert.match(three, /scaleMode: "nearest",/, 'the pass texture is sampled nearest');
+    // PIXI never applies its style to a GL texture it did not create, so the
+    // filter that reaches the GPU is the one three sets when the target is made.
+    // Nearest from birth, not decided from the canvas ratio of the moment:
+    // a target made in a window and kept through an enlargement must not
+    // go on sampling linear.
+    assert.match(three, /this\.createTarget\(size\.width, size\.height, this\._scale\);/);
+    assert.match(three, /const filter = THREE\.NearestFilter;\n[\s\S]{0,400}?minFilter: filter,\n\s*magFilter: filter,/);
+    assert.doesNotMatch(three, /options && options\.nearest/);
+    const proto = Reactor3D.Viewport.prototype;
+    const viewport = Object.assign(Object.create(proto), { _width: 1280, _height: 720, _scale: 1 });
+    const saved = { Graphics: global.Graphics, cap: Reactor3D.maxPassPixelRatio };
+    try {
+        // A 1440p screen: the canvas draws at 2x, the passes at 1x, enlarged.
+        global.Graphics = { canvasPixelRatio: () => 2 };
+        assert.deepEqual(proto.targetSize.call(viewport), { width: 1280, height: 720 });
+        assert.equal(proto.passEnlarged.call(viewport), true);
+        // A window at 1x: nothing to enlarge, linear sampling does nothing either way.
+        global.Graphics = { canvasPixelRatio: () => 1 };
+        assert.deepEqual(proto.targetSize.call(viewport), { width: 1280, height: 720 });
+        assert.equal(proto.passEnlarged.call(viewport), false);
+        // A 1080p screen from a 720p game is 1.5x: still game size, still
+        // nearest - the owner prefers the hard edges to any smoothing.
+        global.Graphics = { canvasPixelRatio: () => 1.5 };
+        assert.deepEqual(proto.targetSize.call(viewport), { width: 1280, height: 720 });
+        assert.equal(proto.passEnlarged.call(viewport), true);
+        // A project that wants the native pass back.
+        Reactor3D.maxPassPixelRatio = 0;
+        global.Graphics = { canvasPixelRatio: () => 2 };
+        assert.deepEqual(proto.targetSize.call(viewport), { width: 2560, height: 1440 });
+        assert.equal(proto.passEnlarged.call(viewport), false);
+        // renderScale still applies underneath the cap.
+        Reactor3D.maxPassPixelRatio = 1;
+        viewport._scale = 0.5;
+        assert.deepEqual(proto.targetSize.call(viewport), { width: 640, height: 360 });
+    } finally {
+        if (saved.Graphics === undefined) delete global.Graphics; else global.Graphics = saved.Graphics;
+        Reactor3D.maxPassPixelRatio = saved.cap;
+    }
 });

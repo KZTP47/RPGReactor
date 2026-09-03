@@ -36,7 +36,11 @@ test('the second thumbnail render is skipped when the worker already decoded eve
     assert.equal(Database3DEditor.texturesDecoded([{ image: { complete: true, naturalWidth: 256 } }]), true);
     assert.equal(Database3DEditor.texturesDecoded([{ image: { complete: false, naturalWidth: 0 } }]), false);
     assert.equal(Database3DEditor.texturesDecoded([{ image: { width: 0 } }]), false);
-    assert.equal(Database3DEditor.texturesDecoded([{ image: null }, { image: { width: 4 } }]), true, 'textures without pixels have nothing to decode');
+    // A GLB texture is created empty and given its image once that image
+    // has loaded: no image yet is "not yet", not "nothing to decode". Drawn
+    // then, the model came out as a black silhouette and was cached so.
+    assert.equal(Database3DEditor.texturesDecoded([{ image: null }, { image: { width: 4 } }]), false, 'a texture still waiting for its image');
+    assert.equal(Database3DEditor.texturesDecoded([null, { image: { width: 4 } }]), true, 'a missing texture slot is skipped');
 });
 
 test('thumbnails cache per machine, keyed by the source file and its stamp', () => {
@@ -68,7 +72,13 @@ test('cached thumbnails round-trip through the disk cache as PNG data URLs', () 
         editor._project = () => ({ path: projectPath });
         const entry = { name: 'Hero' };
         assert.equal(editor._readCachedThumbnail(entry), null, 'nothing cached yet');
-        const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
+        // Real icons run to kilobytes; a 64x64 PNG of nothing is about 270
+        // bytes, and one of those cached by a failed render must read as
+        // missing so it is drawn again.
+        const empty = Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
+        editor._writeCachedThumbnail(entry, 'data:image/png;base64,' + empty.toString('base64'));
+        assert.equal(editor._readCachedThumbnail(entry), null, 'an empty picture is not a thumbnail');
+        const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47]), Buffer.alloc(Database3DEditor.EMPTY_THUMBNAIL_BYTES + 200, 7)]);
         const url = 'data:image/png;base64,' + png.toString('base64');
         editor._writeCachedThumbnail(entry, url);
         assert.equal(editor._readCachedThumbnail(entry), url);

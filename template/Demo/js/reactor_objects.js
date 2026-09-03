@@ -2109,12 +2109,54 @@ Game_Action.prototype.evalDamageFormula = function(target) {
     }
 };
 
-Game_Action.prototype.calcElementRate = function(target) {
-    if (this.item().damage.elementId < 0) {
-        return this.elementsMaxRate(target, this.subject().attackElements());
-    } else {
-        return target.elementRate(this.item().damage.elementId);
+/**
+ * The elements this action carries. `damage.elementIds` holds two or more
+ * (the editor writes it only then, with `elementId` mirroring its first
+ * entry); otherwise the one `elementId`, or the user's own attack elements
+ * for Normal Attack (-1). For every entry authored before lists existed
+ * this is exactly the branch calcElementRate used to take, and the name is
+ * the one plugins ask an action for its elements by.
+ */
+Game_Action.prototype.elements = function() {
+    const item = this.item();
+    if (!item || !item.damage) return [];
+    const ids = item.damage.elementIds;
+    if (Array.isArray(ids) && ids.length > 0) {
+        return ids.filter(id => id > 0);
     }
+    if (item.damage.elementId < 0) {
+        return this.subject().attackElements();
+    }
+    return [item.damage.elementId];
+};
+
+Game_Action.prototype.calcElementRate = function(target) {
+    return this.elementsMaxRate(target, this.elements());
+};
+
+/**
+ * Let an element plugin see the list. VisuMZ_1_ElementStatusCore replaces
+ * `elements()` and `calcElementRate` outright, so a list in `elementIds`
+ * would be invisible to its Maximum/Minimum/Multiply/Additive/Average
+ * rulings and to reflect, pierce and absorb - but its `elements()` reads
+ * `DataManager.getActionObjectElements(item)` for the note-tag elements and
+ * de-duplicates afterwards, and that one function is a plain definition.
+ * Wrapping it after the plugins have loaded feeds the list into every
+ * ruling without touching the plugin. Inert when no such function exists;
+ * marked so a second boot cannot wrap it twice.
+ */
+Game_Action.installMultiElementShim = function() {
+    if (typeof DataManager === "undefined" || typeof DataManager.getActionObjectElements !== "function") return false;
+    if (DataManager.getActionObjectElements._reactorMultiElement) return false;
+    const original = DataManager.getActionObjectElements;
+    const wrapped = function(object) {
+        const list = original.call(this, object) || [];
+        const ids = object && object.damage && object.damage.elementIds;
+        return Array.isArray(ids) ? list.concat(ids.filter(id => id > 0)) : list;
+    };
+    wrapped._reactorMultiElement = true;
+    DataManager.getActionObjectElements = wrapped;
+    return true;
 };
 
 Game_Action.prototype.elementsMaxRate = function(target, elements) {

@@ -140,9 +140,16 @@ test('the passes render at an adaptive scale: drop fast when the game cannot hol
     assert.equal(step(17, 1), 1, 'never above the ceiling');
     assert.equal(step(17, 0.75, 0.75), 0.75, 'a lower ceiling holds');
     assert.equal(step(0, 1), 1, 'no data, no change');
-    assert.equal(Reactor3D.samplesForScale(1), 4);
-    assert.equal(Reactor3D.samplesForScale(0.75), 2);
-    assert.equal(Reactor3D.samplesForScale(0.5), 0);
+    assert.equal(Reactor3D.renderTargetSamples, 0, 'no multisampling by default: it smooths every model edge, and enlarged it reads as blur');
+    assert.equal(Reactor3D.samplesForScale(1), 0);
+    Reactor3D.renderTargetSamples = 4;
+    try {
+        assert.equal(Reactor3D.samplesForScale(1), 4, 'a project that asks for it gets the full count at full scale');
+        assert.equal(Reactor3D.samplesForScale(0.75), 2);
+        assert.equal(Reactor3D.samplesForScale(0.5), 0);
+    } finally {
+        Reactor3D.renderTargetSamples = 0;
+    }
     const viewport = r3d.slice(r3d.indexOf('Reactor3D.Viewport.prototype._trackFrame'), r3d.indexOf('Reactor3D.Viewport.prototype._disposeTargets'));
     assert.match(viewport, /if \(next < this\._scale \|\| \(next > this\._scale && stats\.since >= 300\)\)/, 'climbing back needs five calm seconds');
     assert.match(r3d, /Reactor3D\.Viewport\.prototype\.render = function\(slot\) \{[\s\S]*?this\._trackFrame\(\);\s*this\.renderInto/);

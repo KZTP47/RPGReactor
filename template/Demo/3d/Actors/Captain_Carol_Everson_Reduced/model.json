@@ -325,5 +325,21 @@
       }
     ],
     "weightsFile": "model.rig.bin"
-  }
+  },
+  "effects": [
+    {
+      "name": "effect",
+      "animation": 0,
+      "anchor": {
+        "part": "",
+        "offset": [
+          0,
+          0,
+          0
+        ]
+      },
+      "scale": 1,
+      "loop": false
+    }
+  ]
 }

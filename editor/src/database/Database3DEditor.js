@@ -56,10 +56,26 @@ class Database3DEditor {
     }
 
     /** Every texture already holds decoded pixels (worker ImageBitmaps or a complete image). */
+    /** Resolves when every texture has decoded, or after `limit` ms. */
+    static whenTexturesDecoded(textures, limit) {
+        return new Promise(resolve => {
+            const until = performance.now() + (limit || 0);
+            const check = () => {
+                if (Database3DEditor.texturesDecoded(textures) || performance.now() >= until) resolve();
+                else setTimeout(check, 100);
+            };
+            check();
+        });
+    }
+
     static texturesDecoded(textures) {
         for (const texture of textures || []) {
-            const image = texture && texture.image;
-            if (!image) continue;
+            if (!texture) continue;
+            const image = texture.image;
+            // A GLB texture is created empty and given its image when that
+            // image has loaded; no image yet means not decoded, not "nothing
+            // to decode" - drawn then, the model is a black silhouette.
+            if (!image) return false;
             if (typeof image.complete === 'boolean') {
                 if (!image.complete || !(image.naturalWidth > 0)) return false;
             } else if (!(image.width > 0)) {
@@ -95,10 +111,19 @@ class Database3DEditor {
     }
 
     /** Cache file name keyed by the source file's identity and contents stamp. */
+    /**
+     * Bumped when what a thumbnail looks like changes, or when a run of
+     * bad ones has been cached: every entry is then drawn again once.
+     * 2: icons drawn before their textures had decoded (black silhouettes)
+     *    and icons drawn while shadow samplers were empty (nothing at all)
+     *    were cached under 1.
+     */
+    static THUMBNAIL_CACHE_VERSION = 2;
+
     static thumbnailCacheName(sourcePath, size, mtimeMs) {
         const crypto = require('crypto');
         return crypto.createHash('sha1')
-            .update(`${sourcePath}|${size}|${Math.round(mtimeMs)}`)
+            .update(`${sourcePath}|${size}|${Math.round(mtimeMs)}|v${Database3DEditor.THUMBNAIL_CACHE_VERSION}`)
             .digest('hex') + '.png';
     }
 
@@ -175,11 +200,7 @@ class Database3DEditor {
         detailEl.innerHTML = `
             <div style="display:flex;flex-direction:row;gap:0;height:100%;min-height:0;">
                 <div style="width:220px;flex:0 0 220px;display:flex;flex-direction:column;border-right:1px solid var(--color-border);min-height:0;">
-                    <div style="padding:6px 10px;font-weight:bold;color:var(--color-text);border-bottom:1px solid var(--color-border);display:flex;align-items:center;gap:6px;">
-                        <span style="flex:1;">${this._t('Models')}</span>
-                        <button type="button" class="rr-btn-secondary r3d-optimize"
-                            title="${this._t('Shrink this model in place. The original is kept beside it.')}">${this._t('Optimize')}</button>
-                    </div>
+                    <div style="padding:6px 10px;font-weight:bold;color:var(--color-text);border-bottom:1px solid var(--color-border);">${this._t('Models')}</div>
                     <div class="database-search-container" style="padding:8px;background-color:var(--color-bg-menubar);border-bottom:1px solid var(--color-border);flex-shrink:0;">
                         <input type="text" class="r3d-model-search" placeholder="${this._t('Search files...')}"
                             style="width:100%;padding:6px 10px;background-color:var(--color-bg-panel);border:1px solid var(--color-border-input);border-radius:3px;color:var(--color-text);font-size:12px;box-sizing:border-box;">
@@ -195,15 +216,19 @@ class Database3DEditor {
                         <div class="r3d-rig-bar" style="position:absolute;top:8px;left:50%;transform:translateX(-50%);display:none;align-items:center;gap:8px;padding:4px 10px;background:var(--color-bg-panel);border:1px solid var(--color-accent);border-radius:4px;font-size:12px;color:var(--color-text);"></div>
                         <div class="r3d-marquee" style="position:absolute;display:none;border:1px dashed var(--color-accent);background:color-mix(in srgb, var(--color-accent) 15%, transparent);pointer-events:none;"></div>
                         <div class="r3d-card" style="position:absolute;right:10px;top:10px;width:280px;display:none;background:var(--color-bg-panel);border:1px solid var(--color-border);border-radius:6px;padding:10px 12px;box-shadow:0 4px 18px rgba(0,0,0,0.35);"></div>
+                        <div class="r3d-stats-card" style="position:absolute;left:8px;bottom:8px;width:272px;max-height:55%;display:flex;flex-direction:column;background:color-mix(in srgb, var(--color-bg-panel) 92%, transparent);border:1px solid var(--color-border);border-radius:6px;box-shadow:0 4px 18px rgba(0,0,0,0.35);overflow:hidden;">
+                            <div class="sidebar-header r3d-sec-header" data-sec="stats" style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:5px 10px 5px 7px;font-size:11px;">
+                                <span class="r3d-sec-toggle" style="flex:0 0 12px;font-size:10px;color:var(--color-text-muted);">▾</span>
+                                <span style="flex:1;">${this._t('What this model costs')}</span>
+                                <button type="button" class="rr-btn-secondary r3d-optimize" style="text-transform:none;font-size:11px;padding:2px 8px;"
+                                    title="${this._t('Shrink this model in place. The original is kept beside it.')}">${this._t('Optimize…')}</button>
+                            </div>
+                            <div class="r3d-stats" style="flex:1 1 auto;min-height:0;overflow-y:auto;padding:6px 10px 8px 10px;font-size:11px;"></div>
+                        </div>
                     </div>
                     <div class="r3d-sim-bar" style="display:flex;gap:6px;align-items:center;padding:6px 8px;border-top:1px solid var(--color-border);flex-wrap:wrap;"></div>
                 </div>
                 <div style="width:300px;flex:0 0 300px;display:flex;flex-direction:column;border-left:1px solid var(--color-border);min-height:0;">
-                    <div class="sidebar-header r3d-sec-header" data-sec="stats" style="display:flex;align-items:center;gap:6px;cursor:pointer;">
-                        <span class="r3d-sec-toggle" style="flex:0 0 12px;font-size:10px;color:var(--color-text-muted);">▾</span>
-                        <span style="flex:1;">${this._t('What this model costs')}</span>
-                    </div>
-                    <div class="r3d-stats" style="flex:0 0 auto;max-height:230px;overflow-y:auto;padding:6px 10px;border-bottom:1px solid var(--color-border);font-size:11px;"></div>
                     <div class="sidebar-header r3d-sec-header" data-sec="parts" style="display:flex;align-items:center;gap:6px;cursor:pointer;">
                         <span class="r3d-sec-toggle" style="flex:0 0 12px;font-size:10px;color:var(--color-text-muted);">▾</span>
                         <span style="flex:1;">${this._t('Parts')}</span>
@@ -518,7 +543,11 @@ class Database3DEditor {
         try {
             const fs = require('fs');
             if (!fs.existsSync(cachePath)) return null;
-            return 'data:image/png;base64,' + fs.readFileSync(cachePath).toString('base64');
+            const bytes = fs.readFileSync(cachePath);
+            // An empty picture cached by an earlier, failed render is
+            // treated as missing so it is drawn again.
+            if (bytes.length <= Database3DEditor.EMPTY_THUMBNAIL_BYTES) return null;
+            return 'data:image/png;base64,' + bytes.toString('base64');
         } catch (error) {
             return null;
         }
@@ -545,6 +574,13 @@ class Database3DEditor {
         const template = await this._loadTemplate(entry, { beforeBuild: () => this._whenPreviewIdle() });
         await this._whenPreviewIdle();
         if (!template || typeof THREE === 'undefined') return null;
+        // A model's textures decode on their own time after the parse. Drawn
+        // before they land, the icon is a black silhouette - and one drawn
+        // late enough was cached that way for as long as the file kept its
+        // size and date. Wait for them, within reason.
+        await Database3DEditor.whenTexturesDecoded(template.userData.glbTextures, 6000);
+        await this._whenPreviewIdle();
+        if (!this._detail || !this._detail.isConnected) return null;
         if (!this._thumbRenderer) {
             const canvas = document.createElement('canvas');
             canvas.width = 64;
@@ -575,11 +611,30 @@ class Database3DEditor {
             for (const material of materials) material?.dispose?.();
         });
         try {
+            // A picture with nothing in it is a failed render, not a
+            // thumbnail: caching it would show a black square for as long as
+            // the file keeps its size and date.
+            if (!Database3DEditor.canvasHasPixels(this._thumbRenderer.domElement)) return null;
             return this._thumbRenderer.domElement.toDataURL('image/png');
         } catch (error) {
             return null;
         }
     }
+
+    /** Whether any pixel of a canvas is more than faintly visible. */
+    static canvasHasPixels(source) {
+        const probe = document.createElement('canvas');
+        probe.width = 16;
+        probe.height = 16;
+        const ctx = probe.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(source, 0, 0, source.width, source.height, 0, 0, 16, 16);
+        const data = ctx.getImageData(0, 0, 16, 16).data;
+        for (let i = 3; i < data.length; i += 4) if (data[i] >= 2) return true;
+        return false;
+    }
+
+    /** The largest a 64x64 PNG of nothing comes to; a real thumbnail is several times that. */
+    static EMPTY_THUMBNAIL_BYTES = 320;
 
     /** Templates cached per model: the preview and the thumbnails share them. */
     async _loadTemplate(entry, options = {}) {
@@ -836,7 +891,8 @@ class Database3DEditor {
             const original = new Uint8Array(fs.readFileSync(filePath));
             const analysis = window.RRGlbOptimizer.analyze(original);
             if (!analysis) return say(this._t('This file could not be read as a GLB.'));
-            const ui = this.projectController && this.projectController.uiManager;
+            const ui = (this.projectController && this.projectController.uiManager)
+                || (typeof window !== 'undefined' && window.reactor && window.reactor.uiManager);
             if (!ui || typeof ui.showModelOptimizeDialog !== 'function') {
                 return say(this._t('The optimizer dialog is unavailable.'));
             }
@@ -953,8 +1009,16 @@ class Database3DEditor {
 
             const before = (original.length / 1048576).toFixed(1);
             const after = (bytes.length / 1048576).toFixed(1);
-            say(`${this._t('Optimized')} ${entry.name}: ${before}MB → ${after}MB${levelNote}.${partsNote} ` +
-                this._t('Original kept as {file}', { file: path.basename(backup) }));
+            const summary = `${this._t('Optimized')} ${entry.name}: ${before}MB → ${after}MB${levelNote}.${partsNote} ` +
+                this._t('Original kept as {file}', { file: path.basename(backup) });
+            say(summary);
+            const stats = this._detail && this._detail.querySelector('.r3d-stats');
+            if (stats) {
+                const line = document.createElement('div');
+                line.style.cssText = 'margin-top:6px;line-height:1.35;color:var(--color-success, #4caf50);';
+                line.textContent = summary;
+                stats.prepend(line);
+            }
         } catch (error) {
             say(`${this._t('Could not optimize this model')}: ${error && error.message ? error.message : error}`);
         }
@@ -1495,6 +1559,7 @@ class Database3DEditor {
             if (lose) lose.loseContext();
         }
         this._renderer = null;
+        this._disposeEffectQuad();
         if (this._fxPreview) { this._fxPreview.dispose(); this._fxPreview = null; }
         this._stopVideoPreview();
         this._fxMarker = null;
@@ -3987,15 +4052,110 @@ class Database3DEditor {
         // The live object, not a snapshot: placing the anchor or sliding
         // the card moves the playing preview at once.
         this._fxPreviewDef = raw;
+        this._fxPreviewRecord = record;
         this._lastInputAt = performance.now();
+        // An Effekseer effect is drawn from the preview's own camera onto a
+        // quad standing at its anchor, at the view's resolution - the flat
+        // overlay was a 1024-pixel square stretched to whatever the zoom
+        // asked for, so it blurred, and past its largest size it could no
+        // longer follow the anchor. A sprite-sheet animation keeps the overlay.
+        if (record.effectName && this._scene && Reactor3D.EffekseerScene && Reactor3D.EffekseerScene.quadFor) {
+            this._ensureEffectQuad(layer);
+            layer.setWorld({ projection: this._camera.projectionMatrix.elements, view: this._camera.matrixWorldInverse.elements,
+                position: [0, 0, 0], scale: [1, 1, 1], rotation: [0, 0, 0] });
+        } else {
+            if (this._fxQuad) this._fxQuad.mesh.visible = false;
+            layer.setWorld(null);
+        }
         layer.play(record, this._project().path, { loop: !!raw.loop || (raw.trigger && raw.trigger !== 'action'), transform: { rotate: raw.rotate || [0, 0, 0], scale: raw.scale } });
         this._updateEffectPreview();
     }
 
+    /** The quad the effect layer's canvas is shown through, in the preview scene. */
+    _ensureEffectQuad(layer) {
+        if (this._fxQuad && this._fxQuad.scene === this._scene) return this._fxQuad;
+        this._disposeEffectQuad();
+        const quad = Reactor3D.EffekseerScene.quadFor(layer.fxCanvas);
+        // A WebGL canvas reaches three top-down whatever flipY says; the
+        // quad flips V itself.
+        quad.texture.flipY = false;
+        quad.material.uniforms.flip.value = 1;
+        quad.scene = this._scene;
+        this._scene.add(quad.mesh);
+        this._fxQuad = quad;
+        return quad;
+    }
+
+    _disposeEffectQuad() {
+        const quad = this._fxQuad;
+        if (!quad) return;
+        if (quad.mesh.parent) quad.mesh.parent.remove(quad.mesh);
+        quad.texture.dispose();
+        quad.material.dispose();
+        quad.mesh.geometry.dispose();
+        this._fxQuad = null;
+    }
+
+    /** Most pixels the effect canvas is drawn at: the view's own, capped as the map view caps it. */
+    static EFFECT_PIXELS = 1920 * 1080;
+
+    /**
+     * Each frame in world mode: the camera's matrices and the handle's
+     * placement go to the layer, the quad stands at the anchor, and its
+     * texture is the layer's canvas as of this frame.
+     */
+    _placeEffectQuad(layer, def, world) {
+        const quad = this._fxQuad;
+        const camera = this._camera;
+        if (!quad || !camera || !this._renderer) return;
+        camera.updateMatrixWorld();
+        const mesh = quad.mesh;
+        const clip = this._effectClip || (this._effectClip = new THREE.Vector4());
+        clip.set(world.x, world.y, world.z, 1).applyMatrix4(camera.matrixWorldInverse).applyMatrix4(camera.projectionMatrix);
+        if (clip.w <= 0) { mesh.visible = false; return; }
+        const record = this._fxPreviewRecord || {};
+        const rot = record.rotation || { x: 0, y: 0, z: 0 };
+        const rotate = def.rotate || [0, 0, 0];
+        const r = Math.PI / 180;
+        const axes = Reactor3D.scaleAxes ? Reactor3D.scaleAxes(def.scale) : [1, 1, 1];
+        const span = Reactor3D.modelSpanTiles ? (Reactor3D.modelSpanTiles(this._object) || 1) : 1;
+        const unit = span / 26 * ((record.scale || 100) / 100);
+        const size = this._renderer.getDrawingBufferSize(this._effectSize || (this._effectSize = new THREE.Vector2()));
+        const area = size.x * size.y;
+        const scale = area > Database3DEditor.EFFECT_PIXELS ? Math.sqrt(Database3DEditor.EFFECT_PIXELS / area) : 1;
+        const rect = { x: 0, y: 0, w: size.x, h: size.y, scale };
+        layer.setWorld({
+            projection: camera.projectionMatrix.elements,
+            view: camera.matrixWorldInverse.elements,
+            position: [world.x, world.y, world.z],
+            scale: [unit * axes[0], unit * axes[1], unit * axes[2]],
+            rotation: [(rot.x + rotate[0]) * r, (rot.y + rotate[1]) * r + this._object.rotation.y, (rot.z + rotate[2]) * r],
+            rect, viewWidth: size.x, viewHeight: size.y
+        });
+        const uniforms = quad.material.uniforms;
+        uniforms.resolution.value.set(size.x, size.y);
+        uniforms.rectMin.value.set(0, 0);
+        uniforms.rectSize.value.set(1, 1);
+        Reactor3D.EffekseerScene.standQuad(mesh, world, camera);
+        // A canvas texture is allocated once at its first size; after the
+        // view grew, uploads of the bigger canvas failed and the quad kept
+        // the last frame. Let go of the GL texture when the size changes.
+        const source = layer.fxCanvas;
+        if (quad.texWidth !== source.width || quad.texHeight !== source.height) {
+            quad.texWidth = source.width;
+            quad.texHeight = source.height;
+            quad.texture.dispose();
+        }
+        quad.texture.needsUpdate = true;
+        mesh.visible = !!layer.active;
+    }
+
     _stopEffectPreview() {
         if (this._fxPreview) this._fxPreview.stop();
+        if (this._fxQuad) this._fxQuad.mesh.visible = false;
         this._stopVideoPreview();
         this._fxPreviewDef = null;
+        this._fxPreviewRecord = null;
         this._fxTriggered = null;
     }
 
@@ -4055,6 +4215,10 @@ class Database3DEditor {
         const def = this._effectDef(this._fxPreviewDef) || this._fxPreviewDef;
         const world = Reactor3D.effectAnchorWorld(this._object, def, new THREE.Vector3());
         if (!world) return;
+        if (layer.world) {
+            this._placeEffectQuad(layer, def, world);
+            return;
+        }
         const at = world.clone().project(this._camera);
         const x = (at.x * 0.5 + 0.5) * rect.width;
         const y = (-at.y * 0.5 + 0.5) * rect.height;
@@ -4068,7 +4232,6 @@ class Database3DEditor {
         layer.setSpan(Reactor3D.modelSpanTiles ? Reactor3D.modelSpanTiles(this._object) : this._modelSpan() * this._scale);
         const rotate = def.rotate || [0, 0, 0];
         layer.setTransform({ rotate: [rotate[0], rotate[1] + this._object.rotation.y * 180 / Math.PI, rotate[2]], scale: def.scale });
-        this._lastInputAt = performance.now();
     }
 
     _bindEffects(card) {
