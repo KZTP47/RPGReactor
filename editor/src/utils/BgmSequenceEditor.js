@@ -1,0 +1,348 @@
+/**
+ * RRBgmSequenceEditor - the Map Properties list for a map's BGM sequence.
+ *
+ * A sequence is `{ enabled, entries }` and lives in Map###.json as
+ * `bgmSequence`. Entries play in order and repeat:
+ *   { type: 'track', name, volume, pitch, pan }
+ *   { type: 'silence', duration }
+ *   { type: 'palette', duration, fadeOut, layers: [{ volume, pitch, pan, pool }] }
+ * where a pool holds tracks (`{ type: 'track', name }`) and silences.
+ *
+ * The model functions are static so a save can normalize and validate what
+ * the form holds without the DOM; the instance renders one container and
+ * edits its copy in place. Tracks are chosen through `pickTrack`, which
+ * the caller wires to the shared audio picker.
+ */
+class RRBgmSequenceEditor {
+    static TRACK_DEFAULTS = { volume: 100, pitch: 100, pan: 0 };
+
+    static number(value, fallback, min, max) {
+        // Number(null) is 0, so a missing value must be caught before it is
+        // clamped into a real one (a new track would start at volume 0).
+        if (value === null || value === undefined || value === '') return fallback;
+        const parsed = Number(value);
+        if (!Number.isFinite(parsed)) return fallback;
+        return Math.min(max, Math.max(min, Math.round(parsed)));
+    }
+
+    static seconds(value) {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed * 10) / 10 : 0;
+    }
+
+    static levels(source) {
+        const d = RRBgmSequenceEditor.TRACK_DEFAULTS;
+        return {
+            volume: RRBgmSequenceEditor.number(source && source.volume, d.volume, 0, 100),
+            pitch: RRBgmSequenceEditor.number(source && source.pitch, d.pitch, 50, 150),
+            pan: RRBgmSequenceEditor.number(source && source.pan, d.pan, -100, 100)
+        };
+    }
+
+    static poolEntry(raw) {
+        if (!raw || typeof raw !== 'object') return null;
+        if (raw.type === 'silence') return { type: 'silence', duration: RRBgmSequenceEditor.seconds(raw.duration) };
+        return { type: 'track', name: typeof raw.name === 'string' ? raw.name : '' };
+    }
+
+    static layer(raw) {
+        const source = raw && typeof raw === 'object' ? raw : {};
+        return Object.assign(RRBgmSequenceEditor.levels(source), {
+            pool: (Array.isArray(source.pool) ? source.pool : []).map(RRBgmSequenceEditor.poolEntry).filter(Boolean)
+        });
+    }
+
+    static entry(raw) {
+        if (!raw || typeof raw !== 'object') return null;
+        switch (raw.type) {
+            case 'silence':
+                return { type: 'silence', duration: RRBgmSequenceEditor.seconds(raw.duration) };
+            case 'palette':
+                return {
+                    type: 'palette',
+                    duration: RRBgmSequenceEditor.seconds(raw.duration),
+                    fadeOut: RRBgmSequenceEditor.seconds(raw.fadeOut),
+                    layers: (Array.isArray(raw.layers) ? raw.layers : []).map(RRBgmSequenceEditor.layer)
+                };
+            default:
+                return Object.assign({ type: 'track', name: typeof raw.name === 'string' ? raw.name : '' }, RRBgmSequenceEditor.levels(raw));
+        }
+    }
+
+    /** A clean copy of whatever the map holds; absent reads as an empty, disabled sequence. */
+    static normalize(raw) {
+        const source = raw && typeof raw === 'object' ? raw : {};
+        return {
+            enabled: source.enabled === true,
+            entries: (Array.isArray(source.entries) ? source.entries : []).map(RRBgmSequenceEditor.entry).filter(Boolean)
+        };
+    }
+
+    /** Nothing configured: the key is left off the map file. */
+    static isBlank(sequence) {
+        return !sequence || (!sequence.enabled && (!sequence.entries || sequence.entries.length === 0));
+    }
+
+    /** The first thing wrong with an enabled sequence, as a message, or null. `tt` translates. */
+    static validate(sequence, tt) {
+        const say = (text, params) => {
+            let out = tt ? tt(text) : text;
+            for (const [key, value] of Object.entries(params || {})) out = out.split(`{${key}}`).join(String(value));
+            return out;
+        };
+        if (!sequence || !sequence.enabled) return null;
+        const entries = sequence.entries || [];
+        if (!entries.length) return say('The sequence needs at least one entry.');
+        for (let i = 0; i < entries.length; i++) {
+            const entry = entries[i];
+            const n = i + 1;
+            if (entry.type === 'track') {
+                if (!entry.name) return say('Entry {n}: choose a track.', { n });
+            } else if (entry.type === 'silence') {
+                if (!(entry.duration > 0)) return say('Entry {n}: a silence needs a duration above zero.', { n });
+            } else if (entry.type === 'palette') {
+                if (!entry.layers.length) return say('Entry {n}: a palette needs at least one layer.', { n });
+                if (entry.duration > 0 && entry.fadeOut > entry.duration) return say('Entry {n}: the fade-out cannot be longer than the duration.', { n });
+                for (let l = 0; l < entry.layers.length; l++) {
+                    const layer = entry.layers[l];
+                    if (!layer.pool.length) return say('Entry {n}, layer {layer}: the pool needs at least one entry.', { n, layer: l + 1 });
+                    for (const item of layer.pool) {
+                        if (item.type === 'track' && !item.name) return say('Entry {n}, layer {layer}: choose a track for every pool entry.', { n, layer: l + 1 });
+                        if (item.type === 'silence' && !(item.duration > 0)) return say('Entry {n}, layer {layer}: a silence needs a duration above zero.', { n, layer: l + 1 });
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * @param {object} options
+     * @param {HTMLElement} options.container - Where the list renders.
+     * @param {function} options.tt - Text translator.
+     * @param {function} options.t - Keyed translator, for the shared levels line.
+     * @param {function} options.pickTrack - ({ selected, levels, previewLevels }) => Promise
+     *   resolving to the picker's { name, volume, pitch, pan }, or null on cancel.
+     */
+    constructor(options) {
+        this.container = options.container;
+        this.tt = options.tt || (text => text);
+        this.t = options.t || ((key) => key);
+        this.pickTrack = options.pickTrack || (() => Promise.resolve(null));
+        this.sequence = RRBgmSequenceEditor.normalize(null);
+        this.container.addEventListener('click', event => this.onClick(event));
+        this.container.addEventListener('change', event => this.onChange(event));
+    }
+
+    load(raw) {
+        this.sequence = RRBgmSequenceEditor.normalize(raw);
+        this.render();
+    }
+
+    /** A normalized copy of what the form holds now. */
+    value() {
+        return RRBgmSequenceEditor.normalize(this.sequence);
+    }
+
+    setEnabled(enabled) {
+        this.sequence.enabled = !!enabled;
+    }
+
+    escape(text) {
+        return typeof rrEscapeHtml === 'function' ? rrEscapeHtml(text) : String(text == null ? '' : text);
+    }
+
+    levelsText(levels) {
+        return this.t('mapProps.levels', { volume: levels.volume, pitch: levels.pitch, pan: levels.pan });
+    }
+
+    numberInput(path, value, min, max, step, width) {
+        return `<input type="number" data-path="${path}" value="${this.escape(value)}" min="${min}" max="${max}" step="${step}" style="width: ${width}px; padding: 3px 4px; font-size: 12px; background: var(--color-bg-input); color: var(--color-text); border: 1px solid var(--color-border-input); border-radius: 3px; box-sizing: border-box;">`;
+    }
+
+    smallButton(action, path, label, title) {
+        return `<button type="button" class="bgm-seq-btn" data-action="${action}" data-path="${path}" title="${this.escape(title || label)}">${this.escape(label)}</button>`;
+    }
+
+    rowTools(path, index, count) {
+        return `<span style="display: inline-flex; gap: 4px; flex: 0 0 auto;">`
+            + this.smallButton('up', path, '▲', this.tt('Move up'))
+            + this.smallButton('down', path, '▼', this.tt('Move down'))
+            + this.smallButton('remove', path, '×', this.tt('Remove'))
+            + `</span>`;
+    }
+
+    trackName(name) {
+        return name
+            ? `<span style="color: var(--color-text);">${this.escape(name)}</span>`
+            : `<span style="color: var(--color-text-muted);">${this.escape(this.tt('No track chosen'))}</span>`;
+    }
+
+    renderEntry(entry, index) {
+        const path = `entries.${index}`;
+        const head = `<span style="flex: 0 0 auto; min-width: 16px; color: var(--color-text-muted); font-size: 11px;">${index + 1}</span>`;
+        const nameBox = (p, name, levels) => `<span data-action="pick" data-path="${p}" title="${this.escape(this.tt('Choose a track'))}" style="flex: 1; min-width: 0; padding: 4px 6px; background: var(--color-bg-input); border: 1px solid var(--color-border-input); border-radius: 3px; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer;">${this.trackName(name)}${levels ? ` <span style="color: var(--color-text-muted); font-size: 11px;">${this.escape(this.levelsText(levels))}</span>` : ''}</span>`;
+        if (entry.type === 'track') {
+            return `<div class="bgm-seq-row bgm-seq-depth-1" style="display: flex; gap: 6px; align-items: center;">${head}
+                <span style="flex: 0 0 52px; font-size: 12px;">${this.escape(this.tt('Track'))}</span>
+                ${nameBox(path, entry.name, entry)}
+                ${this.rowTools(path)}
+            </div>`;
+        }
+        if (entry.type === 'silence') {
+            return `<div class="bgm-seq-row bgm-seq-depth-1" style="display: flex; gap: 6px; align-items: center;">${head}
+                <span style="flex: 0 0 52px; font-size: 12px;">${this.escape(this.tt('Silence'))}</span>
+                <span style="flex: 1; display: flex; align-items: center; gap: 4px; font-size: 12px;">${this.numberInput(`${path}.duration`, entry.duration, 0, 3600, 0.5, 64)} ${this.escape(this.tt('s'))}</span>
+                ${this.rowTools(path)}
+            </div>`;
+        }
+        const layers = entry.layers.map((layer, l) => {
+            const lp = `${path}.layers.${l}`;
+            const pool = layer.pool.map((item, i) => {
+                const ip = `${lp}.pool.${i}`;
+                const body = item.type === 'silence'
+                    ? `<span style="display: inline-flex; align-items: center; gap: 4px; font-size: 12px;">${this.escape(this.tt('Silence'))} ${this.numberInput(`${ip}.duration`, item.duration, 0, 3600, 0.5, 60)} ${this.escape(this.tt('s'))}</span>`
+                    : nameBox(ip, item.name, null);
+                return `<div class="bgm-seq-depth-3" style="display: flex; gap: 6px; align-items: center;">${body}${this.smallButton('remove', ip, '×', this.tt('Remove'))}</div>`;
+            }).join('');
+            return `<div class="bgm-seq-depth-2">
+                <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 12px;">
+                    <span style="min-width: 52px;">${this.escape(this.tt('Layer {n}').replace('{n}', String(l + 1)))}</span>
+                    <label style="display: inline-flex; align-items: center; gap: 4px;">${this.escape(this.tt('Volume'))} ${this.numberInput(`${lp}.volume`, layer.volume, 0, 100, 1, 54)}</label>
+                    <label style="display: inline-flex; align-items: center; gap: 4px;">${this.escape(this.tt('Pitch'))} ${this.numberInput(`${lp}.pitch`, layer.pitch, 50, 150, 1, 54)}</label>
+                    <label style="display: inline-flex; align-items: center; gap: 4px;">${this.escape(this.tt('Pan'))} ${this.numberInput(`${lp}.pan`, layer.pan, -100, 100, 1, 54)}</label>
+                    <span style="flex: 1;"></span>
+                    ${this.smallButton('remove', lp, '×', this.tt('Remove'))}
+                </div>
+                ${pool}
+                <div style="display: flex; gap: 4px; padding: 3px 0 0 14px;">
+                    ${this.smallButton('add-pool-track', lp, this.tt('+ Track'))}
+                    ${this.smallButton('add-pool-silence', lp, this.tt('+ Silence'))}
+                </div>
+            </div>`;
+        }).join('');
+        return `<div class="bgm-seq-row bgm-seq-depth-1">
+            <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">${head}
+                <span style="flex: 0 0 52px; font-size: 12px;">${this.escape(this.tt('Palette'))}</span>
+                <label style="display: inline-flex; align-items: center; gap: 4px; font-size: 12px;">${this.escape(this.tt('Duration (s)'))} ${this.numberInput(`${path}.duration`, entry.duration, 0, 36000, 1, 64)}</label>
+                <label style="display: inline-flex; align-items: center; gap: 4px; font-size: 12px;">${this.escape(this.tt('Fade-out (s)'))} ${this.numberInput(`${path}.fadeOut`, entry.fadeOut, 0, 600, 0.5, 60)}</label>
+                <span style="flex: 1;"></span>
+                ${this.rowTools(path)}
+            </div>
+            ${layers}
+            <div style="padding: 3px 0 0 22px;">${this.smallButton('add-layer', path, this.tt('+ Layer'))}</div>
+        </div>`;
+    }
+
+    render() {
+        const entries = this.sequence.entries;
+        const rows = entries.map((entry, index) => this.renderEntry(entry, index)).join('');
+        this.container.innerHTML = `
+            <div style="font-size: 11px; color: var(--color-text-muted); line-height: 1.5; margin-bottom: 4px;">${this.escape(this.tt('A palette plays every layer at once; each layer draws at random from its pool. Duration 0 runs until the map changes. Loop points are ignored inside a sequence.'))}</div>
+            <div class="bgm-seq-list" style="display: flex; flex-direction: column; gap: 4px;">${rows || `<div style="font-size: 12px; color: var(--color-text-muted); padding: 4px 0;">${this.escape(this.tt('No entries yet.'))}</div>`}</div>
+            <div style="display: flex; gap: 4px; margin-top: 6px;">
+                ${this.smallButton('add-track', '', this.tt('+ Track'))}
+                ${this.smallButton('add-silence', '', this.tt('+ Silence'))}
+                ${this.smallButton('add-palette', '', this.tt('+ Palette'))}
+            </div>`;
+    }
+
+    /** The object at a dotted path into the sequence, and the list plus index it sits in. */
+    resolve(path) {
+        const parts = String(path || '').split('.').filter(Boolean);
+        let node = this.sequence;
+        let list = null;
+        let index = -1;
+        for (const part of parts) {
+            if (Array.isArray(node)) {
+                list = node;
+                index = Number(part);
+                node = node[index];
+            } else {
+                list = null;
+                node = node ? node[part] : undefined;
+            }
+        }
+        return { node, list, index };
+    }
+
+    onClick(event) {
+        const target = event.target.closest('[data-action]');
+        if (!target || !this.container.contains(target)) return;
+        event.preventDefault();
+        const action = target.dataset.action;
+        const path = target.dataset.path || '';
+        const { node, list, index } = this.resolve(path);
+        switch (action) {
+            case 'add-track':
+                this.sequence.entries.push(Object.assign({ type: 'track', name: '' }, RRBgmSequenceEditor.levels(null)));
+                break;
+            case 'add-silence':
+                this.sequence.entries.push({ type: 'silence', duration: 10 });
+                break;
+            case 'add-palette':
+                this.sequence.entries.push({ type: 'palette', duration: 0, fadeOut: 4, layers: [RRBgmSequenceEditor.layer(null)] });
+                break;
+            case 'add-layer':
+                if (node && node.type === 'palette') node.layers.push(RRBgmSequenceEditor.layer(null));
+                break;
+            case 'add-pool-track':
+                if (node && node.pool) node.pool.push({ type: 'track', name: '' });
+                break;
+            case 'add-pool-silence':
+                if (node && node.pool) node.pool.push({ type: 'silence', duration: 10 });
+                break;
+            case 'remove':
+                if (list && index >= 0) list.splice(index, 1);
+                break;
+            case 'up':
+                if (list && index > 0) list.splice(index - 1, 2, list[index], list[index - 1]);
+                break;
+            case 'down':
+                if (list && index >= 0 && index < list.length - 1) list.splice(index, 2, list[index + 1], list[index]);
+                break;
+            case 'pick':
+                this.pick(path, node, list);
+                return;
+            default:
+                return;
+        }
+        this.render();
+    }
+
+    onChange(event) {
+        const input = event.target;
+        const path = input && input.dataset ? input.dataset.path : null;
+        if (!path) return;
+        const parts = path.split('.');
+        const key = parts.pop();
+        const { node } = this.resolve(parts.join('.'));
+        if (!node) return;
+        if (key === 'duration' || key === 'fadeOut') node[key] = RRBgmSequenceEditor.seconds(input.value);
+        else if (key === 'volume') node[key] = RRBgmSequenceEditor.number(input.value, 100, 0, 100);
+        else if (key === 'pitch') node[key] = RRBgmSequenceEditor.number(input.value, 100, 50, 150);
+        else if (key === 'pan') node[key] = RRBgmSequenceEditor.number(input.value, 0, -100, 100);
+        input.value = node[key];
+    }
+
+    /** A track row carries its own levels; a pool entry previews with its layer's. */
+    async pick(path, node, list) {
+        if (!node) return;
+        const isPoolEntry = /\.pool\.\d+$/.test(path);
+        let options;
+        if (isPoolEntry) {
+            const layer = this.resolve(path.replace(/\.pool\.\d+$/, '')).node;
+            options = { selected: node.name, levels: null, previewLevels: RRBgmSequenceEditor.levels(layer) };
+        } else {
+            options = { selected: node.name, levels: RRBgmSequenceEditor.levels(node) };
+        }
+        const result = await this.pickTrack(options);
+        if (!result || !result.name) return;
+        node.name = result.name;
+        if (!isPoolEntry) Object.assign(node, RRBgmSequenceEditor.levels(result));
+        this.render();
+    }
+}
+
+if (typeof globalThis !== 'undefined') globalThis.RRBgmSequenceEditor = RRBgmSequenceEditor;
+if (typeof module !== 'undefined' && module.exports) module.exports = RRBgmSequenceEditor;

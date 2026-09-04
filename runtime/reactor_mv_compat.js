@@ -398,6 +398,35 @@
 
     function installGraphicsCompatibility() {
         if (!global.Graphics) return;
+        // MV built its renderer in Graphics._createRenderer, and plugins wrap
+        // it to set the renderer up (KhasUltraLighting registers its blend
+        // modes there). Reactor builds the PIXI app in _createPixiApp, so the
+        // wrappers need a base to chain onto and one call once the app exists.
+        if (typeof Graphics._createRenderer !== "function") {
+            Graphics._createRenderer = function() {};
+        }
+        if (typeof Graphics._createPixiApp === "function" && !Graphics._createPixiApp.__mvCreateRenderer) {
+            const originalCreatePixiApp = Graphics._createPixiApp;
+            Graphics._createPixiApp = function() {
+                const result = originalCreatePixiApp.apply(this, arguments);
+                const after = () => {
+                    if (this.__mvCreateRendererRan || !this._renderer) return;
+                    this.__mvCreateRendererRan = true;
+                    try { this._createRenderer(); } catch (e) { console.warn("mv_compat: a plugin's Graphics._createRenderer wrapper failed", e); }
+                };
+                if (result && typeof result.then === "function") return result.then(value => { after(); return value; });
+                after();
+                return result;
+            };
+            Graphics._createPixiApp.__mvCreateRenderer = true;
+        }
+        // MV's blend mode constants on Graphics (MZ reads PIXI.BLEND_MODES).
+        if (Graphics.BLEND_NORMAL === undefined) {
+            Graphics.BLEND_NORMAL = 0;
+            Graphics.BLEND_ADD = 1;
+            Graphics.BLEND_MULTIPLY = 2;
+            Graphics.BLEND_SCREEN = 3;
+        }
 
         // The counter's positioning/stacking now ships inline in the
         // engine's FPSCounter._createElements; only the MV API names need
@@ -411,6 +440,11 @@
         };
         Graphics.hideFps = Graphics.hideFps || function() {
             if (this._fpsCounter && this._fpsCounter._boxDiv) this._fpsCounter._boxDiv.style.display = "none";
+        };
+        // MV's F2 handler; plugins that replace Graphics._onKeyDown
+        // (Fullscreen_Options) call it by this name.
+        Graphics._switchFPSMeter = Graphics._switchFPSMeter || function() {
+            if (typeof this._switchFPSCounter === "function") this._switchFPSCounter();
         };
     }
 
@@ -498,6 +532,17 @@
     }
 
     function installStorageManagerCompatibility() {
+        // The engine's own local-file functions, taken before any plugin
+        // loads, so the final pass can tell a plugin's replacement from the
+        // original. Kept on the manager so this installer stands alone.
+        if (global.StorageManager && !StorageManager.__mvStorageOriginals) {
+            StorageManager.__mvStorageOriginals = {
+                saveToLocalFile: StorageManager.saveToLocalFile,
+                loadFromLocalFile: StorageManager.loadFromLocalFile,
+                localFileExists: StorageManager.localFileExists,
+                removeLocalFile: StorageManager.removeLocalFile
+            };
+        }
         if (!global.StorageManager || !StorageManager.filePath || StorageManager.filePath.__mvCompatWrapped) return;
 
         // Format preference is native-first per game type. An MV-authored
@@ -823,7 +868,8 @@
         };
         Window_Base.prototype.textPadding = function() { return 6; };
         Window_Base.prototype.standardBackOpacity = function() {
-            return $gameSystem && $gameSystem.windowOpacity ? $gameSystem.windowOpacity() : 192;
+            const value = $gameSystem && $gameSystem.windowOpacity ? $gameSystem.windowOpacity() : 192;
+            return Number.isFinite(value) ? value : 192;
         };
         Window_Base.prototype.standardFontFace = function() {
             return $gameSystem && $gameSystem.mainFontFace ? $gameSystem.mainFontFace() : "GameFont";
@@ -1052,6 +1098,14 @@
                 Window_Message.prototype.synchronizeNameBox = function() {
                     const nameBox = normalizeNameBox(this);
                     if (nameBox) {
+                        // An MV plugin's name box (YEP_MessageCore and its
+                        // kin) opens itself from a \n<Name> code and closes
+                        // itself a few frames after the message deactivates
+                        // it. MZ's box shrinks to nothing without a name;
+                        // the plugin's keeps its last size, so forcing its
+                        // openness to follow the message shows an empty
+                        // box beside every unnamed message.
+                        if (nameBox === this._nameWindow) return;
                         if (nameBox._container && nameBox._container.scale) {
                             nameBox.openness = this.openness;
                         } else {
@@ -1351,7 +1405,8 @@
         if (global.Scene_Base && Scene_Base.prototype.addWindow && !Scene_Base.prototype.addWindow.__mvCompatWrapped) {
             const originalAddWindow = Scene_Base.prototype.addWindow;
             Scene_Base.prototype.addWindow = function(window) {
-                if (!window) return undefined;
+                // The inert stand-in window is not a display object.
+                if (!window || typeof window.emit !== "function") return undefined;
                 return originalAddWindow.call(this, window);
             };
             Scene_Base.prototype.addWindow.__mvCompatWrapped = true;
@@ -1531,6 +1586,91 @@
         Scene_Map.prototype.onMapLoaded.__mvCompatStaleGuard = true;
     }
 
+    // MV's Game_Actor/Game_Enemy.traitObjects built a new array with concat;
+    // MZ's push the actor, class, equips (or the enemy) onto the very array
+    // states() returned. That is fine while states() maps a fresh array each
+    // call, and corrupting when an MV plugin caches it (Braver's states
+    // cache): the actor and class records then sit inside states(), and
+    // YEP_SkillCore reads a gauge marker off the actor record and gets
+    // undefined. Hand out a copy from the base, so the pushes never reach
+    // whatever states() keeps.
+    function installTraitObjectsCopyCompatibility() {
+        const GBB = global.Game_BattlerBase;
+        if (!GBB || !GBB.prototype || typeof GBB.prototype.traitObjects !== "function" || GBB.prototype.traitObjects.__mvCopies) return;
+        const original = GBB.prototype.traitObjects;
+        GBB.prototype.traitObjects = function() {
+            const objects = original.apply(this, arguments);
+            return Array.isArray(objects) ? objects.slice() : objects;
+        };
+        GBB.prototype.traitObjects.__mvCopies = true;
+    }
+
+    // MV's Spriteset_Battle created a Sprite_Actor for every battle member in
+    // front view as well as side view (hidden, since isSpriteVisible() is
+    // false there); MZ creates them only in side view. MV battle plugins
+    // register those sprites (YEP_BattleEngineCore's BattleManager.getSprite)
+    // and hang data on them through actor.battler() -- BraverInBattleStatusPlus
+    // stores face bitmaps there -- so a front-view MV game needs them to exist.
+    function installFrontViewActorSpritesCompatibility() {
+        const SB = global.Spriteset_Battle;
+        if (!SB || !SB.prototype || typeof SB.prototype.createActors !== "function" || SB.prototype.createActors.__mvFrontView) return;
+        const original = SB.prototype.createActors;
+        SB.prototype.createActors = function() {
+            const result = original.apply(this, arguments);
+            if (Array.isArray(this._actorSprites) && this._actorSprites.length === 0 &&
+                    global.Sprite_Actor && global.$gameSystem && !$gameSystem.isSideView() && global.$gameParty) {
+                for (let i = 0; i < $gameParty.maxBattleMembers(); i++) {
+                    const sprite = new Sprite_Actor();
+                    this._actorSprites.push(sprite);
+                    if (this._battleField) this._battleField.addChild(sprite);
+                }
+            }
+            return result;
+        };
+        SB.prototype.createActors.__mvFrontView = true;
+    }
+
+    // MV's Spriteset_Base.initialize ended with this.update(): battlers were
+    // assigned to their sprites (updateActors/updateEnemies) inside the
+    // constructor, so by the time Scene_Battle built its windows, MV battle
+    // plugins had registered every sprite (YEP_BattleEngineCore's
+    // BattleManager.getSprite) and actor.battler() answered. MZ defers that
+    // to the first frame, one step too late for a window that reads the
+    // sprite in its constructor (BraverInBattleStatusPlus). Run the first
+    // update at construction for the battle spriteset, as MV did.
+    function installBattleSpritesetFirstUpdateCompatibility() {
+        const SB = global.Spriteset_Battle;
+        if (!SB || !SB.prototype || typeof SB.prototype.initialize !== "function" || SB.prototype.initialize.__mvFirstUpdate) return;
+        const original = SB.prototype.initialize;
+        SB.prototype.initialize = function() {
+            const result = original.apply(this, arguments);
+            try {
+                if (typeof this.updateActors === "function") this.updateActors();
+                if (typeof this.updateEnemies === "function") this.updateEnemies();
+            } catch (e) {
+                console.warn("mv_compat: first battle spriteset update failed", e);
+            }
+            return result;
+        };
+        SB.prototype.initialize.__mvFirstUpdate = true;
+    }
+
+    // MV's BattleManager.isInputting() was `this._phase === "input"`; MZ keeps
+    // a separate _inputting flag that only its own startInput/startTurn touch.
+    // An MV battle system that runs its own phase machine (YEP_X_BattleSysCTB
+    // sets _phase = "input" when a battler is ready) never sets the flag, so
+    // Scene_Battle.needsInputWindowChange never sees an input phase and no
+    // command window opens: the battle sits on its first turn forever. MV
+    // games have no TPB, so the phase is the whole truth for them.
+    function installInputPhaseCompatibility() {
+        const BM = global.BattleManager;
+        if (!BM || typeof BM.isInputting !== "function" || BM.isInputting.__mvPhase) return;
+        BM.isInputting = function() {
+            return this._phase === "input";
+        };
+        BM.isInputting.__mvPhase = true;
+    }
+
     function installBoxSizeCompatibility() {
         if (!global.Scene_Boot) return;
         // MV plugins define the UI box through SceneManager._boxWidth /
@@ -1549,6 +1689,27 @@
             if (typeof SceneManager._boxHeight === "number") {
                 Graphics.boxHeight = SceneManager._boxHeight;
             }
+        };
+        // In MV the screen size is SceneManager._screenWidth/_screenHeight,
+        // which a plugin sets at load time (YEP_CoreEngine's Screen Width /
+        // Height). MV data has no `advanced` block; the one an MV project
+        // carries was written by the editor with MZ's 816x624 defaults, so
+        // for an MV game a plugin-set size is the authored one and wins.
+        // Only once, at boot: F3/F4 and window resizes never re-run this.
+        var origResize = Scene_Boot.prototype.resizeScreen;
+        Scene_Boot.prototype.resizeScreen = function() {
+            var advanced = global.$dataSystem && $dataSystem.advanced;
+            var width = SceneManager._screenWidth;
+            var height = SceneManager._screenHeight;
+            if (mvGameSemantics && advanced &&
+                    Number.isFinite(width) && width > 0 &&
+                    Number.isFinite(height) && height > 0) {
+                advanced.screenWidth = width;
+                advanced.screenHeight = height;
+                advanced.uiAreaWidth = width;
+                advanced.uiAreaHeight = height;
+            }
+            return origResize.apply(this, arguments);
         };
     }
 
@@ -1879,10 +2040,14 @@
 
         if (!P.subWindows) {
             P.subWindows = function() {
+                // Only real windows: outside Scene_Message the fields read
+                // as the inert stand-in, which is not a display object
+                // (SRD_TitleCommandCustomizer adds every sub-window to the
+                // title scene).
                 return [
                     this._goldWindow, this._choiceListWindow,
                     this._numberInputWindow, this._eventItemWindow
-                ].filter(Boolean);
+                ].filter(window => window && typeof window.emit === "function");
             };
         }
     }
@@ -2119,6 +2284,17 @@
         // they exist as alias-chain anchors. renderScene is then invoked
         // once per frame from updateMain below so wrappers actually run. ----
         if (global.SceneManager) {
+            // MV's frame clock, read by the same fps-synch-off path
+            // (newTime - this._currentTime, capped at a quarter second).
+            def(SceneManager, "_getTimeInMsWithoutMobileSafari", function() {
+                return performance.now();
+            });
+            def(SceneManager, "_getTimeInMs", function() {
+                return performance.now();
+            });
+            if (typeof SceneManager._deltaTime !== "number") SceneManager._deltaTime = 1.0 / 60.0;
+            if (typeof SceneManager._currentTime !== "number") SceneManager._currentTime = performance.now();
+            if (typeof SceneManager._accumulator !== "number") SceneManager._accumulator = 0.0;
             def(SceneManager, "renderScene", function() {
                 // rendering happens in the Graphics ticker under MZ
             });
@@ -2209,6 +2385,19 @@
 
         // ---- Bitmap pixel-manipulation API ----
         if (global.Bitmap) {
+            // MV drew straight from another bitmap's decoded image; MZ has
+            // only blt. Draw the image when the source still holds one,
+            // otherwise its canvas (Keke_KageMasterMV builds shadows this way).
+            def(Bitmap.prototype, "bltImage", function(source, sx, sy, sw, sh, dx, dy, dw, dh) {
+                dw = dw || sw;
+                dh = dh || sh;
+                const image = (source && (source._image || source.canvas)) || source;
+                if (!image || !(sx >= 0 && sy >= 0 && sw > 0 && sh > 0 && dw > 0 && dh > 0)) return;
+                const context = this.context;
+                context.globalCompositeOperation = "source-over";
+                context.drawImage(image, sx, sy, sw, sh, dx, dy, dw, dh);
+                if (this._baseTexture) this._baseTexture.update();
+            });
             def(Bitmap.prototype, "_setDirty", function() {
                 if (this._baseTexture && this._baseTexture.update) this._baseTexture.update();
             });
@@ -2310,6 +2499,75 @@
             global.ToneFilter = ToneFilter;
         }
 
+        // ---- MV APIs the plugin-compat-audit found the Braver corpus reaching
+        // for (editor/build-scripts/plugin-compat-audit.cjs --mv): each one
+        // exists in MV 1.6's corescript and nowhere in MZ. ----
+        if (global.Decrypter) {
+            // MV's DataManager set these from System.json; plugins that
+            // preload assets read them to decide which extension to fetch.
+            for (const flag of ["hasEncryptedImages", "hasEncryptedAudio"]) {
+                if (!Object.getOwnPropertyDescriptor(Decrypter, flag)) {
+                    Object.defineProperty(Decrypter, flag, {
+                        get: function() { const system = global.$dataSystem; return !!(system && system[flag]); },
+                        set: function(value) { const system = global.$dataSystem; if (system) system[flag] = !!value; },
+                        configurable: true
+                    });
+                }
+            }
+        }
+        if (global.Graphics) {
+            def(Graphics, "setVideoVolume", function(value) {
+                if (global.Video && typeof Video.setVolume === "function") Video.setVolume(value);
+            });
+        }
+        if (global.Scene_Base && global.ScreenSprite) {
+            // MV faded through a ScreenSprite the scene owned; MZ fades through
+            // a colour filter. Plugins that borrow the sprite for their own
+            // overlay (BraverAutosave's notice) get MV's.
+            def(Scene_Base.prototype, "createFadeSprite", function(white) {
+                this._fadeSprite = new ScreenSprite();
+                if (white) this._fadeSprite.setWhite(); else this._fadeSprite.setBlack();
+                this.addChild(this._fadeSprite);
+            });
+        }
+        if (global.Window_Selectable) {
+            def(Window_Selectable.prototype, "isContentsArea", function(x, y) {
+                const left = this.padding;
+                const top = this.padding;
+                const right = this.width - this.padding;
+                const bottom = this.height - this.padding;
+                return x >= left && y >= top && x < right && y < bottom;
+            });
+        }
+        if (global.Window_EquipSlot) {
+            def(Window_EquipSlot.prototype, "slotName", function(index) {
+                if (typeof this.actorSlotName === "function") return this.actorSlotName(this._actor, index);
+                const slots = this._actor ? this._actor.equipSlots() : [];
+                return $dataSystem.equipTypes[slots[index]] || "";
+            });
+        }
+        if (global.Window_BattleLog) {
+            // MV's battle log was a Window_Selectable; itemRectForText came
+            // with it. MZ's is a Window_Base with lineRect.
+            def(Window_BattleLog.prototype, "itemRectForText", function(index) {
+                if (typeof this.lineRect === "function") return this.lineRect(index);
+                return new Rectangle(0, index * this.lineHeight(), this.innerWidth, this.lineHeight());
+            });
+        }
+        if (global.Sprite_Button) {
+            def(Sprite_Button.prototype, "canvasToLocalX", function(x) {
+                let node = this;
+                while (node) { x -= node.x; node = node.parent; }
+                return x;
+            });
+            def(Sprite_Button.prototype, "canvasToLocalY", function(y) {
+                let node = this;
+                while (node) { y -= node.y; node = node.parent; }
+                return y;
+            });
+        }
+        // ---- end audit gap-fills ----
+
         // ---- Window_Selectable MV scroll/sound API ----
         if (global.Window_Selectable) {
             var WS = Window_Selectable.prototype;
@@ -2321,6 +2579,34 @@
             });
             def(WS, "setBottomRow", function(row) {
                 this.setTopRow(row - (this.maxPageRows() - 1));
+            });
+            // MV scrolled a row at a time; MZ scrolls by pixels
+            // (smoothScrollBy). YEP_QuestJournal walks a list into view with
+            // these, and processWheel below always relied on them.
+            def(WS, "scrollDown", function() {
+                if (this.topRow() + 1 < this.maxRows()) this.setTopRow(this.topRow() + 1);
+            });
+            def(WS, "scrollUp", function() {
+                if (this.topRow() > 0) this.setTopRow(this.topRow() - 1);
+            });
+            def(WS, "updateCursor", function() {
+                if (typeof this.refreshCursor === "function") this.refreshCursor();
+            });
+            // MV's touch handler, wrapped by row/stance plugins (YEP_RowFormation,
+            // BraverAutoStance) that then call it. MZ handles touch in
+            // processTouch/onTouchSelect, so this only runs when a plugin
+            // calls it: the MV behaviour over MZ's hitIndex.
+            def(WS, "onTouch", function(triggered) {
+                const lastIndex = this.index();
+                const hitIndex = typeof this.hitIndex === "function" ? this.hitIndex() : -1;
+                if (hitIndex >= 0) {
+                    if (hitIndex === this.index()) {
+                        if (triggered && this.isTouchOkEnabled()) this.processOk();
+                    } else if (this.isCursorMovable()) {
+                        this.select(hitIndex);
+                    }
+                }
+                if (this.index() !== lastIndex && global.SoundManager) SoundManager.playCursor();
             });
             def(WS, "isCursorVisible", function() {
                 var row = this.row();
@@ -2590,6 +2876,49 @@
             };
             Window_ShopBuy.prototype.initialize.__mvCompatShopSig = true;
             def(Window_ShopBuy.prototype, "windowWidth", function() { return 456; });
+        }
+        // ---- MV name-entry window constructor signatures: Window_NameEdit
+        // (actor, maxLength) and Window_NameInput(editWindow) sized and
+        // placed themselves; MZ takes a rect and is fed by setup /
+        // setEditWindow from the scene. A plugin that builds the scene
+        // MV-style (BraverNameScene) otherwise gets an edit window with no
+        // actor, and its first refresh reads faceName of null. ----
+        if (global.Window_NameEdit && !Window_NameEdit.prototype.initialize.__mvCompatNameSig) {
+            const originalNameEditInit = Window_NameEdit.prototype.initialize;
+            Window_NameEdit.prototype.initialize = function(actor, maxLength) {
+                if (!isRectangle(actor) && actor && typeof actor.faceName === "function") {
+                    const width = typeof this.windowWidth === "function" ? this.windowWidth() : 480;
+                    const height = this.fittingHeight(4);
+                    const inputHeight = this.fittingHeight(9);
+                    const rect = new Rectangle(
+                        Math.floor((Graphics.boxWidth - width) / 2),
+                        Math.floor((Graphics.boxHeight - (height + inputHeight + 8)) / 2),
+                        width, height);
+                    const result = originalNameEditInit.call(this, rect);
+                    this.setup(actor, Number(maxLength) || 16);
+                    this.refresh();
+                    return result;
+                }
+                return originalNameEditInit.apply(this, arguments);
+            };
+            Window_NameEdit.prototype.initialize.__mvCompatNameSig = true;
+            def(Window_NameEdit.prototype, "windowWidth", function() { return 480; });
+            def(Window_NameEdit.prototype, "windowHeight", function() { return this.fittingHeight(4); });
+        }
+        if (global.Window_NameInput && !Window_NameInput.prototype.initialize.__mvCompatNameSig) {
+            const originalNameInputInit = Window_NameInput.prototype.initialize;
+            Window_NameInput.prototype.initialize = function(editWindow) {
+                if (!isRectangle(editWindow) && editWindow && typeof editWindow.height === "number" && "_name" in editWindow) {
+                    const rect = new Rectangle(editWindow.x, editWindow.y + editWindow.height + 8,
+                        editWindow.width, this.fittingHeight(9));
+                    const result = originalNameInputInit.call(this, rect);
+                    this.setEditWindow(editWindow);
+                    return result;
+                }
+                return originalNameInputInit.apply(this, arguments);
+            };
+            Window_NameInput.prototype.initialize.__mvCompatNameSig = true;
+            def(Window_NameInput.prototype, "windowHeight", function() { return this.fittingHeight(9); });
         }
         if (global.Window_ShopNumber && !Window_ShopNumber.prototype.initialize.__mvCompatShopSig) {
             const originalShopNumberInit = Window_ShopNumber.prototype.initialize;
@@ -2913,6 +3242,27 @@
         if (P.__mvAnimationApiInstalled) return;
         P.__mvAnimationApiInstalled = true;
 
+        // MV's Sprite_Animation.setup(target, animation, mirror, delay) took
+        // one target and an MV cell-sheet animation. MZ's takes a targets
+        // array and an Effekseer animation, and reads soundTimings off it. A
+        // subclass that still calls the MV way (YEP_X_VisualStateFX's state
+        // animations, LeTBS) handed an MV animation to the Effekseer setup
+        // and died on `animation.soundTimings.concat`. Route MV animation
+        // data through the cell engine's setup on this very instance, and
+        // accept a single target either way.
+        var originalSetup = P.setup;
+        P.setup = function(targets, animation, mirror, delay, previous) {
+            var list = Array.isArray(targets) ? targets : (targets ? [targets] : []);
+            if (!Array.isArray(targets)) this._target = targets || null;
+            var mvData = animation && Array.isArray(animation.frames) && !Array.isArray(animation.soundTimings);
+            if (mvData && typeof MV.setup === "function") {
+                if (!this._cellSprites) this._cellSprites = [];
+                return MV.setup.call(this, list, animation, mirror, delay);
+            }
+            return originalSetup.call(this, list, animation, mirror, delay, previous);
+        };
+        P.setup.__mvCompatSetup = true;
+
         // MV plugins subclass Sprite_Animation expecting MV's cell-sheet
         // animation engine (LeTBS's Sprite_TBSAnimation calls remove/
         // setupRate/setupDuration/loadBitmaps/createSprites from its own
@@ -2979,6 +3329,44 @@
                 return mz.apply(this, arguments);
             };
         });
+    }
+
+    // MV's Bitmap kept its canvas, context and base texture in __canvas,
+    // __context and __baseTexture behind lazy _canvas/_context/_baseTexture
+    // getters; MZ stores them in the plain fields. An MV plugin that
+    // replaces _createCanvas (BraverMiniLabelPerformance, FSDK_EngineTuner,
+    // YEP_X_CoreUpdatesOpt) writes the double-underscore fields and creates
+    // no base texture at all, leaving the engine's _context null at the
+    // first fillRect. Accessors on the prototype make the two spellings one
+    // storage, and the base texture is made from the canvas on first read
+    // as MV did.
+    function installBitmapBackingFieldCompatibility() {
+        if (!global.Bitmap || !Bitmap.prototype || Bitmap.prototype.__mvBackingFields) return;
+        const proto = Bitmap.prototype;
+        const field = (name, get) => {
+            const existing = Object.getOwnPropertyDescriptor(proto, name);
+            if (existing && existing.get) return;
+            const backing = "_" + name;
+            Object.defineProperty(proto, name, {
+                get: get || function() { return this[backing] === undefined ? null : this[backing]; },
+                set: function(value) { this[backing] = value; },
+                configurable: true
+            });
+        };
+        field("_canvas");
+        field("_context");
+        field("_baseTexture", function() {
+            if (!this.__baseTexture && this.__canvas && typeof this._createBaseTexture === "function") {
+                this._createBaseTexture(this.__canvas);
+            }
+            return this.__baseTexture === undefined ? null : this.__baseTexture;
+        });
+        if (typeof proto._setDirty !== "function") {
+            proto._setDirty = function() {
+                if (this.__baseTexture && typeof this.__baseTexture.update === "function") this.__baseTexture.update();
+            };
+        }
+        proto.__mvBackingFields = true;
     }
 
     function installImageCompatibility() {
@@ -3476,6 +3864,17 @@
             const constructCompatFilter = function(vertexSrc, fragmentSrc, uniforms, newTarget) {
                 if (typeof vertexSrc === "string" || typeof fragmentSrc === "string") {
                     fragmentSrc = translateFragment(fragmentSrc);
+                    // v4's custom multiply blends ([ZERO, SRC_COLOR]) ignored
+                    // alpha; v8's "multiply" is premultiplied, so a filter
+                    // whose output carries a low alpha (KhasUltraLighting's
+                    // light + ambient) barely darkens anything. The plugin's
+                    // main becomes a helper and the real main can force the
+                    // output opaque when the filter is drawn with such a
+                    // blend (pixi_compat's __reactorOpaqueBlendIds).
+                    if (/\bfinalColor\b/.test(fragmentSrc) && /\bvoid\s+main\s*\(\s*(?:void)?\s*\)/.test(fragmentSrc)) {
+                        fragmentSrc = fragmentSrc.replace(/\bvoid\s+main\s*\(\s*(?:void)?\s*\)/, "void rrCompatUserMain(void)")
+                            + "\nuniform float uReactorOpaque;\nvoid main(void) {\n    rrCompatUserMain();\n    if (uReactorOpaque > 0.5) finalColor.a = 1.0;\n}\n";
+                    }
                     const shaderSource = defaultFilterVertex + "\n" + (fragmentSrc || "");
                     const uniformStructures = buildUniformStructures(shaderSource, uniforms);
                     const filterUniforms = new PIXI.UniformGroup(uniformStructures);
@@ -3495,6 +3894,21 @@
                     }], newTarget);
                     inst.uniforms = filterUniforms.uniforms;
                     inst.__mvCompatUniformGroup = filterUniforms;
+                    // A numeric blend mode (an MV plugin's registered id) is
+                    // translated into v8's render state, and a v4 pure
+                    // multiply id switches the opaque output on.
+                    Object.defineProperty(inst, "blendMode", {
+                        get: function() { return this._state && this._state.blendMode !== undefined ? this._state.blendMode : "normal"; },
+                        set: function(value) {
+                            const name = PIXI.__reactorBlendModeName ? PIXI.__reactorBlendModeName(value) : value;
+                            if (this._state) this._state.blendMode = name;
+                            const group = this.__mvCompatUniformGroup;
+                            if (group && group.uniforms && "uReactorOpaque" in group.uniforms) {
+                                group.uniforms.uReactorOpaque = PIXI.__reactorOpaqueBlendIds && PIXI.__reactorOpaqueBlendIds.has(Number(value)) ? 1 : 0;
+                            }
+                        },
+                        configurable: true, enumerable: true
+                    });
                     for (const samplerName of extraSamplers) {
                         routeSamplerUniform(inst, samplerName, uniforms && uniforms[samplerName]);
                     }
@@ -3894,7 +4308,134 @@
         }
     }
 
+    // MV and MZ name the local-file functions alike but mean different
+    // things by them: MV's saveToLocalFile(savefileId, json) writes a JSON
+    // string and loadFromLocalFile(savefileId) returns one, synchronously;
+    // MZ's take a save NAME, carry zip data and return promises. An MV
+    // plugin that replaces them (BraverSaveEnhancement compresses with pako
+    // and keeps backups) leaves MZ's loadObject chaining .then on a string.
+    // When an MV game's plugin has replaced one, route saveObject /
+    // loadObject / exists / remove through the MV contract instead.
+    function installFinalStorageBridge() {
+        const SM = global.StorageManager;
+        const originals = SM && SM.__mvStorageOriginals;
+        if (!SM || !originals || !mvGameSemantics || SM.__mvStorageBridged) return;
+        const replaced = name => typeof SM[name] === "function" && SM[name] !== originals[name];
+        if (!replaced("loadFromLocalFile") && !replaced("saveToLocalFile") && !replaced("localFileExists")) return;
+        SM.__mvStorageBridged = true;
+        const isPromise = value => !!value && typeof value.then === "function";
+        const mvId = saveName => {
+            if (saveName === "global") return 0;
+            if (saveName === "config") return -1;
+            const match = /^file(\d+)$/.exec(String(saveName));
+            // MZ's autosave is file0; MV's id 0 is the global index, so the
+            // autosave keeps a name of its own (fileautosave.rpgsave).
+            if (match && Number(match[1]) === 0) return "autosave";
+            return match ? Number(match[1]) : saveName;
+        };
+        const local = () => typeof SM.isLocalMode === "function" && SM.isLocalMode();
+        if (replaced("loadFromLocalFile")) {
+            const load = SM.loadFromLocalFile;
+            const originalLoadObject = SM.loadObject;
+            SM.loadObject = function(saveName) {
+                if (!local()) return originalLoadObject.call(this, saveName);
+                return new Promise((resolve, reject) => {
+                    try { resolve(load.call(this, mvId(saveName))); } catch (e) { reject(e); }
+                }).then(result => {
+                    // An MZ-aware replacement still returns zip data in a promise.
+                    if (isPromise(result)) return result.then(zip => this.zipToJson(zip));
+                    if (result === undefined || result === null) throw new Error("Savefile not found");
+                    return result;
+                }).then(json => this.jsonToObject(json));
+            };
+        }
+        if (replaced("saveToLocalFile")) {
+            const save = SM.saveToLocalFile;
+            const originalSaveObject = SM.saveObject;
+            SM.saveObject = function(saveName, object) {
+                if (!local()) return originalSaveObject.call(this, saveName, object);
+                return this.objectToJson(object).then(json => {
+                    const result = save.call(this, mvId(saveName), json);
+                    return isPromise(result) ? result : undefined;
+                });
+            };
+        }
+        if (replaced("localFileExists")) {
+            const exists = SM.localFileExists;
+            const originalExists = SM.exists;
+            SM.exists = function(saveName) {
+                if (!local()) return originalExists.call(this, saveName);
+                return !!exists.call(this, mvId(saveName));
+            };
+        }
+        if (replaced("removeLocalFile")) {
+            const remove = SM.removeLocalFile;
+            const originalRemove = SM.remove;
+            SM.remove = function(saveName) {
+                if (!local()) return originalRemove.call(this, saveName);
+                return remove.call(this, mvId(saveName));
+            };
+        }
+    }
+
+    // YEP_FpsSynchOption's synch-off path is MV's whole frame in its own
+    // hand: input, scene change, scene update, render. It never calls
+    // updateFrameCount (MZ's frame counter) or updateEffekseer, so timers
+    // and effects would stand still with the option off.
+    function installFinalFrameLoopCompatibility() {
+        const SM = global.SceneManager;
+        if (!SM || typeof SM.updateMainNoFpsSynch !== "function" || SM.updateMainNoFpsSynch.__mvCompatWrapped) return;
+        const original = SM.updateMainNoFpsSynch;
+        SM.updateMainNoFpsSynch = function() {
+            if (typeof this.updateFrameCount === "function") this.updateFrameCount();
+            if (typeof this.updateEffekseer === "function") this.updateEffekseer();
+            return original.apply(this, arguments);
+        };
+        SM.updateMainNoFpsSynch.__mvCompatWrapped = true;
+    }
+
+    // MV plugins borrow Spriteset_Base.createPictures onto a scene
+    // (SRD_CameraCore runs it with the map scene as `this` to own the
+    // picture container). MZ's version reads this.pictureContainerRect(),
+    // which only a spriteset has; lend it to whatever is calling.
+    function installPictureContainerCompatibility() {
+        const SB = global.Spriteset_Base;
+        if (!SB || !SB.prototype || typeof SB.prototype.createPictures !== "function" || SB.prototype.createPictures.__mvCompatWrapped) return;
+        const original = SB.prototype.createPictures;
+        SB.prototype.createPictures = function() {
+            if (typeof this.pictureContainerRect !== "function" && typeof SB.prototype.pictureContainerRect === "function") {
+                this.pictureContainerRect = SB.prototype.pictureContainerRect;
+            }
+            return original.apply(this, arguments);
+        };
+        SB.prototype.createPictures.__mvCompatWrapped = true;
+    }
+
+    // MZ's Window_StatusBase keeps its gauges and names in _additionalSprites,
+    // made in its initialize. An MV plugin that builds a status window the MV
+    // way (Window_Selectable.prototype.initialize.call(this, x, y, w, h) from
+    // its own initialize, since MV had no Window_StatusBase) skips that, and
+    // the first refresh dies in hideAdditionalSprites. Make the registry on
+    // first use instead.
+    function installStatusBaseRegistryCompatibility() {
+        const WSB = global.Window_StatusBase;
+        if (!WSB || !WSB.prototype || WSB.prototype.__mvAdditionalSpritesGuarded) return;
+        for (const name of ["hideAdditionalSprites", "createInnerSprite", "placeGauge", "placeActorName", "placeStateIcon", "placeTimeGauge"]) {
+            const original = WSB.prototype[name];
+            if (typeof original !== "function") continue;
+            WSB.prototype[name] = function() {
+                if (!this._additionalSprites) this._additionalSprites = {};
+                return original.apply(this, arguments);
+            };
+        }
+        WSB.prototype.__mvAdditionalSpritesGuarded = true;
+    }
+
     function installFinalPluginCompatibility() {
+        installStatusBaseRegistryCompatibility();
+        installPictureContainerCompatibility();
+        installFinalStorageBridge();
+        installFinalFrameLoopCompatibility();
         installFinalMessageCompatibility();
         installFinalSaveCompatibility();
         installFinalBitmapCompatibility();
@@ -3947,6 +4488,27 @@
                 Sprite_AnimationMV.prototype[name] = fn;
             }
         });
+        // The propagated methods call helpers the plugins added beside them
+        // (YEP_X_ActSeqPack2's updatePosition asks this.isBattlerRelated()).
+        // Any method a plugin put on Sprite_Animation that the MZ host class
+        // has no name for at all comes along too: it cannot collide with
+        // anything, and without it the propagated method throws on the host.
+        Object.getOwnPropertyNames(Sprite_Animation.prototype).forEach(function(name) {
+            if (name === "constructor" || name in Sprite_AnimationMV.prototype) return;
+            const descriptor = Object.getOwnPropertyDescriptor(Sprite_Animation.prototype, name);
+            if (!descriptor || typeof descriptor.value !== "function" || descriptor.value.__mvCompatDispatch) return;
+            Sprite_AnimationMV.prototype[name] = descriptor.value;
+        });
+        // Those helpers read MV's singular this._target (YEP_X_ActSeqPack2's
+        // isBattlerRelated looks at this._target.parent); the MZ host keeps
+        // a _targets array. Alias the two.
+        if (!Object.getOwnPropertyDescriptor(Sprite_AnimationMV.prototype, "_target")) {
+            Object.defineProperty(Sprite_AnimationMV.prototype, "_target", {
+                get: function() { return this._targets && this._targets.length ? this._targets[0] : null; },
+                set: function(value) { this._targets = value ? [value] : []; },
+                configurable: true
+            });
+        }
     }
 
     function installFinalBattleHudCompatibility() {
@@ -4748,11 +5310,13 @@
     installDataManagerCompatibility();
     installStorageManagerCompatibility();
     installPixiCompatibility();
+    installBitmapBackingFieldCompatibility();
     installPluginCommandBridge();
     installInterpreterCompatibility();
     installWindowCompatibility();
     installSceneCompatibility();
     installBackgroundSnapCompatibility();
+    installTraitObjectsCopyCompatibility();
     installBoxSizeCompatibility();
     installStaleEventGuard();
     installSpriteBaseCompatibility();
@@ -4790,6 +5354,9 @@
     // game measure and behave like MV; mutually exclusive with MZ-authored
     // UI, so only games authored in RPG Maker MV get them.
     if (mvGameSemantics) {
+        installInputPhaseCompatibility();
+        installFrontViewActorSpritesCompatibility();
+        installBattleSpritesetFirstUpdateCompatibility();
         installStatusBaseFallthroughCompatibility();
         installMenuSceneCompatibility();
         installWindowMetricsCompatibility();

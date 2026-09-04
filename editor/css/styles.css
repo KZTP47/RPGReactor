@@ -2713,6 +2713,43 @@
             border-color: var(--color-accent-bright);
         }
 
+        /* Map Properties › BGM sequence: a strip per nesting depth (entry,
+           palette layer, pool item) in the palette's own accent, and small
+           buttons that sit off the panel rather than matching it. */
+        .bgm-seq-depth-1 {
+            padding: 4px 6px;
+            border-left: 3px solid var(--color-accent-bright);
+        }
+        .bgm-seq-depth-2 {
+            margin: 4px 0 4px 22px;
+            padding: 4px 6px;
+            border-left: 3px solid var(--color-accent);
+            background-color: var(--color-accent-tint-10);
+            border-radius: 0 3px 3px 0;
+        }
+        .bgm-seq-depth-3 {
+            margin: 2px 0 2px 14px;
+            padding: 2px 6px;
+            border-left: 3px solid var(--color-accent-muted);
+        }
+        .bgm-seq-btn {
+            padding: 2px 8px;
+            font-size: 11px;
+            line-height: 1.4;
+            /* The alternate input face: a step lighter than inputs, two
+               above the panel, in every palette. */
+            background-color: var(--color-bg-input-alt);
+            border: 1px solid var(--color-border);
+            color: var(--color-text);
+            border-radius: 3px;
+            cursor: pointer;
+            transition: background-color 0.15s, border-color 0.15s;
+        }
+        .bgm-seq-btn:hover {
+            background-color: var(--color-bg-hover);
+            border-color: var(--color-accent-border-mid);
+        }
+
         /* Browser editor layout. Desktop NW.js keeps its deliberate 1280x720 minimum. */
         html.rr-web,
         html.rr-web body,

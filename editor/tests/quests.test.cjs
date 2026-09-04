@@ -4,6 +4,7 @@
  */
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
@@ -19,7 +20,7 @@ function loadRuntime(dataQuests, world = {}) {
     const context = {
         console,
         window: null,
-        $dataQuests: undefined,
+        $dataReactorQuests: undefined,
         $dataSystem: world.system || { reactorQuests: {} },
         $gameSwitches: { value: id => !!(world.switches || {})[id] },
         $gameVariables: { value: id => (world.variables || {})[id] || 0 },
@@ -43,7 +44,7 @@ function loadRuntime(dataQuests, world = {}) {
     context.window = context;
     vm.createContext(context);
     vm.runInContext(read('runtime/reactor_quests.js'), context);
-    context.$dataQuests = dataQuests;
+    context.$dataReactorQuests = dataQuests;
     context.ReactorQuests._state = 'done';
     const system = Object.create(context.Game_System.prototype);
     context.$gameSystem = system;
@@ -248,11 +249,120 @@ test('a manifest is read the way the runtime resolves it, and a project without 
     assert.equal(QuestImporter.uniqueKey('', new Set()), 'quest');
 });
 
+test('Yanfly quests come out of their numbered slots: category from Type, hidden objectives and rewards, untouched slots skipped', () => {
+    const QuestImporter = loadImporter();
+    const note = text => JSON.stringify(text);
+    const slot = quest => JSON.stringify({
+        'Title': quest.title || '', 'Type': quest.type || '', 'Difficulty': quest.difficulty || '', 'From': quest.from || '',
+        'Location': quest.location || '', 'Description': JSON.stringify((quest.descriptions || []).map(note)),
+        'Objectives List': JSON.stringify((quest.objectives || []).map(note)),
+        'Visible Objectives': quest.visibleObjectives ? JSON.stringify(quest.visibleObjectives.map(String)) : '',
+        'Rewards List': JSON.stringify((quest.rewards || []).map(note)),
+        'Visible Rewards': quest.visibleRewards ? JSON.stringify(quest.visibleRewards.map(String)) : '',
+        'Subtext': quest.subtexts ? JSON.stringify(quest.subtexts.map(note)) : ''
+    });
+    const params = {
+        '---Main Menu---': '', 'Quest Command': 'Quests',
+        'Quest 1': slot({ title: '\\i[677]Serious Questions', type: 'Primary Missions', difficulty: '\\c[6]Easy\\c[0]', from: 'Central Command', location: 'Osiris',
+            descriptions: ['A drone is loose.\n<br>\nStop it.', 'Later description'], objectives: ['Get past the drones.', 'Eliminate the rest'], visibleObjectives: [1],
+            rewards: ['Reputation +5', 'A secret'], visibleRewards: [1], subtexts: ['', 'Sub'] }),
+        'Quest 2': slot({}),
+        'Quest 3': slot({ title: 'Third', type: 'Side' }),
+        'Quest 10': slot({ objectives: ['Only an objective'] })
+    };
+    const quests = QuestImporter.fromYanflyParameters(params);
+    assert.deepEqual([...quests.map(q => q.key)], ['yep1', 'yep3', 'yep10'], 'slot order, empty slot 2 skipped, 10 sorts after 3');
+    const [first, third, tenth] = quests;
+    assert.equal(first.name, '\\i[677]Serious Questions');
+    assert.equal(first.category, 'Primary Missions');
+    assert.equal(first.difficulty, '\\c[6]Easy\\c[0]');
+    assert.equal(first.from, 'Central Command');
+    assert.equal(first.description, 'A drone is loose.\n<br>\nStop it.');
+    assert.deepEqual([...first.objectives.map(o => [...[o.text, o.hidden]])], [['Get past the drones.', false], ['Eliminate the rest', true]]);
+    assert.deepEqual([...first.rewards.map(r => [...[r.text, r.hidden]])], [['Reputation +5', false], ['A secret', true]]);
+    assert.equal(first.subtext, 'Sub');
+    assert.match(first.note, /^<Import: YEP_QuestJournal quest 1>\n<Import: other descriptions>\nLater description\n<\/Import>/);
+    assert.equal(third.name, 'Third');
+    assert.deepEqual([...third.objectives], []);
+    assert.equal(tenth.name, 'Quest 10', 'a quest with text but no title is named by its slot');
+    assert.equal(QuestImporter.fromYanflyParameters(null).length, 0);
+});
+
+test('GS quests come out of their file: categories by index, later steps hidden, rewards named from the database', () => {
+    const QuestImporter = loadImporter();
+    const data = [
+        ['Main Story', 'Side Quest'],
+        { id: 1, icon: 77, cat: 0, name: 'Take Down Bertha', desc: 'A drone must be destroyed.',
+          steps: [['Use the entrance.', true, 1, 1, false, 'default', true], ['Shut down the signal.', true, 1, 1, false, 'default', false], ['Defeat Bertha.', false]],
+          rewards: [['xp', 50, 1, false], ['gold', 200, 1, true], ['item', 3, 2, false], ['weapon', 9, 1, false]] },
+        null,
+        { id: 3, cat: 1, name: 'Errand', desc: '', steps: [['Go']], rewards: [] }
+    ];
+    const names = (kind, id) => ({ 'item:3': 'Potion', 'weapon:9': 'Sword' })[`${kind}:${id}`] || '';
+    assert.equal(QuestImporter.isGsData(data), true);
+    assert.equal(QuestImporter.isGsData([null, { id: 1 }]), false, 'an MZ-shaped file is not GS');
+    assert.equal(QuestImporter.isGsData([]), false);
+    const quests = QuestImporter.fromGsData(data, names);
+    assert.deepEqual([...quests.map(q => q.key)], ['gs1', 'gs3']);
+    const [bertha, errand] = quests;
+    assert.equal(bertha.name, 'Take Down Bertha');
+    assert.equal(bertha.iconIndex, 77);
+    assert.equal(bertha.category, 'Main Story');
+    assert.equal(bertha.description, 'A drone must be destroyed.');
+    assert.deepEqual([...bertha.objectives.map(o => [...[o.text, o.hidden]])], [['Use the entrance.', false], ['Shut down the signal.', true], ['Defeat Bertha.', true]],
+        'the plugin shows only the first step at the start, whatever the file says');
+    assert.deepEqual([...bertha.rewards.map(r => [...[r.text, r.hidden]])], [['50 EXP', false], ['200 Gold', true], ['Potion x2', false], ['Sword', false]]);
+    assert.match(bertha.note, /^<Import: GS_QuestSystem quest 1>\n<Import: objective 1 tracks variable 1 to 1>\n<Import: objective 2 tracks variable 1 to 1>$/);
+    assert.equal(errand.category, 'Side Quest');
+    assert.equal(errand.note, '<Import: GS_QuestSystem quest 3>');
+    assert.equal(QuestImporter.gsRewardText(['item', 4, 1], () => ''), 'item #4', 'no database, no name');
+    assert.equal(QuestImporter.gsRewardText(['custom', 'Unknown', 'A medal', false]), 'A medal');
+});
+
+test('the dialog learns every source, present or not, from one project folder', () => {
+    const QuestImporter = loadImporter();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-quests-'));
+    try {
+        fs.mkdirSync(path.join(dir, 'js'));
+        fs.mkdirSync(path.join(dir, 'data'));
+        const yanfly = JSON.stringify({ 'Title': 'One', 'Type': 'T', 'Objectives List': '["\"Go\""]', 'Visible Objectives': '["1"]' });
+        fs.writeFileSync(path.join(dir, 'js', 'plugins.js'), `var $plugins =\n[\n{"name":"YEP_QuestJournal","status":false,"parameters":{"Quest 1":${JSON.stringify(yanfly)},"Quest 2":"{\\"Title\\":\\"\\"}"}}\n];\n`);
+        fs.writeFileSync(path.join(dir, 'data', 'Quests.json'), JSON.stringify([['Cat'], { id: 1, cat: 0, name: 'A', steps: [['s']], rewards: [['item', 1, 1]] }, { id: 2, cat: 0, name: 'B', steps: [], rewards: [] }]));
+        fs.writeFileSync(path.join(dir, 'data', 'Items.json'), JSON.stringify([null, { id: 1, name: 'Herb' }]));
+        const available = QuestImporter.available(dir);
+        assert.deepEqual(JSON.parse(JSON.stringify(available.map(entry => [entry.source, entry.present, entry.enabled, entry.count]))), [
+            ['visustella', false, false, 0],
+            ['yanfly', true, false, 1],
+            ['gs', true, false, 2]
+        ]);
+        assert.equal(QuestImporter.read(dir, 'gs').quests[0].rewards[0].text, 'Herb', 'the reward is named from the project database');
+        assert.equal(QuestImporter.read(dir, 'visustella'), null);
+        assert.equal(QuestImporter.read(dir, 'nonsense'), null);
+        fs.writeFileSync(path.join(dir, 'data', 'Quests.json'), JSON.stringify([null, { id: 1, name: 'Reactor-shaped' }]));
+        assert.equal(QuestImporter.read(dir, 'gs'), null, 'a file that is not GS\'s is not offered as GS');
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('the Quests tab imports through one button and a source picker, not a plugin-named button', () => {
+    const editor = read('editor/src/database/DatabaseQuestEditor.js');
+    assert.match(editor, /quest-import"[^>]*>\$\{tt\('Import…'\)\}<\/button>/);
+    assert.match(editor, /importButton\.addEventListener\('click', \(\) => this\.importQuests\(\)\)/);
+    assert.match(editor, /QuestImporter\.available\(project\.path\)/);
+    assert.match(editor, /showImportDialog\(sources, source => this\.importFrom\(source\)\)/);
+    assert.match(editor, /QuestImporter\.read\(project\.path, source\)/);
+    assert.doesNotMatch(editor, /VisuStella/, 'no source is special-cased in the editor');
+    for (const key of ['Import Quests', 'not in this project', '{count} quest(s) found', 'Import {count} quest(s) from {source}?']) {
+        assert.ok(editor.includes(`'${key}'`), key);
+    }
+});
+
 // --- the editor ------------------------------------------------------------
 
 test('the Quests tab is wired like every other Reactor tab, with its own file that a project only gains once it authors one', () => {
     const manager = read('editor/src/DatabaseManager.js');
-    assert.match(manager, /\['quests', 'Quests\.json'\],\n\s*\['system', 'System\.json'\]/);
+    assert.match(manager, /\['quests', 'ReactorQuests\.json'\],\n\s*\['system', 'System\.json'\]/);
     assert.match(manager, /if \(!Array\.isArray\(loaded\.quests\) \|\| loaded\.quests\.length === 0\) loaded\.quests = \[null\];/);
     assert.match(manager, /if \(key === 'quests' && !this\.hasQuests\(\)\n\s*&& !this\.fs\.existsSync/);
     for (const method of ['getQuests()', 'getQuest(id)', 'hasQuests()', 'addQuest(record)', 'updateQuest(id, data)']) assert.ok(manager.includes(`    ${method} {`), method);
@@ -263,7 +373,7 @@ test('the Quests tab is wired like every other Reactor tab, with its own file th
     assert.match(ui, /quests: \{ name: 'New Quest', key: '', category: ''/);
     assert.match(ui, /'actors', 'enemies', 'quests'\]/, 'the list shows quest icons');
     assert.match(read('editor/src/I18nManager.js'), /quests: 'menu\.quests',/);
-    assert.match(read('editor/src/ProjectManager.js'), /'Quests\.json': \[null\],/);
+    assert.match(read('editor/src/ProjectManager.js'), /'ReactorQuests\.json': \[null\],/);
     const index = read('editor/index.html');
     for (const script of ['src/database/QuestImporter.js', 'src/database/DatabaseQuestEditor.js', 'src/event/commands/QuestCommandEditor.js']) assert.ok(index.includes(script), script);
 });
@@ -308,4 +418,18 @@ test('the quest form normalizes an old record and writes nested fields and lists
     assert.equal(store[4].key, 'hero-1');
     editor.writePath(store[4], 'objectives.0.switchId', 9);
     assert.equal(store[4].objectives[0].switchId, 9, 'a list entry is created on the way');
+});
+
+test("Reactor's quest file and global never shadow a plugin's", () => {
+    const runtime = read('runtime/reactor_quests.js');
+    const editor = read('editor/src/DatabaseManager.js') + read('editor/src/ProjectManager.js');
+    // YEP_QuestJournal and GS_QuestSystem both declare $dataQuests, and
+    // GS_QuestSystem stores its quests in data/Quests.json: five of the
+    // bundled MV projects carry that file. Reactor must neither read it as
+    // its own nor let the editor rewrite it.
+    assert.doesNotMatch(runtime, /\$dataQuests\b/);
+    assert.doesNotMatch(runtime, /["']data\/Quests\.json["']/);
+    assert.match(runtime, /data\/ReactorQuests\.json/);
+    assert.doesNotMatch(editor, /['"]Quests\.json['"]/);
+    assert.match(editor, /ReactorQuests\.json/);
 });

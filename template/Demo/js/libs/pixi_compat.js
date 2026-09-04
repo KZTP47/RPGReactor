@@ -584,8 +584,28 @@
         // v8 auto-upgrade path: if this instance has already been constructed
         // as a real v8 PIXI instance (via MZGlobalUpgrade's Reflect.construct
         // wrap), v8's super already ran. Skip to avoid overwriting state.
-        if (instance && instance.__pixiInitialized) return instance;
         args = args || [];
+        if (instance && instance.__pixiInitialized) {
+            // MZGlobalUpgrade built the v8 instance before the legacy
+            // initialize ran, so the super call's arguments never reached the
+            // constructor: a plugin's `PIXI.Sprite.call(this, texture)` left
+            // the sprite on the empty texture (KhasUltraLighting's light-map
+            // sprite drew a 1x1 white). Apply what the constructor would have.
+            try {
+                const first = args[0];
+                if (PIXI.Sprite && instance instanceof PIXI.Sprite && first && (first.source || first.baseTexture)) {
+                    instance.texture = first;
+                    if (PIXI.TilingSprite && instance instanceof PIXI.TilingSprite) {
+                        if (typeof args[1] === "number") instance.width = args[1];
+                        if (typeof args[2] === "number") instance.height = args[2];
+                    }
+                } else if (PIXI.Text && instance instanceof PIXI.Text && (typeof first === "string" || typeof first === "number")) {
+                    instance.text = String(first);
+                    if (args[1]) instance.style = args[1];
+                }
+            } catch (e) { /* the legacy initialize usually sets these itself */ }
+            return instance;
+        }
         // Whether a class can be applied is a property of the class, not the
         // call: learn it once. Discovering it by throwing on every
         // `new Point()` and `new Rectangle()` cost half a second of every
@@ -638,6 +658,53 @@
             }
         }
     };
+
+    // -------------------------------------------------------------------------
+    // PIXISuper only helps code that calls it. A plugin's own class written
+    // the MV way -- `function X() { this.initialize.apply(this, arguments); }`,
+    // `X.prototype = Object.create(PIXI.Container.prototype)` and then
+    // `PIXI.Container.call(this)` in initialize -- calls the ES6 class
+    // directly and dies with "Class constructor Container cannot be invoked
+    // without 'new'". MZGlobalUpgrade cannot reach it either when the class
+    // lives inside the plugin's closure (BraverPost's PostmoogleSprite).
+    //
+    // So the exported base classes become callable: `new PIXI.X()` and
+    // `class Y extends PIXI.X` construct the real class as before, while a
+    // plain call routes through PIXISuper onto `this`. The wrapper shares
+    // the real prototype, so Object.create(PIXI.X.prototype) and instanceof
+    // are unchanged.
+    // -------------------------------------------------------------------------
+    (function makePixiBaseClassesCallable() {
+        const names = [
+            "Container", "Sprite", "Graphics", "Text", "TilingSprite", "Mesh",
+            "ParticleContainer", "AnimatedSprite", "BitmapText", "NineSliceSprite",
+            "NineSlicePlane", "MeshRope", "SimpleRope", "MeshPlane", "SimplePlane"
+        ];
+        for (const name of names) {
+            const Real = PIXI[name];
+            if (typeof Real !== "function" || Real.__rrCallable || Real.__rrReal) continue;
+            let isClass = false;
+            try { isClass = /^class[\s{]/.test(Function.prototype.toString.call(Real)); } catch (e) { isClass = false; }
+            if (!isClass) continue;
+            const Wrapper = function() {
+                const args = Array.prototype.slice.call(arguments);
+                if (new.target) {
+                    return Reflect.construct(Real, args, new.target === Wrapper ? Real : new.target);
+                }
+                return window.PIXISuper(Real, this, args);
+            };
+            Wrapper.prototype = Real.prototype;
+            try { Object.setPrototypeOf(Wrapper, Real); } catch (e) { /* statics stay on Real */ }
+            try { Object.defineProperty(Wrapper, "name", { value: name, configurable: true }); } catch (e) { /* cosmetic */ }
+            Wrapper.__rrCallable = true;
+            Wrapper.__rrReal = Real;
+            try {
+                PIXI[name] = Wrapper;
+            } catch (e) {
+                compatLog("pixi_compat: could not make PIXI." + name + " callable: " + e.message);
+            }
+        }
+    })();
 
     // -------------------------------------------------------------------------
     // v8 replaced numeric constant enums (SCALE_MODES, WRAP_MODES, DRAW_MODES)
@@ -1202,6 +1269,119 @@
         };
         PIXI.AbstractRenderer.prototype.render.__reactorFlushesTextures = true;
     }
+
+    // -------------------------------------------------------------------------
+    // Numeric blend modes. MV/MZ plugins assign numbers (sprite.blendMode = 1,
+    // or a custom id they registered on PIXI.BLEND_MODES and described to the
+    // v4 renderer as a GL factor pair in renderer.state.blendModes). v8 blend
+    // modes are strings; an unknown number renders as normal, which is how a
+    // lighting layer meant to multiply ends up an opaque white sheet
+    // (KhasUltraLighting). The registry maps ids to v8 names, the state table
+    // accepts v4-style registrations and translates the GL pair, and the
+    // Container and Filter blend-mode setters run numbers through it.
+    // -------------------------------------------------------------------------
+    (function installNumericBlendModes() {
+        if (!_isV8Pixi) return;
+        const byId = PIXI.__reactorBlendModeById = PIXI.__reactorBlendModeById || { 0: "normal", 1: "add", 2: "multiply", 3: "screen" };
+        // v4's [ZERO, SRC_COLOR] multiplied colour and ignored alpha; v8's
+        // "multiply" is premultiplied, so a low-alpha source barely shows.
+        // Ids registered as that pair are remembered, and a bridged filter
+        // drawn with one forces its output alpha to 1.
+        const opaqueIds = PIXI.__reactorOpaqueBlendIds = PIXI.__reactorOpaqueBlendIds || new Set();
+        const GL = { ZERO: 0, ONE: 1, SRC_COLOR: 768, ONE_MINUS_SRC_COLOR: 769, SRC_ALPHA: 770, ONE_MINUS_SRC_ALPHA: 771, DST_ALPHA: 772, DST_COLOR: 774 };
+        const nameForPair = pair => {
+            if (!Array.isArray(pair)) return "normal";
+            const [src, dst] = pair;
+            if (dst === GL.ONE && (src === GL.SRC_ALPHA || src === GL.ONE)) return "add";
+            if ((src === GL.ZERO && src !== dst && (dst === GL.SRC_COLOR || dst === GL.SRC_ALPHA)) || (src === GL.DST_COLOR && dst === GL.ZERO)) return "multiply";
+            if (src === GL.ONE && dst === GL.ONE_MINUS_SRC_COLOR) return "screen";
+            return "normal";
+        };
+        const translate = value => {
+            if (typeof value === "number") return byId[value] || "normal";
+            return value;
+        };
+        PIXI.registerReactorBlendMode = function(id, name) { byId[Number(id)] = String(name); };
+        PIXI.__reactorBlendModeName = translate;
+
+        // renderer.state.blendModes[id] = [srcFactor, dstFactor]  (v4)
+        const stateClass = PIXI.GlStateSystem || PIXI.StateSystem;
+        if (stateClass && stateClass.prototype && !Object.getOwnPropertyDescriptor(stateClass.prototype, "blendModes")) {
+            Object.defineProperty(stateClass.prototype, "blendModes", {
+                get: function() {
+                    if (!this.__rrBlendModes) {
+                        this.__rrBlendModes = new Proxy({}, {
+                            set(target, key, pair) {
+                                target[key] = pair;
+                                if (/^\d+$/.test(String(key))) {
+                                    byId[Number(key)] = nameForPair(pair);
+                                    if (Array.isArray(pair) && ((pair[0] === GL.ZERO && pair[1] === GL.SRC_COLOR) || (pair[0] === GL.DST_COLOR && pair[1] === GL.ZERO))) opaqueIds.add(Number(key));
+                                    else opaqueIds.delete(Number(key));
+                                }
+                                return true;
+                            }
+                        });
+                    }
+                    return this.__rrBlendModes;
+                },
+                configurable: true
+            });
+        }
+        // sprite.blendMode = 31
+        const containerDescriptor = Object.getOwnPropertyDescriptor(PIXI.Container.prototype, "blendMode");
+        if (containerDescriptor && containerDescriptor.set && !containerDescriptor.set.__rrNumeric) {
+            const setter = function(value) { return containerDescriptor.set.call(this, translate(value)); };
+            setter.__rrNumeric = true;
+            Object.defineProperty(PIXI.Container.prototype, "blendMode", { get: containerDescriptor.get, set: setter, configurable: true });
+        }
+        // filter.blendMode = 32  (v8 filters hold a plain field, set after construction)
+        if (PIXI.Filter && PIXI.Filter.prototype && !Object.getOwnPropertyDescriptor(PIXI.Filter.prototype, "blendMode")) {
+            Object.defineProperty(PIXI.Filter.prototype, "blendMode", {
+                get: function() { return this.__rrBlendMode === undefined ? "normal" : this.__rrBlendMode; },
+                set: function(value) { this.__rrBlendMode = translate(value); },
+                configurable: true
+            });
+        }
+    })();
+
+    // -------------------------------------------------------------------------
+    // PIXI v4's renderer.textureManager, which MV plugins reach for to free
+    // GPU textures they made themselves (KhasUltraLighting destroys its light
+    // render textures in clearScene). v5+ has no such object. The shim frees
+    // the GPU side only, as v4's destroyTexture did: the JS texture stays
+    // valid for whatever still references it, and a later render re-uploads.
+    // -------------------------------------------------------------------------
+    (function installTextureManagerShim() {
+        const classes = [PIXI.WebGLRenderer, PIXI.WebGPURenderer, PIXI.Renderer, PIXI.AbstractRenderer].filter(c => c && c.prototype);
+        for (const cls of classes) {
+            if (Object.getOwnPropertyDescriptor(cls.prototype, "textureManager")) continue;
+            Object.defineProperty(cls.prototype, "textureManager", {
+                get: function() {
+                    if (!this.__rrTextureManager) {
+                        const renderer = this;
+                        const release = texture => {
+                            if (!texture) return;
+                            const source = texture.source || texture.baseTexture || texture;
+                            try {
+                                if (typeof source.unload === "function") source.unload();          // v8 TextureSource
+                                else if (typeof source.dispose === "function") source.dispose();   // v5-v7 BaseTexture
+                                else if (renderer.texture && typeof renderer.texture.destroyTexture === "function") renderer.texture.destroyTexture(source);
+                            } catch (e) { /* freeing is best-effort */ }
+                        };
+                        this.__rrTextureManager = {
+                            destroyTexture: release,
+                            updateTexture: function(texture) { const source = texture && (texture.source || texture.baseTexture || texture); if (source && typeof source.update === "function") source.update(); },
+                            bindTexture: function() {},
+                            unbindTexture: function() {},
+                            removeAll: function() {}
+                        };
+                    }
+                    return this.__rrTextureManager;
+                },
+                configurable: true
+            });
+        }
+    })();
 
     // -------------------------------------------------------------------------
     // v8's FilterSystem crashes after a renderer resolution change (toggling

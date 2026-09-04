@@ -1,8 +1,187 @@
 # Handoff - 0.98.5 In Progress
 
+## 2026-09-03 — Star Shift Legacy as a second MV corpus (runtime `20260903.1`)
+
+`template/Star-Shift Legacy` (untracked, like the other Star Shift copies;
+both marker files present, MV plugin stack) is the owner's new error-hunting
+project. First playtest findings, all fixed:
+
+- **Resolution.** YEP_CoreEngine sets `SceneManager._screenWidth/_screenHeight`
+  (1280x720) at load; MV data has no `advanced` block and the editor had
+  written 816x624 into System.json, which `Scene_Boot.resizeScreen` took as
+  authored. `installBoxSizeCompatibility` now wraps `resizeScreen`: under
+  `mvGameSemantics`, a finite plugin-set size is written into
+  `$dataSystem.advanced` (screen and UI area) before the MZ boot runs. The
+  sibling Star Shift projects were unaffected only because their System.json
+  already says 1280x720. Editor previews (message, troop, UI) still read
+  `advanced` from disk, so for Legacy they show 816x624 until System 2 is set
+  to 1280x720; the runtime no longer depends on that.
+- **F2 crash.** Fullscreen_Options replaces `Graphics._onKeyDown` with MV's
+  body, which calls `this._switchFPSMeter()`. Aliased to `_switchFPSCounter`
+  in `installGraphicsCompatibility` (a plugin's own definition wins).
+- **Scaling toast removed** (see the 09-02 fullscreen note below); the console
+  report is `console.debug`, invisible unless Verbose is on.
+- **Quest name collision (runtime `20260903.2`).** New Game crashed in
+  `YEP_QuestJournal` `questAdd`: Reactor's `reactor_quests.js` loaded the
+  project's `data/Quests.json` — a GS_QuestSystem file, present in five
+  bundled MV projects — into `$dataQuests`, the global Yanfly builds from its
+  parameters. Renamed Reactor's file to `data/ReactorQuests.json` and the
+  global to `$dataReactorQuests` (runtime, DatabaseManager file map,
+  ProjectManager defaults, tests, docs). The editor had already re-saved
+  Legacy's and Freelancers' plugin files with Reactor's default fields merged
+  in (plugin fields intact, GS_QuestSystem is not even in Legacy's plugin
+  list); Origins, Rebellion and Project4 still hold the originals. Every
+  project's `data/Quests.json` now belongs to its plugin again.
+- **LeTBS animation crash (runtime `20260903.3`).** `this._reactor3dBaseUpdate
+  is not a function` from `Sprite_AnimationMV.update` when mv_compat runs it
+  on LeTBS's `Sprite_TBSAnimation` (a `Sprite_Animation` in cell mode). The
+  3D wrappers in `reactor_sprites.js` now call
+  `X.prototype._reactor3dBaseUpdate.call(this)` instead of looking it up on
+  the instance. Rule for future wrappers there: never `this._reactor3dBase*()`.
+- **Import dialog.** Owner asked for a generic Import button with a source
+  picker. `QuestImporter.SOURCES` now has visustella / yanfly / gs;
+  `available()` + `read()` drive `DatabaseQuestEditor.showImportDialog`.
+  Legacy reads as Yanfly 14 quests (of 100 slots), GS 100. GS `item #1`
+  rewards are real: that project's item 1 has an empty name.
+- **Yanfly quest scene (runtime `20260903.4`).** `this._listWindow.scrollUp is
+  not a function`: MV's `Window_Selectable.scrollUp/scrollDown/updateCursor`
+  gap-filled in the "Window_Selectable MV scroll/sound API" block of
+  mv_compat (whose `processWheel` already called them). Verified by opening
+  `Scene_Quest` with `$gameTemp.reservedQuestOpen(1)` over CDP.
+- **PR #41 merged (APNG/GIF playback, runtime `20260903.5`).** Branched
+  from the 08-30 runtime; merged clean over today's work (stash, merge, pop:
+  no conflicts). Its frame compositor uploads through
+  `_baseTexture.update()` like the rest of Bitmap, which pixi_compat patches
+  per instance on v8, so the deferred-upload batching covers it. Runtime
+  re-synced into the 13 projects.
+- **PR #42 merged (ReactorEvents, runtime `20260903.14`).** A read-only
+  battle event feed (`docs/RUNTIME-EVENTS.md`); branched before today's
+  work, merged clean with the stash/merge/pop flow again. Its `actionEnd`
+  emit sits inside mv_compat's MV `endAction` override, so MV games feed it
+  too. Project4's `BraverCoreEdits.js` replaces `Game_Action.apply` outright
+  and now emits `actionApplied` itself, as the stock body does.
+
+## 2026-09-03 — BGM sequences (GitHub #11), built on the sequence model
+
+Owner accepted the contributor's plan with two changes (sequence model from
+the start; generic carry-through in `saveMapProperties`). Runtime
+`20260903.6`. Shape, engine and editor are described in
+`editor/CHANGELOG.md`; what to know when picking this up:
+
+- **Where things are.** Engine: `runtime/reactor_managers.js`, the "BGM
+  sequences" block after `AudioManager.checkErrors` plus branches in
+  `playBgm`, `replayBgm`, `updateBgmParameters`, `stopBgm`, `fadeOutBgm`,
+  `fadeInBgm`, `playMe`, `stopMe`, `saveBgm`, `checkErrors`. Tick from
+  `Scene_Base.update`. Map entry: `Game_Map.autoplay` and
+  `Game_System.saveWalkingBgm2` go through `AudioManager.mapBgmObject`.
+  Editor: `src/utils/BgmSequenceEditor.js`, `ProjectController`
+  (`populateBgmSequenceForm`, `mapBgmSequenceFromForm`, `pickSequenceTrack`,
+  the validation + carry-through in `saveMapProperties`), `index.html`
+  under `#map-bgm-picker`.
+- **Invariants.** `_bgmBuffer`/`_currentBgm` are null while a sequence
+  plays; anything that reads them must branch on `_bgmSequence`. Every
+  sequence buffer carries `_rrRetired` (set before destroy/fade so its
+  stop listener, which `destroy()` also fires, starts nothing) and
+  `_rrBaseVolume` (for ducking). `saveBgm()` → `{...fallback, pos: 0,
+  sequence: mapId}`; `playBgm` of that restarts it, or parks it in
+  `_pendingBgmSequence` until the map is current.
+- **Not done / open.** No layer cap (measure on weak hardware first, per
+  the plan). ME ducks to 0.25 (`BGM_SEQUENCE_ME_DUCK`); no per-map
+  setting. Map-level Silent-then-fallback from the plan is expressed as a
+  `[silence, track]` sequence. The contributor has not been told; the
+  owner may want to reply on #11 (no gh CLI here, so by hand).
+- **Harnesses.** scratchpad `seq-run.cjs` drives a Barebones copy
+  (`seq-project`, Map001 hand-edited) through the whole cycle over CDP;
+  `seq-preview` renders the list UI standalone for screenshots. Synthetic
+  Enter did not reach the Barebones title (unfocused window); call
+  `SceneManager._scene.commandNewGame()` instead.
+
+## 2026-09-03 — Project4 / Braver corpus (runtime `20260903.9`)
+
+`template/Project4` (untracked) is an MZ container holding the Braver 1.6.5
+plugin set (~250 MV plugins, FFXI: Braver). Eight compat fixes got it from
+"crash at load" to the first map with the intro playing; all in
+`reactor_mv_compat.js` / `pixi_compat.js`, listed in `editor/CHANGELOG.md`.
+Project-side, two things were done that are NOT Reactor's:
+
+- `js/plugins/BraverCoreEdits.js`, first in both `plugins.js` and
+  `reactor_plugins.js`: the game's hand-edited corescript (Scene_BattlePrep
+  shell from its rpg_scenes.js; the rpg_objects.js tweaks recovered by
+  diffing the copy in `js/plugins/rpg_objects.js` against stock 1.6.2).
+  Any other core edits Braver made are unknown — `Braver-1.6.5/` holds only
+  a LICENSE.
+- `index.html`: `$reactorMvCompat` flipped `false` → `true`. The container
+  was created in Reactor (no MV marker), so Tier-2 MV semantics were off
+  for an all-MV plugin stack. The editor writes that flag at "Install
+  Reactor Runtime" from the marker files; there is no UI toggle yet.
+
+Method that worked: `scratchpad/boot-any.cjs <project> <port>` boots, skips
+the splash with Enter, calls `commandNewGame`, and prints the error
+printer's text plus `EXTRA=<js>` probes; the silent createContents case
+was found by replaying `Window_Base.initialize` step by step inside the
+live game (`updateBackOpacity` threw inside a swallowed sprite update).
+**Audit workflow (use this before the next playtest, not after the crash):**
+
+    node editor/build-scripts/plugin-compat-audit.cjs template/Project4 \
+        --mv "template/Star-Shift Legacy/js/BACKUP" --json /tmp/audit.json
+    node editor/build-scripts/plugin-compat-probe.cjs template/Project4 /tmp/audit.json
+
+The audit's `mv-gap` lines are MV APIs the layer does not define statically;
+the probe boots the game and says which are undefined on the live
+prototypes (the layer fills many from loops). Fill those in mv_compat's
+"MV APIs the plugin-compat-audit found" block, re-run the probe. `--all`
+shows the this-call findings (plugin-to-plugin, mostly). Legacy's BACKUP
+holds stock MV 1.6.2, the reference corescript.
+
+Since then (runtime `20260903.17`): name entry, the main menu, map
+animations, the Khas lighting layer (a real light map composited as
+authored: dark rooms, lamp pools), entering a battle, the CTB turn flow
+through actions, and state animations on battlers all run.
+Contract differences the audit cannot see kept coming out of battle: MZ
+makes actor sprites only in side view and defers the spriteset's first
+update; MV's isInputting was phase-based; v4 filters/blend modes (numeric
+ids through a pixi_compat registry, the filter bridge in mv_compat forcing
+a pure-multiply filter's output opaque, `_createRenderer` called once from
+`_createPixiApp`); the global upgrade dropping super-call arguments.
+Expect more (victory, save/load through the storage bridge; Khas's
+`Khas_Sprite._renderWebGL/prepareRender` never run on v8, so anything it
+did per draw is silently missing).
+
+Playtest checkpoints take the 20-45 minute walk out of the loop: in a
+playtest the runtime saves slot 99 after every battle and map transfer,
+the title shows *F9: resume checkpoint*, F9 loads it. Verified end to end
+in the harness (save → title hint → F9 → map). Harness runs are not in
+test mode (`Utils.isOptionValid("test")` is false under
+`--remote-debugging-port`); force it with
+`Utils.isOptionValid = n => n === "test" || orig(n)`.
+`scratchpad/drive-to-battle.cjs` still does the intro unattended in about
+six minutes; `boot-any.cjs` with a forced `BattleManager.setup` starts a
+battle from the first map in seconds, and with
+`$gamePlayer.reserveTransfer(40, 8, 8, 2, 0); SceneManager.goto(Scene_Map)`
+lands in the lit room. The editor's Battle Test (Troops) is the same
+shortcut for the owner. `scratchpad/drive-save.cjs <port> <slot>` loads a
+save (`ENTRY='[map,x,y,dir]'` re-enters through a transfer so autoruns
+start from the real spot; `TARGET` regex stops at a message) and presses
+Enter through the scene with in-page KeyboardEvents (CDP key events never
+reach `Input`). That is how the empty YEP name box beside unnamed messages
+was found (compat `synchronizeNameBox` guard, runtime `20260903.18`). Next: the black-room soft lock the owner hit
+after the first battle (the room now renders; whether the lock was the
+lighting or an event wait is unconfirmed), victory, save/load.
+
+Tests: `editor/tests/mv-screen-size-compat.test.cjs` (slices the two
+installers into a sandbox). Live check: scratchpad `legacy-harness.cjs`
+boots the project under `nwjs-linux/nw --remote-debugging-port=9333 . test`,
+drives F2 and a real F4 over CDP, and screenshots — window 1280x720, then
+2560x1440 at scale 2, no console errors. Gotcha that cost two shells:
+`pkill -f <pattern>` matches the calling shell's own command line when the
+pattern appears in it; build the pattern from two variables.
+
+The project boots to `Scene_PretitleMap` (HIME_PreTitleEvents), not
+`Scene_Title`, so a title-scene wait never returns.
+
 ## 2026-09-02 — Quest system (GitHub #9), first cut
 
-Reactor's own, not an editor for a plugin's data: `data/Quests.json` (a
+Reactor's own, not an editor for a plugin's data: `data/ReactorQuests.json` (renamed from `Quests.json` on 09-03, see above; a
 project gains the file when it authors a quest; absent reads as none),
 `runtime/reactor_quests.js` (loads it like `reactor_ui.js` loads
 interfaces; `$gameSystem.quests()` is the saved progress, class
@@ -29,7 +208,7 @@ because that project is gitignored).
   `datalist`, not a managed list.
 
 **Guards touched:** runtime root count 13 → 14 (`reactor-3d-foundation`),
-`save-safety` knows Quests.json is optional like UserInterfaces.json, the
+`save-safety` knows ReactorQuests.json is optional like UserInterfaces.json, the
 template slicer in `database-record-templates` cannot cope with an
 apostrophe inside a comment in `getDefaultTemplates`.
 
@@ -52,10 +231,11 @@ playtest is unrelated.
 
 Done meanwhile, runtime `20260902.11`: pass targets are `NearestFilter`
 unconditionally (`createTarget` no longer takes `{ nearest }`), so no
-creation order can leave a linear target; and in test mode
-`Graphics._showScalingToast` draws the scaling line, GPU included, top
-left for six seconds after every resize/F4. **Next: ask the owner for a
-screenshot with the toast visible**, or the console line. If it says
+creation order can leave a linear target. A scaling toast drawn on screen
+after every resize was added for this and **removed on 09-03** — the owner
+does not want diagnostics on the game surface. The same line still reaches
+the console as `console.debug` (enable Verbose in DevTools). **Next: ask
+the owner for that console line after F4**. If it says
 `tier weak` the game ran on the AMD iGPU; if the store is smaller than
 the window and `enlarged linear`, `upscaleFilterInUse` chose linear for
 a full-tier GPU on a 1x store (then look at `maxCanvasPixelRatio`).
@@ -2267,7 +2447,7 @@ no longer places (it is `kawashaki_ninja_h2`'s event now). Tests:
 
 ## Native Media, Resource, And Toolbar Pass (2026-08-28)
 
-- **Video Surfaces:** `runtime/reactor_video_surfaces.js` owns the canonical
+- **Video Surfaces:** `runtime/reactor_media_surfaces.js` (named `reactor_video_surfaces.js` until 2026-09-03) owns the canonical
   Show/Transform/Stop implementation; runtime revision `20260828.3` adds it to
   the boot manifest and is synchronized across all ten bundled projects. Commands
   remain code 357 under `RPGReactor`; stock movie command 261 and

@@ -51,6 +51,7 @@ Scene_Base.prototype.update = function() {
     this.updateColorFilter();
     this.updateChildren();
     AudioManager.checkErrors();
+    AudioManager.updateBgmSequence();
 };
 
 Scene_Base.prototype.stop = function() {
@@ -415,6 +416,38 @@ Scene_Title.prototype.create = function() {
     this.createForeground();
     this.createWindowLayer();
     this.createCommandWindow();
+    this.createPlaytestCheckpointHint();
+};
+
+/** In a playtest with a checkpoint on disk: a line at the bottom left saying F9 resumes it. */
+Scene_Title.prototype.createPlaytestCheckpointHint = function() {
+    if (!DataManager.hasPlaytestCheckpoint()) return;
+    const bitmap = new Bitmap(Graphics.width, 28);
+    bitmap.fontSize = 16;
+    bitmap.outlineWidth = 3;
+    bitmap.drawText("F9: resume playtest checkpoint", 8, 0, Graphics.width - 16, 28, "left");
+    this._playtestCheckpointHint = new Sprite(bitmap);
+    this._playtestCheckpointHint.y = Graphics.height - 30;
+    this.addChild(this._playtestCheckpointHint);
+};
+
+/** Loads the playtest checkpoint and goes to its map, as a load would. */
+Scene_Title.prototype.resumePlaytestCheckpoint = function() {
+    if (!DataManager.hasPlaytestCheckpoint() || this._resumingPlaytestCheckpoint) return;
+    this._resumingPlaytestCheckpoint = true;
+    DataManager.loadGame(DataManager.PLAYTEST_CHECKPOINT_ID)
+        .then(() => {
+            SoundManager.playLoad();
+            this.fadeOutAll();
+            Scene_Load.prototype.reloadMapIfUpdated.call(this);
+            SceneManager.goto(Scene_Map);
+            $gameSystem.onAfterLoad();
+        })
+        .catch(error => {
+            this._resumingPlaytestCheckpoint = false;
+            SoundManager.playBuzzer();
+            console.warn("RPG Reactor playtest checkpoint could not be loaded", error);
+        });
 };
 
 Scene_Title.prototype.start = function() {
@@ -738,6 +771,9 @@ Scene_Map.prototype.onTransferEnd = function() {
     $gameMap.autoplay();
     if (this.shouldAutosave()) {
         this.requestAutosave();
+    }
+    if (DataManager.isPlaytestCheckpointEnabled()) {
+        DataManager.savePlaytestCheckpoint("map " + $gameMap.mapId());
     }
 };
 
@@ -3071,6 +3107,9 @@ Scene_Battle.prototype.terminate = function() {
     AudioManager.stopMe();
     if (this.shouldAutosave()) {
         this.requestAutosave();
+    }
+    if (!BattleManager.isBattleTest() && DataManager.isPlaytestCheckpointEnabled()) {
+        DataManager.savePlaytestCheckpoint("after battle");
     }
 };
 

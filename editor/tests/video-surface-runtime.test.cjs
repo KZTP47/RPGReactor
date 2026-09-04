@@ -4,7 +4,7 @@ const path = require('node:path');
 const test = require('node:test');
 
 const root = path.resolve(__dirname, '..', '..');
-const runtimePath = path.join(root, 'runtime', 'reactor_video_surfaces.js');
+const runtimePath = path.join(root, 'runtime', 'reactor_media_surfaces.js');
 const mainSource = fs.readFileSync(path.join(root, 'runtime', 'reactor_main.js'), 'utf8');
 const source = fs.readFileSync(runtimePath, 'utf8');
 const runtime = require(runtimePath);
@@ -420,7 +420,7 @@ test('runtime registers isolated commands and uses native PIXI v8 and Three APIs
 
 test('main loads video surfaces in the required compatibility order', () => {
     const pictures = mainSource.indexOf('"js/reactor_picture_extensions.js"');
-    const surfaces = mainSource.indexOf('"js/reactor_video_surfaces.js"');
+    const surfaces = mainSource.indexOf('"js/reactor_media_surfaces.js"');
     const mv = mainSource.indexOf('"js/reactor_mv_compat.js"');
     assert.ok(pictures >= 0 && surfaces > pictures && mv > surfaces);
 });

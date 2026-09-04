@@ -594,6 +594,10 @@ Sprite_Character.prototype.reactor3DScale = function() {
  * assigns an absolute scale still gets the scale it asked for, a plugin that
  * multiplies still multiplies, and nothing compounds frame over frame.
  */
+// The wrapped method is held in a closure, not looked up on `this`: MV
+// plugins subclass these sprites or borrow their methods onto other
+// prototypes (LeTBS runs Sprite_AnimationMV.update on a Sprite_Animation),
+// and there `this` has no such property.
 Sprite_Character.prototype._reactor3dBaseUpdate = Sprite_Character.prototype.update;
 Sprite_Character.prototype.update = function() {
     const was = this._reactor3dStand;
@@ -603,7 +607,7 @@ Sprite_Character.prototype.update = function() {
         this.skew.x -= was.skew;
         this._reactor3dStand = null;
     }
-    this._reactor3dBaseUpdate();
+    Sprite_Character.prototype._reactor3dBaseUpdate.call(this);
     if (Reactor3D.updateMapModelSprite) Reactor3D.updateMapModelSprite(this);
     // A prop lifted off the ground rises by its lift on a flat map too. An
     // event's height is a 3D map's coordinate; on a flat map it does nothing.
@@ -2198,7 +2202,7 @@ Sprite_AnimationMV.prototype.reactor3DScale = Sprite_Animation.prototype.reactor
 
 Sprite_AnimationMV.prototype._reactor3dBaseUpdate = Sprite_AnimationMV.prototype.update;
 Sprite_AnimationMV.prototype.update = function() {
-    this._reactor3dBaseUpdate();
+    Sprite_AnimationMV.prototype._reactor3dBaseUpdate.call(this);
     const scale = this.reactor3DScale();
     this.scale.x = scale;
     this.scale.y = scale;

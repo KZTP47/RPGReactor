@@ -411,6 +411,14 @@
                                         <button type="button" id="map-bgm-choose-btn" class="map-props-btn primary" style="flex: 0 0 auto; padding: 5px 12px; font-size: 12px;" data-i18n="mapProps.choose">Choose…</button>
                                     </div>
                                     <div id="map-bgm-levels" style="font-size: 11px; color: var(--color-text-muted); margin-top: 4px; min-height: 12px;"></div>
+                                    <label class="map-props-label" style="display: flex; align-items: center; cursor: pointer; margin-top: 8px;">
+                                        <input type="checkbox" id="map-bgm-sequence-checkbox" style="margin-right: 6px;">
+                                        <span data-i18n="mapProps.bgmSequence">Play a sequence instead of one track</span>
+                                    </label>
+                                    <div id="map-bgm-sequence" style="display: none; margin-top: 4px;">
+                                        <div style="font-size: 11px; color: var(--color-text-muted); line-height: 1.5;" data-i18n="mapProps.bgmSequenceHint">The track above is the fallback for vehicles and plugins.</div>
+                                        <div id="map-bgm-sequence-editor"></div>
+                                    </div>
                                 </div>
                             </div>
 
@@ -845,6 +853,7 @@
     <script src="src/utils/AudioLoopTags.js"></script>
     <script src="src/utils/PickerIndex.js"></script>
     <script src="src/utils/AudioPickerModal.js"></script>
+    <script src="src/utils/BgmSequenceEditor.js"></script>
     <script src="src/utils/SystemSoundSlotModal.js"></script>
     <script src="src/utils/PluginAnnotations.js"></script>
     <script src="src/utils/PluginParamCodec.js"></script>

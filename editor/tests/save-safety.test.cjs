@@ -53,7 +53,7 @@ test('DatabaseManager saveAllData propagates a file failure after attempting all
 
     assert.equal(await manager.saveAllData('/project'), false);
     // A project that never authored a user interface or a quest gains no file for either.
-    const optional = ['UserInterfaces.json', 'Quests.json'];
+    const optional = ['UserInterfaces.json', 'ReactorQuests.json'];
     const expected = Array.from(manager.dataFiles, (entry) => entry[1]).filter((name) => !optional.includes(name));
     assert.deepEqual(attempted, expected);
     assert.equal(attempted.includes('MapInfos.json'), false);

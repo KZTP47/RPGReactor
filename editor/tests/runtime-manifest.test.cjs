@@ -34,7 +34,7 @@ test('every reactor_main runtime manifest entry is tracked in the runtime bundle
 
     const required = [
         'js/reactor_picture_extensions.js',
-        'js/reactor_video_surfaces.js',
+        'js/reactor_media_surfaces.js',
         'js/reactor_mv_compat.js',
         'js/libs/effekseer.wasm',
         'js/libs/pako.min.js',
@@ -51,7 +51,7 @@ test('picture and video extensions load after sprites and before compatibility/p
     const { scripts } = readRuntimeManifest(path.join(runtimeRoot, 'reactor_main.js'));
     const spritesIndex = scripts.indexOf('js/reactor_sprites.js');
     const pictureIndex = scripts.indexOf('js/reactor_picture_extensions.js');
-    const videoIndex = scripts.indexOf('js/reactor_video_surfaces.js');
+    const videoIndex = scripts.indexOf('js/reactor_media_surfaces.js');
     const compatIndex = scripts.indexOf('js/reactor_mv_compat.js');
     const pluginsIndex = scripts.indexOf('js/reactor_plugins.js');
 

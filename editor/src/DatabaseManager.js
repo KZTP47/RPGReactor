@@ -70,7 +70,7 @@ class DatabaseManager {
             ['userInterfaces', 'UserInterfaces.json'],
             // Reactor's quests, stored beside the MZ files; absent in a
             // project that never authored one.
-            ['quests', 'Quests.json'],
+            ['quests', 'ReactorQuests.json'],
             ['system', 'System.json']
         ];
 

@@ -51,7 +51,7 @@ test('application version matches package metadata in every startup surface', ()
 const DEPLOYABLE_RUNTIME_FILES = [
     'reactor_main.js', 'reactor_core.js', 'reactor_managers.js',
     'reactor_objects.js', 'reactor_scenes.js', 'reactor_sprites.js', 'reactor_picture_extensions.js',
-    'reactor_video_surfaces.js',
+    'reactor_media_surfaces.js',
     'reactor_windows.js', 'reactor_mv_compat.js', 'reactor_plugins.js',
     path.join('libs', 'pixi.js'), path.join('libs', 'pixi_compat.js'),
     path.join('libs', 'pako.min.js'), path.join('libs', 'lz-string.js'), path.join('libs', 'localforage.min.js'),
@@ -107,7 +107,7 @@ test('the bundled Demo satisfies the deployment runtime requirements', () => {
     const manifest = fs.readFileSync(path.join(demoRoot, 'js', 'reactor_main.js'), 'utf8');
     const listed = Array.from(manifest.matchAll(/"js\/([^"]+\.js)"/g), match => match[1]);
     assert.ok(listed.includes('reactor_picture_extensions.js'), 'the loader manifest lists the picture extensions');
-    assert.ok(listed.includes('reactor_video_surfaces.js'), 'the loader manifest lists video surfaces');
+    assert.ok(listed.includes('reactor_media_surfaces.js'), 'the loader manifest lists video surfaces');
     assert.ok(listed.includes('libs/lz-string.js'), 'the loader manifest lists LZString');
     const unloadable = listed.filter(file => !fs.existsSync(path.join(demoRoot, 'js', file)));
     assert.deepEqual(unloadable, [], `the Demo loader would 404 on: ${unloadable.join(', ')}`);
@@ -121,7 +121,7 @@ test('runtime corescript files are present', () => {
         'reactor_managers.js',
         'reactor_objects.js',
         'reactor_picture_extensions.js',
-        'reactor_video_surfaces.js',
+        'reactor_media_surfaces.js',
         'reactor_plugins.js',
         'reactor_scenes.js',
         'reactor_sprites.js',

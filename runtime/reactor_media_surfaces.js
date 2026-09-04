@@ -1,5 +1,5 @@
 //=============================================================================
-// reactor_video_surfaces.js - Native map video surfaces
+// reactor_media_surfaces.js - Native map media surfaces (video and still images)
 //=============================================================================
 
 (function(root) {

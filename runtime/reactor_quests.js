@@ -1,7 +1,9 @@
 //=============================================================================
 // reactor_quests.js - RPG Reactor quests
 //
-// A quest is a record in data/Quests.json, authored in Database > Quests: a
+// A quest is a record in data/ReactorQuests.json, authored in Database >
+// Quests (its own file and global: plugins own data/Quests.json and
+// $dataReactorQuests - YEP_QuestJournal, GS_QuestSystem - and must keep them): a
 // name, a category, who gives it and where, a description, objectives and
 // rewards (each can start hidden), and the rule that makes it appear -
 // an event command, a switch, a variable, or the start of the game. The
@@ -25,7 +27,7 @@
 
     const ReactorQuests = {};
     window.ReactorQuests = ReactorQuests;
-    ReactorQuests.DATA_URL = "data/Quests.json";
+    ReactorQuests.DATA_URL = "data/ReactorQuests.json";
     ReactorQuests.STATUS = { HIDDEN: "hidden", KNOWN: "known", COMPLETED: "completed", FAILED: "failed" };
     ReactorQuests.OBJECTIVE = { HIDDEN: "hidden", OPEN: "open", DONE: "done", FAILED: "failed" };
 
@@ -37,7 +39,7 @@
         if (this._state) return;
         this._state = "loading";
         const finish = parsed => {
-            window.$dataQuests = Array.isArray(parsed) ? parsed : [];
+            window.$dataReactorQuests = Array.isArray(parsed) ? parsed : [];
             this._state = "done";
         };
         try {
@@ -77,12 +79,12 @@
 
     /** Every authored quest, in id order. */
     ReactorQuests.quests = function() {
-        return (window.$dataQuests || []).filter(quest => quest && quest.id > 0);
+        return (window.$dataReactorQuests || []).filter(quest => quest && quest.id > 0);
     };
 
     /** A quest by numeric id or by its key. */
     ReactorQuests.find = function(idOrKey) {
-        const list = window.$dataQuests || [];
+        const list = window.$dataReactorQuests || [];
         const id = Number(idOrKey);
         if (id > 0 && list[id]) return list[id];
         const key = String(idOrKey == null ? "" : idOrKey).trim();

@@ -390,7 +390,7 @@ Game_System.prototype.replayWalkingBgm = function() {
 };
 
 Game_System.prototype.saveWalkingBgm2 = function() {
-    this._walkingBgm = $dataMap.bgm;
+    this._walkingBgm = AudioManager.mapBgmObject($dataMap, $gameMap.mapId());
 };
 
 Game_System.prototype.mainFontFace = function() {
@@ -402,7 +402,8 @@ Game_System.prototype.numberFontFace = function() {
 };
 
 Game_System.prototype.mainFontSize = function() {
-    return $dataSystem.advanced.fontSize;
+    const advanced = $dataSystem.advanced || {};
+    return "fontSize" in advanced ? advanced.fontSize : 26;
 };
 
 Game_System.prototype.windowPadding = function() {
@@ -410,7 +411,9 @@ Game_System.prototype.windowPadding = function() {
 };
 
 Game_System.prototype.windowOpacity = function() {
-    return $dataSystem.advanced.windowOpacity;
+    // Older MZ data (and MV data given an advanced block) has no entry.
+    const advanced = $dataSystem.advanced || {};
+    return "windowOpacity" in advanced ? advanced.windowOpacity : 192;
 };
 
 //-----------------------------------------------------------------------------
@@ -6898,7 +6901,7 @@ Game_Map.prototype.autoplay = function() {
         if ($gamePlayer.isInVehicle()) {
             $gameSystem.saveWalkingBgm2();
         } else {
-            AudioManager.playBgm($dataMap.bgm);
+            AudioManager.playBgm(AudioManager.mapBgmObject($dataMap, this.mapId()));
         }
     }
     if ($dataMap.autoplayBgs) {

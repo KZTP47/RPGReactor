@@ -1,7 +1,7 @@
 /**
  * DatabaseQuestEditor - Database > Quests.
  *
- * A quest is a record in data/Quests.json (Reactor's own file, beside the
+ * A quest is a record in data/ReactorQuests.json (Reactor's own file, beside the
  * MZ database): who gives it and where, a description, objectives and
  * rewards that can start hidden, and the rules that make it appear and
  * complete. The runtime (reactor_quests.js) reads this shape as it is.
@@ -98,7 +98,7 @@ class DatabaseQuestEditor {
                         <input type="text" class="database-field-value" data-quest-setting="commandName" value="${rrEscapeHtml(settings.commandName)}">
                     </span>
                     <span class="db-col" style="align-self:end;">
-                        <button type="button" class="rr-btn-secondary quest-import" title="${rrEscapeHtml(tt('Read the quests another plugin stores in this project and add them here.'))}">${tt('Import from VisuStella…')}</button>
+                        <button type="button" class="rr-btn-secondary quest-import" title="${rrEscapeHtml(tt('Read the quests another plugin stores in this project and add them here.'))}">${tt('Import…')}</button>
                     </span>
                 </div>
             </div></div>`;
@@ -346,7 +346,7 @@ class DatabaseQuestEditor {
             });
         });
         const importButton = container.querySelector('.quest-import');
-        if (importButton) importButton.addEventListener('click', () => this.importFromVisustella());
+        if (importButton) importButton.addEventListener('click', () => this.importQuests());
     }
 
     readPath(object, path) {
@@ -384,20 +384,97 @@ class DatabaseQuestEditor {
         return this.readPath(quest, fieldName);
     }
 
-    /** Read the project's VisuStella quests and add the ones this database lacks. */
-    importFromVisustella() {
+    /** Ask which quest system to read from, then add the quests this database lacks. */
+    importQuests() {
         const project = this._project();
         if (!project || !project.path || typeof QuestImporter === 'undefined') return;
-        const found = QuestImporter.readVisustella(project.path);
+        const sources = QuestImporter.available(project.path);
+        this.showImportDialog(sources, source => this.importFrom(source));
+    }
+
+    /**
+     * The source picker: one row per quest system the importer knows, with
+     * how many quests it holds here or that it is not in this project. Only
+     * a present source can be chosen; the first one with quests is preselected.
+     */
+    showImportDialog(sources, onImport) {
+        const tt = text => this._t(text);
+        document.querySelectorAll('.quest-import-overlay').forEach(node => node.remove());
+        const overlay = document.createElement('div');
+        overlay.className = 'rr-modal-overlay quest-import-overlay';
+        overlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 10500;';
+        const preselected = sources.find(entry => entry.present && entry.count > 0) || sources.find(entry => entry.present) || null;
+        const rows = sources.map(entry => {
+            const detail = entry.present
+                ? tt('{count} quest(s) found').replace('{count}', String(entry.count))
+                : tt('not in this project');
+            const disabled = entry.present ? '' : ' disabled';
+            const checked = preselected && preselected.source === entry.source ? ' checked' : '';
+            return `<label class="quest-import-row" style="display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; padding: 8px 10px; border-radius: 6px; cursor: ${entry.present ? 'pointer' : 'default'}; opacity: ${entry.present ? '1' : '0.55'};">
+                <input type="radio" name="quest-import-source" value="${rrEscapeHtml(entry.source)}"${checked}${disabled}>
+                <span>${rrEscapeHtml(tt(entry.label))}</span>
+                <span style="font-size: 12px; opacity: 0.75;">${rrEscapeHtml(detail)}</span>
+            </label>`;
+        }).join('');
+        overlay.innerHTML = `
+            <div class="rr-modal" role="dialog" aria-modal="true" style="width: min(440px, calc(100vw - 24px)); background: var(--color-bg-panel); border: 1px solid var(--color-border-subtle); border-radius: 8px; box-shadow: 0 12px 40px rgba(0,0,0,0.45);">
+                <div class="rr-modal-header" style="padding: 14px 18px; border-bottom: 1px solid var(--color-border-subtle); display: flex; align-items: center; justify-content: space-between;">
+                    <div class="rr-modal-title" style="font-size: 16px; font-weight: 600;">${rrEscapeHtml(tt('Import Quests'))}</div>
+                    <button type="button" class="rr-modal-close" aria-label="${rrEscapeHtml(tt('Cancel'))}" style="background: none; border: none; font-size: 18px; cursor: pointer; color: inherit;">×</button>
+                </div>
+                <div class="rr-modal-body" style="padding: 14px 18px; display: flex; flex-direction: column; gap: 4px;">
+                    <div style="font-size: 12px; opacity: 0.8; margin-bottom: 8px;">${rrEscapeHtml(tt('Choose the quest system to read from. Only the quests this database lacks are added, matched by key.'))}</div>
+                    ${rows}
+                </div>
+                <div class="rr-modal-footer" style="padding: 12px 18px; border-top: 1px solid var(--color-border-subtle); display: flex; justify-content: flex-end; gap: 8px;">
+                    <button type="button" class="rr-btn-secondary quest-import-cancel">${rrEscapeHtml(tt('Cancel'))}</button>
+                    <button type="button" class="rr-btn-chip quest-import-ok" style="padding: 6px 18px; color: var(--color-accent-bright);"${preselected ? '' : ' disabled'}>${rrEscapeHtml(tt('Import'))}</button>
+                </div>
+            </div>`;
+        const close = () => { overlay.remove(); document.removeEventListener('keydown', onKey, true); };
+        const chosen = () => {
+            const input = overlay.querySelector('input[name="quest-import-source"]:checked');
+            return input && !input.disabled ? input.value : null;
+        };
+        const ok = overlay.querySelector('.quest-import-ok');
+        const confirm = () => {
+            const source = chosen();
+            if (!source) return;
+            close();
+            onImport(source);
+        };
+        const onKey = event => {
+            if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(); }
+            else if (event.key === 'Enter' && !ok.disabled) { event.preventDefault(); event.stopPropagation(); confirm(); }
+        };
+        overlay.querySelectorAll('input[name="quest-import-source"]').forEach(input => {
+            input.addEventListener('change', () => { ok.disabled = !chosen(); });
+        });
+        overlay.querySelector('.rr-modal-close').addEventListener('click', close);
+        overlay.querySelector('.quest-import-cancel').addEventListener('click', close);
+        ok.addEventListener('click', confirm);
+        document.addEventListener('keydown', onKey, true);
+        document.body.appendChild(overlay);
+        const first = overlay.querySelector('input[name="quest-import-source"]:checked') || ok;
+        if (first && first.focus) first.focus();
+        return overlay;
+    }
+
+    /** Read one source's quests and add the ones this database lacks, matched by key. */
+    importFrom(source) {
+        const project = this._project();
+        if (!project || !project.path || typeof QuestImporter === 'undefined') return;
+        const label = this._t((QuestImporter.SOURCES[source] || {}).label || source);
+        const found = QuestImporter.read(project.path, source);
         const say = message => window.alert ? window.alert(message) : console.log(message);
-        if (!found) return say(this._t('VisuStella Quest System is not in this project\'s plugin list.'));
-        if (!found.quests.length) return say(this._t('The VisuStella plugin is installed but has no quests to import.'));
+        if (!found) return say(this._t('{source} is not in this project.', { source: label }));
+        if (!found.quests.length) return say(this._t('{source} has no quests to import.', { source: label }));
         const existing = this.databaseManager.getQuests();
         const taken = new Set(existing.map(quest => quest && quest.key).filter(Boolean));
         const fresh = found.quests.filter(quest => !quest.key || !taken.has(quest.key));
-        if (!fresh.length) return say(this._t('Every VisuStella quest is already here (matched by key).'));
+        if (!fresh.length) return say(this._t('Every quest from {source} is already here (matched by key).', { source: label }));
         const skipped = found.quests.length - fresh.length;
-        const question = this._t('Import {count} quest(s) from VisuStella?', { count: fresh.length })
+        const question = this._t('Import {count} quest(s) from {source}?', { count: fresh.length, source: label })
             + (skipped ? ' ' + this._t('{count} already here will be left alone.', { count: skipped }) : '');
         if (!window.confirm(question)) return;
         let last = null;

@@ -1640,7 +1640,7 @@ Graphics.upscaleFilterInUse = function() {
 /**
  * One line saying how the frame reaches the screen right now: the canvas
  * store and its ratio, the 3D pass size and its filter, the display scale
- * and the GPU tier. Printed to the console whenever it changes (a resize,
+ * and the GPU tier. Logged at debug level whenever it changes (a resize,
  * F4), so a report of "it looks blurry" can carry the numbers.
  */
 Graphics.scalingReport = function() {
@@ -1839,37 +1839,15 @@ Graphics._updateCanvas = function() {
     this._canvas.style.height = this._height * this._realScale + "px";
     this._applyUpscaleFilter(this._canvas);
     this._updateEffekseerCanvas();
-    // Say what changed, once per change: the line a "looks blurry" report needs.
+    // Say what changed, once per change, at debug level so the console stays
+    // quiet unless someone is chasing a "looks blurry" report.
     try {
         const report = this.scalingReport();
         if (report !== this._lastScalingReport) {
             this._lastScalingReport = report;
-            console.info(report);
-            this._showScalingToast(report);
+            console.debug(report);
         }
     } catch (e) { /* the report is a convenience */ }
-};
-
-/**
- * In a playtest, the same line drawn on screen for a few seconds after
- * every resize or fullscreen switch, so a screenshot of "it looks blurry"
- * carries the numbers with it. Never in a shipped game.
- */
-Graphics._showScalingToast = function(report) {
-    if (typeof Utils === "undefined" || !Utils.isOptionValid || !Utils.isOptionValid("test")) return;
-    if (!document.body) return;
-    let toast = document.getElementById("rrScalingToast");
-    if (!toast) {
-        toast = document.createElement("div");
-        toast.id = "rrScalingToast";
-        toast.style.cssText = "position:fixed;left:8px;top:8px;z-index:11;padding:4px 8px;background:rgba(0,0,0,0.75);color:#fff;"
-            + "font:12px/1.4 monospace;white-space:pre-wrap;max-width:60vw;pointer-events:none;border-radius:3px;";
-        document.body.appendChild(toast);
-    }
-    toast.textContent = report.replace(" | ", "\n");
-    toast.style.display = "block";
-    if (this._scalingToastTimer) clearTimeout(this._scalingToastTimer);
-    this._scalingToastTimer = setTimeout(() => { toast.style.display = "none"; }, 6000);
 };
 
 Graphics._updateEffekseerCanvas = function() {
@@ -1963,6 +1941,13 @@ Graphics._onKeyDown = function(event) {
             case 115: // F4
                 event.preventDefault();
                 this._switchFullScreen();
+                break;
+            case 120: // F9
+                if (typeof SceneManager !== "undefined" && SceneManager._scene &&
+                        typeof SceneManager._scene.resumePlaytestCheckpoint === "function") {
+                    event.preventDefault();
+                    SceneManager._scene.resumePlaytestCheckpoint();
+                }
                 break;
             case 121: // F10
                 event.preventDefault();

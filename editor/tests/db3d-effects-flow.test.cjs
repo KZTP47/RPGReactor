@@ -24,7 +24,7 @@ test('a video anchored to a part turns with the part', () => {
     const three = fs.readFileSync(path.join(repoRoot, 'runtime', 'reactor_3d.js'), 'utf8');
     assert.match(three, /child\.userData\.__restQuaternion = child\.quaternion\.clone\(\);/, 'the rest turn rides the node');
     assert.match(three, /Reactor3D\.effectAnchorQuaternion = function/, 'the pose delta is one shared helper');
-    const surfaces = fs.readFileSync(path.join(repoRoot, 'runtime', 'reactor_video_surfaces.js'), 'utf8');
+    const surfaces = fs.readFileSync(path.join(repoRoot, 'runtime', 'reactor_media_surfaces.js'), 'utf8');
     assert.match(surfaces, /if \(poseTurn\) mesh\.quaternion\.premultiply\(poseTurn\);/, 'the game surface takes it');
     assert.match(editor, /const pose = Reactor3D\.effectAnchorQuaternion\(this\._object, def, new THREE\.Quaternion\(\)\);/, 'so does the database preview');
     const map3d = fs.readFileSync(path.join(editorRoot, 'src', 'MapEditor3D.js'), 'utf8');

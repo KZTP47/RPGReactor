@@ -2,16 +2,21 @@
  * QuestImporter - reads another quest system's data into Reactor quests.
  *
  * Most quest systems are the same shape: a title, who gives it and where, a
- * description, objectives and rewards that can start hidden. VisuStella's
- * Quest System stores its quests four JSON layers deep inside one plugin
- * parameter; this reads that layer by layer and hands back plain Reactor
- * records, keys intact, so an event that named a quest by key keeps naming
- * it. Nothing is written here: the Quests tab decides what to keep.
+ * description, objectives and rewards that can start hidden. Three are read:
+ * VisuStella's Quest System stores its quests four JSON layers deep inside
+ * one plugin parameter; Yanfly's Quest Journal keeps one JSON struct per
+ * "Quest N" parameter; GS_QuestSystem keeps a data/Quests.json of its own.
+ * Each comes back as plain Reactor records - keys intact where the source
+ * has them, otherwise a key that names the source and its id - so an event
+ * that named a quest keeps naming it. Nothing is written here: the Quests
+ * tab decides what to keep.
  */
 class QuestImporter {
-    /** The plugin names an importer knows, by source id. */
+    /** The sources an importer knows, by id, in the order the dialog lists them. */
     static SOURCES = {
-        visustella: { plugin: 'VisuMZ_2_QuestSystem', label: 'VisuStella Quest System' }
+        visustella: { plugin: 'VisuMZ_2_QuestSystem', label: 'VisuStella Quest System' },
+        yanfly: { plugin: 'YEP_QuestJournal', label: 'Yanfly Quest Journal' },
+        gs: { plugin: 'GS_QuestSystem', file: 'data/Quests.json', label: 'GS Quest System' }
     };
 
     /** The project's plugin manifest, as the runtime resolves it. */
@@ -168,6 +173,212 @@ class QuestImporter {
             enabled: entry.status !== false,
             quests: QuestImporter.fromVisustellaCategories(raw)
         };
+    }
+
+    // --- Yanfly Quest Journal -------------------------------------------
+
+    /** The plugin's entry in a manifest, if any. */
+    static yanflyEntry(plugins) {
+        return (plugins || []).find(plugin => plugin && plugin.name === QuestImporter.SOURCES.yanfly.plugin) || null;
+    }
+
+    /**
+     * The quests of a YEP_QuestJournal parameter set: one "Quest N" struct
+     * per slot, in slot order. An untouched slot (no title, no text) is not
+     * a quest. Yanfly names quests by number in its plugin commands, so the
+     * slot number becomes the key and is kept in the note.
+     */
+    static fromYanflyParameters(params) {
+        const quests = [];
+        if (!params || typeof params !== 'object') return quests;
+        const slots = Object.keys(params)
+            .map(key => ({ key, n: Number((key.match(/^Quest (\d+)$/) || [])[1]) }))
+            .filter(slot => slot.n > 0)
+            .sort((a, b) => a.n - b.n);
+        for (const slot of slots) {
+            const struct = QuestImporter.layer(params[slot.key]);
+            if (!struct || typeof struct !== 'object') continue;
+            const record = QuestImporter.fromYanflyQuest(struct, slot.n);
+            if (record) quests.push(record);
+        }
+        return quests;
+    }
+
+    static fromYanflyQuest(struct, number) {
+        const title = QuestImporter.clean(QuestImporter.field(struct, 'Title'));
+        const descriptions = QuestImporter.noteList(QuestImporter.field(struct, 'Description'));
+        const objectiveTexts = QuestImporter.noteList(QuestImporter.field(struct, 'Objectives List'));
+        if (!title && !descriptions.some(Boolean) && !objectiveTexts.some(Boolean)) return null;
+        const visibleObjectives = QuestImporter.numberList(QuestImporter.field(struct, 'Visible Objectives'));
+        const rewardTexts = QuestImporter.noteList(QuestImporter.field(struct, 'Rewards List'));
+        const visibleRewards = QuestImporter.numberList(QuestImporter.field(struct, 'Visible Rewards'));
+        const subtexts = QuestImporter.noteList(QuestImporter.field(struct, 'Subtext'));
+        const noteLines = [`<Import: YEP_QuestJournal quest ${number}>`];
+        if (descriptions.length > 1) noteLines.push('<Import: other descriptions>', ...descriptions.slice(1), '</Import>');
+        if (subtexts.filter(Boolean).length > 1) noteLines.push('<Import: other subtexts>', ...subtexts.slice(1), '</Import>');
+        return {
+            name: title || `Quest ${number}`,
+            key: `yep${number}`,
+            category: QuestImporter.clean(QuestImporter.field(struct, 'Type')),
+            iconIndex: 0,
+            difficulty: QuestImporter.clean(QuestImporter.field(struct, 'Difficulty')),
+            from: QuestImporter.clean(QuestImporter.field(struct, 'From')),
+            location: QuestImporter.clean(QuestImporter.field(struct, 'Location')),
+            description: QuestImporter.clean(descriptions[0] || ''),
+            objectives: objectiveTexts.map((text, index) => ({
+                text: QuestImporter.clean(text), hidden: !visibleObjectives.includes(index + 1), switchId: 0
+            })),
+            rewards: rewardTexts.map((text, index) => ({
+                text: QuestImporter.clean(text), hidden: !visibleRewards.includes(index + 1)
+            })),
+            subtext: QuestImporter.clean(subtexts.find(Boolean) || ''),
+            quotes: '',
+            activation: { type: 'command', switchId: 0, variableId: 0, operator: '>=', value: 0 },
+            completion: { type: 'command', switchId: 0 },
+            note: noteLines.join('\n')
+        };
+    }
+
+    static readYanfly(projectPath) {
+        const entry = QuestImporter.yanflyEntry(QuestImporter.readManifest(projectPath));
+        if (!entry) return null;
+        return { source: 'yanfly', enabled: entry.status !== false, quests: QuestImporter.fromYanflyParameters(entry.parameters || {}) };
+    }
+
+    // --- GS_QuestSystem -------------------------------------------------
+
+    /** Whether a parsed data/Quests.json is GS_QuestSystem's: a category list first, then quests. */
+    static isGsData(data) {
+        return Array.isArray(data) && data.length > 0 && Array.isArray(data[0])
+            && data.slice(1).every(entry => entry === null || (entry && typeof entry === 'object' && !Array.isArray(entry)));
+    }
+
+    /**
+     * The quests of a GS_QuestSystem file. A step is
+     * [text, tracksVariable, variableId, maxValue, autoComplete, status, visible];
+     * the plugin shows only the first step when a quest starts, whatever the
+     * file says, so every later objective starts hidden. A reward is
+     * [kind, idOrAmount, count, hidden] (a custom reward carries its text
+     * in the count slot); `names(kind, id)` turns an item,
+     * weapon or armor id into its name when the caller has the database.
+     */
+    static fromGsData(data, names) {
+        const quests = [];
+        if (!QuestImporter.isGsData(data)) return quests;
+        const categories = data[0].map(name => QuestImporter.clean(name));
+        for (const entry of data.slice(1)) {
+            if (!entry || typeof entry !== 'object') continue;
+            const id = Number(entry.id);
+            const steps = Array.isArray(entry.steps) ? entry.steps : [];
+            const rewards = Array.isArray(entry.rewards) ? entry.rewards : [];
+            const noteLines = [`<Import: GS_QuestSystem quest ${id}>`];
+            steps.forEach((step, index) => {
+                if (Array.isArray(step) && step[1] === true) {
+                    noteLines.push(`<Import: objective ${index + 1} tracks variable ${Number(step[2]) || 0} to ${Number(step[3]) || 0}>`);
+                }
+            });
+            quests.push({
+                name: QuestImporter.clean(entry.name) || `Quest ${id}`,
+                key: `gs${id}`,
+                category: categories[Number(entry.cat)] || '',
+                iconIndex: Number(entry.icon) || 0,
+                difficulty: '',
+                from: '',
+                location: '',
+                description: QuestImporter.clean(entry.desc),
+                objectives: steps.map((step, index) => ({
+                    text: QuestImporter.clean(Array.isArray(step) ? step[0] : step), hidden: index > 0, switchId: 0
+                })),
+                rewards: rewards.map(reward => ({
+                    text: QuestImporter.gsRewardText(reward, names), hidden: Array.isArray(reward) && reward[3] === true
+                })),
+                subtext: '',
+                quotes: '',
+                activation: { type: 'command', switchId: 0, variableId: 0, operator: '>=', value: 0 },
+                completion: { type: 'command', switchId: 0 },
+                note: noteLines.join('\n')
+            });
+        }
+        return quests;
+    }
+
+    static gsRewardText(reward, names) {
+        if (!Array.isArray(reward)) return QuestImporter.clean(reward);
+        const [kind, value, count] = reward;
+        const amount = Number(value) || 0;
+        switch (kind) {
+            case 'xp': return `${amount} EXP`;
+            case 'gold': return `${amount} Gold`;
+            case 'item': case 'weapon': case 'armor': {
+                const name = (typeof names === 'function' && names(kind, amount)) || `${kind} #${amount}`;
+                const n = Number(count) || 1;
+                return n > 1 ? `${name} x${n}` : name;
+            }
+            // A custom reward is free text in the third slot.
+            case 'custom': return QuestImporter.clean(count !== undefined ? count : value);
+            default: return QuestImporter.clean([kind, value, count].filter(v => v !== undefined).join(' '));
+        }
+    }
+
+    /** The GS file of a project, parsed, or null when absent or not GS's. */
+    static readGsFile(projectPath) {
+        const fs = require('fs');
+        const path = require('path');
+        try {
+            const data = JSON.parse(fs.readFileSync(path.join(projectPath, QuestImporter.SOURCES.gs.file), 'utf8'));
+            return QuestImporter.isGsData(data) ? data : null;
+        } catch (error) {
+            return null;
+        }
+    }
+
+    static readGs(projectPath) {
+        const data = QuestImporter.readGsFile(projectPath);
+        if (!data) return null;
+        const fs = require('fs');
+        const path = require('path');
+        const tables = {};
+        const names = (kind, id) => {
+            const file = { item: 'Items.json', weapon: 'Weapons.json', armor: 'Armors.json' }[kind];
+            if (!file) return '';
+            if (!(file in tables)) {
+                try { tables[file] = JSON.parse(fs.readFileSync(path.join(projectPath, 'data', file), 'utf8')); } catch (error) { tables[file] = null; }
+            }
+            const record = tables[file] && tables[file][id];
+            return record && record.name ? String(record.name) : '';
+        };
+        const entry = QuestImporter.readManifest(projectPath).find(plugin => plugin && plugin.name === QuestImporter.SOURCES.gs.plugin);
+        return { source: 'gs', enabled: !!entry && entry.status !== false, quests: QuestImporter.fromGsData(data, names) };
+    }
+
+    // --- any source -----------------------------------------------------
+
+    /** Everything importable from one source, or null when it is not in the project. */
+    static read(projectPath, source) {
+        switch (source) {
+            case 'visustella': return QuestImporter.readVisustella(projectPath);
+            case 'yanfly': return QuestImporter.readYanfly(projectPath);
+            case 'gs': return QuestImporter.readGs(projectPath);
+            default: return null;
+        }
+    }
+
+    /**
+     * Every known source with whether this project has it and how many
+     * quests it holds, in dialog order. A source that is not present still
+     * appears, so the dialog can say so.
+     */
+    static available(projectPath) {
+        return Object.keys(QuestImporter.SOURCES).map(source => {
+            const found = QuestImporter.read(projectPath, source);
+            return {
+                source,
+                label: QuestImporter.SOURCES[source].label,
+                present: !!found,
+                enabled: !!found && found.enabled,
+                count: found ? found.quests.length : 0
+            };
+        });
     }
 
     /** A key nobody else has: the wanted one, or it with a number after it. */

@@ -538,7 +538,7 @@ test('2D previews stack among the tile layers by layer, like the game sorts them
 test('previews show scanlines, stand on their anchor like the game, clamp typed values, and can be toggled', () => {
     const manager = read('src/VideoSurfacePreviewManager.js');
     const editor = read('src/event/commands/VideoSurfaceEditor.js');
-    const runtime = fs.readFileSync(path.join(editorRoot, '..', 'runtime', 'reactor_video_surfaces.js'), 'utf8');
+    const runtime = fs.readFileSync(path.join(editorRoot, '..', 'runtime', 'reactor_media_surfaces.js'), 'utf8');
     assert.match(manager, /_syncPixiScanlines\(owner, corners\)/);
     assert.match(manager, /_syncThreeScanlines\(owner\)/);
     assert.match(manager, /repeating-linear-gradient\(rgba\(0,0,0,\$\{scan \* 0\.5\}\) 0 1px, transparent 1px 2px\)/, 'one dark line every other pixel, like PSYCHRONIC_VideoOverlay');
@@ -550,7 +550,7 @@ test('previews show scanlines, stand on their anchor like the game, clamp typed 
     assert.match(runtime, /y -= descriptor\.height \* Math\.abs\(descriptor\.scaleY\) \/ 2;/);
     assert.doesNotMatch(runtime, /descriptor\.z \* th/);
     assert.equal(VideoSurfacePreviewManager.standingLift({ target: 'screen', height: 180, scaleY: 1 }), 0);
-    assert.match(fs.readFileSync(path.join(editorRoot, '..', 'runtime', 'reactor_main.js'), 'utf8'), /runtime revision: 20260902.11/);
+    assert.match(fs.readFileSync(path.join(editorRoot, '..', 'runtime', 'reactor_main.js'), 'utf8'), /runtime revision: 20260903.18/);
     assert.match(editor, /if \(options\.max !== undefined && next > options\.max\) next = options\.max;/);
     assert.match(editor, /if \(final && options\.min !== undefined && next < options\.min\) next = options\.min;/);
     assert.match(manager, /setEnabled\(enabled\) \{/);
@@ -589,7 +589,7 @@ test('Depth pushes a surface toward the camera in 3D and leaves the 2D feet row 
     assert.deepEqual(manager._worldPosition(base, 0), { x: 2.5, y: 1, z: 3.5 });
     assert.deepEqual(manager._worldPosition({ ...base, depth: 2.5 }, 0), { x: 2.5, y: 1, z: 6 }, 'positive depth is toward the camera');
     assert.equal(manager._anchor2d({ ...base, depth: 2.5 }, 0).y, manager._anchor2d(base, 0).y, '2D placement ignores depth');
-    const runtime = fs.readFileSync(path.join(editorRoot, '..', 'runtime', 'reactor_video_surfaces.js'), 'utf8');
+    const runtime = fs.readFileSync(path.join(editorRoot, '..', 'runtime', 'reactor_media_surfaces.js'), 'utf8');
     assert.match(runtime, /z \+= descriptor\.depth;/);
 });
 
@@ -642,7 +642,7 @@ test('model-bound characters on flat maps render as sprites, the view the editor
 test('the map note is the 3D switch, the sidecar always loads on disk, and flat-map model sprites animate like the scene', () => {
     const r3d = fs.readFileSync(path.join(editorRoot, '..', 'runtime', 'reactor_3d.js'), 'utf8');
     const managers = fs.readFileSync(path.join(editorRoot, '..', 'runtime', 'reactor_managers.js'), 'utf8');
-    const video = fs.readFileSync(path.join(editorRoot, '..', 'runtime', 'reactor_video_surfaces.js'), 'utf8');
+    const video = fs.readFileSync(path.join(editorRoot, '..', 'runtime', 'reactor_media_surfaces.js'), 'utf8');
     const Reactor3D = require(path.join(editorRoot, '..', 'runtime', 'reactor_3d.js'));
     assert.equal(Reactor3D.mapMode({ note: '', reactor3d: { mode: '3d' } }), '2d', 'no <3d> in the note: flat, whatever the sidecar says');
     assert.equal(Reactor3D.mapMode({ note: '<3d>', reactor3d: { mode: '2d' } }), '2d', 'the sidecar can still downgrade');

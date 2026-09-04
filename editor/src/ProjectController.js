@@ -2004,6 +2004,7 @@ class ProjectController {
             document.getElementById(`map-${type}-picker`).style.display = checkbox.checked ? 'block' : 'none';
             this.renderMapAudioChoice(type);
         }
+        this.populateBgmSequenceForm(mapData);
 
         // Battleback Settings
         const battlebackCheckbox = document.getElementById('map-specify-battleback-checkbox');
@@ -2119,6 +2120,61 @@ class ProjectController {
             pitch: number(audio && audio.pitch, 100),
             pan: number(audio && audio.pan, 0)
         };
+    }
+
+    /**
+     * The BGM sequence list. The editor holds the working copy; the
+     * checkbox is its enabled flag, and a disabled sequence keeps its
+     * entries so switching back loses nothing.
+     */
+    populateBgmSequenceForm(mapData) {
+        const container = document.getElementById('map-bgm-sequence-editor');
+        const checkbox = document.getElementById('map-bgm-sequence-checkbox');
+        const pane = document.getElementById('map-bgm-sequence');
+        if (!container || !checkbox || typeof RRBgmSequenceEditor === 'undefined') {
+            this._bgmSequenceEditor = null;
+            this._mapBgmSequence = mapData.bgmSequence || null;
+            return;
+        }
+        if (!this._bgmSequenceEditor || this._bgmSequenceEditor.container !== container) {
+            this._bgmSequenceEditor = new RRBgmSequenceEditor({
+                container,
+                tt: text => this._tt(text),
+                t: (key, params) => this._t(key, params),
+                pickTrack: options => this.pickSequenceTrack(options)
+            });
+        }
+        this._bgmSequenceEditor.load(mapData.bgmSequence);
+        checkbox.checked = this._bgmSequenceEditor.value().enabled;
+        if (pane) pane.style.display = checkbox.checked ? 'block' : 'none';
+    }
+
+    /** The sequence as the form holds it: the editor's copy, or what the map had when there is no form. */
+    mapBgmSequenceFromForm() {
+        if (this._bgmSequenceEditor) return this._bgmSequenceEditor.value();
+        if (typeof RRBgmSequenceEditor !== 'undefined') return RRBgmSequenceEditor.normalize(this._mapBgmSequence);
+        return this._mapBgmSequence || null;
+    }
+
+    /** A track for a sequence row or a palette pool, through the shared audio picker. */
+    pickSequenceTrack(options) {
+        return new Promise(resolve => {
+            if (!this.currentProject?.path || !window.RRAudioPickerModal) return resolve(null);
+            const path = require('path');
+            const folder = path.join(this.currentProject.path, 'audio', 'bgm');
+            RRAudioPickerModal.open({
+                title: `${this._tt('Select')} BGM ${this._tt('File')}`,
+                folderLabel: 'BGM',
+                files: RRAssetFiles.listUnique(folder, RRAssetFiles.AUDIO_EXTENSIONS),
+                selected: options.selected || '',
+                levels: options.levels || null,
+                previewLevels: options.previewLevels || undefined,
+                loopDefault: false,
+                zIndex: 10010,
+                onOk: result => resolve(result),
+                onCancel: () => resolve(null)
+            });
+        });
     }
 
     /** Show the chosen track and its levels for `type` ('bgm' | 'bgs'). */
@@ -2609,6 +2665,11 @@ class ProjectController {
         });
         // The track is chosen in the audio picker; the name shown is a second way in.
         this._bindMapPropertiesListener('map-bgm-choose-btn', 'click', () => this.openMapAudioPicker('bgm'));
+        this._bindMapPropertiesListener('map-bgm-sequence-checkbox', 'change', (e) => {
+            if (this._bgmSequenceEditor) this._bgmSequenceEditor.setEnabled(e.target.checked);
+            const pane = document.getElementById('map-bgm-sequence');
+            if (pane) pane.style.display = e.target.checked ? 'block' : 'none';
+        });
         this._bindMapPropertiesListener('map-bgm-track', 'click', () => this.openMapAudioPicker('bgm'));
         this._bindMapPropertiesListener('map-bgs-choose-btn', 'click', () => this.openMapAudioPicker('bgs'));
         this._bindMapPropertiesListener('map-bgs-track', 'click', () => this.openMapAudioPicker('bgs'));
@@ -2843,9 +2904,25 @@ class ProjectController {
         const wants3D = !!document.getElementById('map-3d-checkbox')?.checked || /<3d>/i.test(noteText);
         const room = this.readMap3DForm();
         const audio = this._mapAudio || {};
+        const bgmSequence = this.mapBgmSequenceFromForm();
+        if (typeof RRBgmSequenceEditor !== 'undefined') {
+            const sequenceError = RRBgmSequenceEditor.validate(bgmSequence, text => this._tt(text));
+            if (sequenceError) {
+                alert(sequenceError);
+                document.getElementById('map-bgm-sequence-checkbox')?.focus();
+                return false;
+            }
+        }
 
-        // Collect data from form
+        // Collect data from form. Every field the map already has is carried
+        // through first, so a field this form does not know (a plugin's, a
+        // newer Reactor's) survives OK; the form's own fields overwrite.
+        const carried = {};
+        for (const [key, value] of Object.entries(this.currentEditingMap || {})) {
+            if (!key.startsWith('_')) carried[key] = value;
+        }
         const mapData = {
+            ...carried,
             id: this.currentEditingMap.id,
             name: document.getElementById('map-name-input').value || 'Unnamed Map',
             displayName: document.getElementById('map-display-name-input').value || '',
@@ -2881,6 +2958,12 @@ class ProjectController {
             data: this.currentEditingMap.data || [],
             events: this.currentEditingMap.events || []
         };
+
+        if (typeof RRBgmSequenceEditor !== 'undefined' && RRBgmSequenceEditor.isBlank(bgmSequence)) {
+            delete mapData.bgmSequence;
+        } else if (bgmSequence) {
+            mapData.bgmSequence = bgmSequence;
+        }
 
         if (wants3D) {
             if (elevation) elevation.addNote(mapData);

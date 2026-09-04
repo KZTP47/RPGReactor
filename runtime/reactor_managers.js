@@ -463,6 +463,46 @@ DataManager.savefileInfo = function(savefileId) {
     return globalInfo[savefileId] ? globalInfo[savefileId] : null;
 };
 
+//-----------------------------------------------------------------------------
+// Playtest checkpoints
+//
+// A playtest saves itself after every battle and every map transfer into a
+// hidden slot, and F9 on the title screen resumes it, so a crash forty
+// minutes into an intro costs the walk from the last checkpoint, not from
+// the start. Playtests only (Utils.isOptionValid("test")); a deployed game
+// never writes it. Slot 99 sits past every save list.
+
+DataManager.PLAYTEST_CHECKPOINT_ID = 99;
+
+DataManager.isPlaytestCheckpointEnabled = function() {
+    return typeof Utils !== "undefined" && Utils.isOptionValid && Utils.isOptionValid("test");
+};
+
+DataManager.hasPlaytestCheckpoint = function() {
+    return this.isPlaytestCheckpointEnabled() && this.savefileExists(this.PLAYTEST_CHECKPOINT_ID);
+};
+
+/** Saves the checkpoint, unless one is being written or the party is dead. */
+DataManager.savePlaytestCheckpoint = function(reason) {
+    if (!this.isPlaytestCheckpointEnabled() || this._playtestCheckpointBusy) return Promise.resolve(false);
+    if (typeof $gameParty === "undefined" || !$gameParty || $gameParty.isAllDead()) return Promise.resolve(false);
+    if (typeof $gameMap === "undefined" || !$gameMap || !$gameMap.mapId()) return Promise.resolve(false);
+    this._playtestCheckpointBusy = true;
+    $gameSystem.onBeforeSave();
+    return this.saveGame(this.PLAYTEST_CHECKPOINT_ID)
+        .then(() => {
+            this._playtestCheckpointBusy = false;
+            this._playtestCheckpointReason = reason;
+            console.info("RPG Reactor playtest checkpoint saved (" + reason + "); F9 on the title screen resumes it.");
+            return true;
+        })
+        .catch(error => {
+            this._playtestCheckpointBusy = false;
+            console.warn("RPG Reactor playtest checkpoint could not be saved", error);
+            return false;
+        });
+};
+
 DataManager.savefileExists = function(savefileId) {
     const saveName = this.makeSavename(savefileId);
     return StorageManager.exists(saveName);
@@ -1295,6 +1335,10 @@ Object.defineProperty(AudioManager, "seVolume", {
 });
 
 AudioManager.playBgm = function(bgm, pos) {
+    if (bgm && bgm.sequence) {
+        this.playBgmSequence(bgm);
+        return;
+    }
     if (this.isCurrentBgm(bgm)) {
         this.updateBgmParameters(bgm);
     } else {
@@ -1317,6 +1361,8 @@ AudioManager.replayBgm = function(bgm) {
         this.playBgm(bgm, bgm.pos);
         if (this._bgmBuffer) {
             this._bgmBuffer.fadeIn(this._replayFadeTime);
+        } else if (this._bgmSequence) {
+            this.fadeInBgm(this._replayFadeTime);
         }
     }
 };
@@ -1331,6 +1377,7 @@ AudioManager.isCurrentBgm = function(bgm) {
 
 AudioManager.updateBgmParameters = function(bgm) {
     this.updateBufferParameters(this._bgmBuffer, this._bgmVolume, bgm);
+    if (this._bgmSequence) this._refreshBgmSequenceVolumes();
 };
 
 AudioManager.updateCurrentBgm = function(bgm, pos) {
@@ -1344,6 +1391,7 @@ AudioManager.updateCurrentBgm = function(bgm, pos) {
 };
 
 AudioManager.stopBgm = function() {
+    this.stopBgmSequence();
     if (this._bgmBuffer) {
         this._bgmBuffer.destroy();
         this._bgmBuffer = null;
@@ -1352,6 +1400,9 @@ AudioManager.stopBgm = function() {
 };
 
 AudioManager.fadeOutBgm = function(duration) {
+    if (this._bgmSequence) {
+        this._fadeOutBgmSequence(duration);
+    }
     if (this._bgmBuffer && this._currentBgm) {
         this._bgmBuffer.fadeOut(duration);
         this._currentBgm = null;
@@ -1359,6 +1410,9 @@ AudioManager.fadeOutBgm = function(duration) {
 };
 
 AudioManager.fadeInBgm = function(duration) {
+    if (this._bgmSequence) {
+        for (const buffer of this._bgmSequenceBuffers()) buffer.fadeIn(duration);
+    }
     if (this._bgmBuffer && this._currentBgm) {
         this._bgmBuffer.fadeIn(duration);
     }
@@ -1439,6 +1493,7 @@ AudioManager.playMe = function(me) {
             this._currentBgm.pos = this._bgmBuffer.seek();
             this._bgmBuffer.stop();
         }
+        if (this._bgmSequence) this._duckBgmSequence(this.BGM_SEQUENCE_ME_DUCK);
         this._meBuffer = this.createBuffer("me/", me.name);
         this.updateMeParameters(me);
         this._meBuffer.play(false);
@@ -1460,6 +1515,7 @@ AudioManager.stopMe = function() {
     if (this._meBuffer) {
         this._meBuffer.destroy();
         this._meBuffer = null;
+        if (this._bgmSequence) this._duckBgmSequence(1);
         if (
             this._bgmBuffer &&
             this._currentBgm &&
@@ -1614,6 +1670,18 @@ AudioManager.stopAll = function() {
 };
 
 AudioManager.saveBgm = function() {
+    const sequence = this._bgmSequence || this._pendingBgmSequence;
+    if (sequence) {
+        const fallback = sequence.fallback || {};
+        return {
+            name: fallback.name || "",
+            volume: fallback.volume || 0,
+            pitch: fallback.pitch || 0,
+            pan: fallback.pan || 0,
+            pos: 0,
+            sequence: sequence.mapId
+        };
+    }
     if (this._currentBgm) {
         const bgm = this._currentBgm;
         return {
@@ -1672,6 +1740,7 @@ AudioManager.checkErrors = function() {
     const buffers = [this._bgmBuffer, this._bgsBuffer, this._meBuffer];
     buffers.push(...this._seBuffers);
     buffers.push(...this._staticBuffers);
+    if (this._bgmSequence) buffers.push(...this._bgmSequenceBuffers());
     for (const buffer of buffers) {
         if (buffer && buffer.isError()) {
             this.throwLoadError(buffer);
@@ -1682,6 +1751,320 @@ AudioManager.checkErrors = function() {
 AudioManager.throwLoadError = function(webAudio) {
     const retry = webAudio.retry.bind(webAudio);
     throw ["LoadError", webAudio.url, retry];
+};
+
+
+//-----------------------------------------------------------------------------
+// BGM sequences
+//
+// A map's music can be a sequence instead of one looping track
+// ($dataMap.bgmSequence = { enabled, entries }). Entries play in order and
+// the sequence loops:
+//   { type: "track", name, volume, pitch, pan }   plays once to its true end
+//   { type: "silence", duration }                 seconds of quiet
+//   { type: "palette", duration, fadeOut, layers } layers sound together;
+//       each layer draws at random from its own pool of tracks and silences
+//       (never the same entry twice running), the palette runs `duration`
+//       seconds (0 = until something else stops it) and fades out over
+//       `fadeOut` seconds before the next entry.
+// A track inside a sequence or a palette plays with looping off, so its
+// LOOPSTART/LOOPLENGTH tags are inert; a sequence that is one plain track
+// is the ordinary BGM path, tags honoured.
+//
+// The sequence lives beside the BGM slot, not in it: _bgmBuffer and
+// _currentBgm stay null while one plays, and every BGM entry point above
+// checks _bgmSequence. It reports into the saved-BGM shape as the map's
+// fallback track plus `sequence: mapId`, so battles, vehicles, Save BGM /
+// Replay BGM and save files all restart it (with a fresh random draw)
+// through playBgm. Restarting needs the map's data: when the map is not
+// the current one yet (a save being loaded), the request waits as
+// _pendingBgmSequence until the map's autoplay repeats it.
+
+AudioManager._bgmSequence = null;
+AudioManager._pendingBgmSequence = null;
+AudioManager.BGM_SEQUENCE_ME_DUCK = 0.25;
+
+/** The BGM object a map plays: its fallback track, marked with the sequence when it has one. */
+AudioManager.mapBgmObject = function(map, mapId) {
+    const bgm = Object.assign({}, (map && map.bgm) || this.makeEmptyAudioObject());
+    delete bgm.sequence;
+    if (this.mapHasBgmSequence(map) && mapId > 0) bgm.sequence = mapId;
+    return bgm;
+};
+
+AudioManager.mapHasBgmSequence = function(map) {
+    const sequence = map && map.bgmSequence;
+    return !!(sequence && sequence.enabled !== false && Array.isArray(sequence.entries) && sequence.entries.length > 0);
+};
+
+/** The current map's sequence data for `mapId`, or null when that map is not loaded. */
+AudioManager._bgmSequenceDataFor = function(mapId) {
+    if (typeof $gameMap === "undefined" || !$gameMap || $gameMap.mapId() !== mapId) return null;
+    if (typeof $dataMap === "undefined" || !this.mapHasBgmSequence($dataMap)) return null;
+    return $dataMap.bgmSequence;
+};
+
+AudioManager.playBgmSequence = function(bgm) {
+    const mapId = bgm.sequence;
+    if (this._bgmSequence && this._bgmSequence.mapId === mapId && !this._bgmSequence.stopping) return;
+    const fallback = { name: bgm.name, volume: bgm.volume, pitch: bgm.pitch, pan: bgm.pan };
+    const data = this._bgmSequenceDataFor(mapId);
+    this.stopBgm();
+    if (!data) {
+        this._pendingBgmSequence = { mapId: mapId, fallback: fallback };
+        return;
+    }
+    const entries = data.entries.filter(entry => entry && typeof entry === "object");
+    if (entries.length === 1 && entries[0].type === "track") {
+        // One plain track: the ordinary looping BGM, loop tags and all.
+        this.playBgm(this._bgmSequenceTrackAudio(entries[0]));
+        return;
+    }
+    this._bgmSequence = {
+        mapId: mapId,
+        fallback: fallback,
+        entries: entries,
+        index: -1,
+        buffers: [],
+        duck: this._meBuffer ? this.BGM_SEQUENCE_ME_DUCK : 1,
+        due: 0,
+        palette: null,
+        stopping: false
+    };
+    this._advanceBgmSequence();
+};
+
+AudioManager.stopBgmSequence = function() {
+    this._pendingBgmSequence = null;
+    const state = this._bgmSequence;
+    if (!state) return;
+    this._bgmSequence = null;
+    for (const buffer of state.buffers) this._destroyBgmSequenceBuffer(buffer);
+    state.buffers = [];
+};
+
+AudioManager._bgmSequenceTrackAudio = function(entry) {
+    return {
+        name: entry.name || "",
+        volume: Number.isFinite(entry.volume) ? entry.volume : 100,
+        pitch: Number.isFinite(entry.pitch) ? entry.pitch : 100,
+        pan: Number.isFinite(entry.pan) ? entry.pan : 0
+    };
+};
+
+AudioManager._bgmSequenceBuffers = function() {
+    return this._bgmSequence ? this._bgmSequence.buffers.filter(buffer => buffer && !buffer._rrRetired) : [];
+};
+
+/** Starts one non-looping track for the sequence; `onEnd` runs when it plays out. */
+AudioManager._startBgmSequenceTrack = function(state, audio, onEnd) {
+    const buffer = this.createBuffer("bgm/", audio.name);
+    this.updateBufferParameters(buffer, this._bgmVolume, audio);
+    buffer._rrBaseVolume = buffer.volume;
+    buffer.volume = buffer._rrBaseVolume * state.duck;
+    buffer.addStopListener(() => {
+        // stop() also runs from destroy(); only a track that played out advances.
+        if (buffer._rrRetired || this._bgmSequence !== state) return;
+        buffer._rrRetired = true;
+        onEnd();
+    });
+    buffer.play(false, 0);
+    state.buffers.push(buffer);
+    return buffer;
+};
+
+AudioManager._destroyBgmSequenceBuffer = function(buffer) {
+    if (!buffer) return;
+    buffer._rrRetired = true;
+    buffer.destroy();
+};
+
+AudioManager._pruneBgmSequenceBuffers = function(state) {
+    state.buffers = state.buffers.filter(buffer => buffer && !buffer._rrRetired);
+};
+
+AudioManager._advanceBgmSequence = function() {
+    const state = this._bgmSequence;
+    if (!state || state.stopping) return;
+    this._endBgmSequencePalette(state);
+    this._pruneBgmSequenceBuffers(state);
+    state.index = (state.index + 1) % state.entries.length;
+    this._startBgmSequenceEntry(state, state.entries[state.index]);
+};
+
+AudioManager._startBgmSequenceEntry = function(state, entry) {
+    const now = WebAudio._currentTime();
+    switch (entry.type) {
+        case "silence":
+            state.due = now + Math.max(0, Number(entry.duration) || 0);
+            break;
+        case "palette":
+            this._startBgmSequencePalette(state, entry, now);
+            break;
+        default: {
+            const audio = this._bgmSequenceTrackAudio(entry);
+            if (!audio.name) {
+                state.due = now;
+                break;
+            }
+            state.due = 0;
+            const buffer = this._startBgmSequenceTrack(state, audio, () => {
+                this._destroyBgmSequenceBuffer(buffer);
+                this._advanceBgmSequence();
+            });
+        }
+    }
+};
+
+AudioManager._startBgmSequencePalette = function(state, entry, now) {
+    const layers = (Array.isArray(entry.layers) ? entry.layers : []).map(layer => ({
+        volume: Number.isFinite(layer.volume) ? layer.volume : 100,
+        pitch: Number.isFinite(layer.pitch) ? layer.pitch : 100,
+        pan: Number.isFinite(layer.pan) ? layer.pan : 0,
+        pool: (Array.isArray(layer.pool) ? layer.pool : []).filter(item => item && typeof item === "object"),
+        buffer: null,
+        silentUntil: 0,
+        last: -1
+    })).filter(layer => layer.pool.length > 0);
+    const duration = Math.max(0, Number(entry.duration) || 0);
+    state.palette = {
+        layers: layers,
+        startTime: now,
+        duration: duration,
+        fadeOut: Math.max(0, Number(entry.fadeOut) || 0),
+        fading: false,
+        fadeDoneAt: 0
+    };
+    state.due = 0;
+    if (!layers.length) {
+        state.due = now + duration;
+        return;
+    }
+    for (const layer of layers) this._startBgmSequenceLayer(state, layer);
+};
+
+/** A random pool entry, never the one that just played when there is a choice. */
+AudioManager._pickBgmSequencePoolEntry = function(layer) {
+    const pool = layer.pool;
+    if (pool.length === 1) return 0;
+    let index = Math.floor(Math.random() * pool.length);
+    if (index === layer.last) index = (index + 1 + Math.floor(Math.random() * (pool.length - 1))) % pool.length;
+    return index;
+};
+
+AudioManager._startBgmSequenceLayer = function(state, layer) {
+    const palette = state.palette;
+    if (!palette || palette.fading || this._bgmSequence !== state) return;
+    const index = this._pickBgmSequencePoolEntry(layer);
+    layer.last = index;
+    const item = layer.pool[index];
+    layer.buffer = null;
+    if (item.type === "silence" || !item.name) {
+        layer.silentUntil = WebAudio._currentTime() + Math.max(0, Number(item.duration) || 0);
+        return;
+    }
+    layer.silentUntil = 0;
+    const audio = { name: item.name, volume: layer.volume, pitch: layer.pitch, pan: layer.pan };
+    const buffer = this._startBgmSequenceTrack(state, audio, () => {
+        this._destroyBgmSequenceBuffer(buffer);
+        if (layer.buffer === buffer) layer.buffer = null;
+        this._pruneBgmSequenceBuffers(state);
+        this._startBgmSequenceLayer(state, layer);
+    });
+    layer.buffer = buffer;
+};
+
+AudioManager._endBgmSequencePalette = function(state) {
+    const palette = state.palette;
+    if (!palette) return;
+    state.palette = null;
+    for (const layer of palette.layers) {
+        if (layer.buffer) this._destroyBgmSequenceBuffer(layer.buffer);
+        layer.buffer = null;
+    }
+    this._pruneBgmSequenceBuffers(state);
+};
+
+/** The per-frame step: silences end, palette layers restart, palettes fade and move on. */
+AudioManager.updateBgmSequence = function() {
+    const state = this._bgmSequence;
+    if (!state) return;
+    const now = WebAudio._currentTime();
+    if (state.stopping) {
+        if (now >= state.due) this.stopBgmSequence();
+        return;
+    }
+    const palette = state.palette;
+    if (palette) {
+        if (palette.fading) {
+            if (now >= palette.fadeDoneAt) this._advanceBgmSequence();
+            return;
+        }
+        for (const layer of palette.layers) {
+            if (!layer.buffer && layer.silentUntil && now >= layer.silentUntil) {
+                layer.silentUntil = 0;
+                this._startBgmSequenceLayer(state, layer);
+            }
+        }
+        if (palette.duration > 0 && now - palette.startTime >= palette.duration) {
+            palette.fading = true;
+            palette.fadeDoneAt = now + palette.fadeOut;
+            for (const layer of palette.layers) {
+                // Retire first: a track ending mid-fade must not start another.
+                if (layer.buffer) {
+                    layer.buffer._rrRetired = true;
+                    layer.buffer.fadeOut(palette.fadeOut);
+                }
+            }
+            if (!palette.layers.length) this._advanceBgmSequence();
+        }
+        return;
+    }
+    if (state.due && now >= state.due) {
+        state.due = 0;
+        this._advanceBgmSequence();
+    }
+};
+
+AudioManager._fadeOutBgmSequence = function(duration) {
+    const state = this._bgmSequence;
+    if (!state || state.stopping) return;
+    state.stopping = true;
+    state.due = WebAudio._currentTime() + Math.max(0, duration || 0);
+    for (const buffer of state.buffers) {
+        if (!buffer || buffer._rrRetired) continue;
+        buffer._rrRetired = true;
+        buffer.fadeOut(duration);
+    }
+};
+
+AudioManager._duckBgmSequence = function(factor) {
+    const state = this._bgmSequence;
+    if (!state) return;
+    state.duck = factor;
+    for (const buffer of this._bgmSequenceBuffers()) {
+        if (typeof buffer._rrBaseVolume === "number") buffer.volume = buffer._rrBaseVolume * factor;
+    }
+};
+
+/** Re-derives every live layer's volume after the BGM volume option changes. */
+AudioManager._refreshBgmSequenceVolumes = function() {
+    const state = this._bgmSequence;
+    if (!state) return;
+    const entry = state.entries[state.index];
+    for (const buffer of this._bgmSequenceBuffers()) {
+        let audio = null;
+        if (state.palette) {
+            const layer = state.palette.layers.find(item => item.buffer === buffer);
+            if (layer) audio = { volume: layer.volume, pitch: layer.pitch, pan: layer.pan };
+        } else if (entry) {
+            audio = this._bgmSequenceTrackAudio(entry);
+        }
+        if (!audio) continue;
+        this.updateBufferParameters(buffer, this._bgmVolume, audio);
+        buffer._rrBaseVolume = buffer.volume;
+        buffer.volume = buffer._rrBaseVolume * state.duck;
+    }
 };
 
 //-----------------------------------------------------------------------------

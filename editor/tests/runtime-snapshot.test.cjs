@@ -112,8 +112,10 @@ test('MV filterArea shaders use PIXI 8 filter globals without overriding them', 
     assert.doesNotMatch(programOptions.fragment, /\bfilterClamp\b/);
     assert.match(programOptions.fragment, /uniform highp vec4 uInputClamp/);
     assert.match(programOptions.fragment, /clamp\(coord \/ size, uInputClamp\.xy, uInputClamp\.zw\)/);
-    assert.deepEqual(Object.keys(uniformStructures), ['size']);
+    assert.deepEqual(Object.keys(uniformStructures), ['size', 'uReactorOpaque'], 'the plugin uniform plus the bridge\'s opaque switch');
     assert.deepEqual(filter.uniforms.size, [320, 180]);
+    assert.match(programOptions.fragment, /void rrCompatUserMain\(void\)/);
+    assert.match(programOptions.fragment, /if \(uReactorOpaque > 0\.5\) finalColor\.a = 1\.0;/);
     for (const globalName of [
         'uInputSize', 'uInputPixel', 'uInputClamp', 'uOutputFrame',
         'uGlobalFrame', 'uOutputTexture'
