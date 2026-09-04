@@ -333,6 +333,17 @@
     const PROP_MAX_LIFT = 512;
     const PROP_DIRECTIONS = [2, 4, 6, 8];
 
+    /** A list of names from a list or a single field, each once, in order. */
+    const names = (list, single) => {
+        const source = Array.isArray(list) ? list : (single ? [single] : []);
+        const out = [];
+        for (const entry of source) {
+            const name = entry == null ? '' : String(entry).trim();
+            if (name && out.indexOf(name) < 0) out.push(name);
+        }
+        return out;
+    };
+
     const normalizeProp = (raw, mapData) => {
         if (!raw || typeof raw !== 'object' || !raw.name) return null;
         const number = (value, fallback) => {
@@ -372,9 +383,13 @@
             size: size > 0 ? Math.round(size * 100) / 100 : 2,
             scale: scale > 0 ? Math.round(scale * 1000) / 1000 : 1,
             passable: raw.passable === true || raw.passable === 'true',
-            animation: raw.animation ? String(raw.animation) : '',
+            // Several animations play in order and several effects at once;
+            // the singular fields stay as the first of each for older readers.
+            animations: names(raw.animations, raw.animation),
+            animation: names(raw.animations, raw.animation)[0] || '',
             repeat: raw.repeat === true || raw.repeat === 'true',
-            effect: raw.effect ? String(raw.effect) : ''
+            effects: names(raw.effects, raw.effect),
+            effect: names(raw.effects, raw.effect)[0] || ''
         };
     };
 

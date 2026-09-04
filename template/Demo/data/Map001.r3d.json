@@ -10374,7 +10374,7 @@
       "passable": false,
       "animation": "MonitorArmExtend",
       "repeat": true,
-      "effect": ""
+      "effect": "Gentle Screen Glow"
     },
     {
       "id": 13,

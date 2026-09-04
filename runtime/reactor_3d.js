@@ -876,6 +876,13 @@ Reactor3D.Viewport.prototype._resetPixi = function() {
     // its own there. Nulls force a real bind on the next use.
     const textures = pixi.texture;
     if (textures && Array.isArray(textures._boundTextures)) textures._boundTextures.fill(null);
+    // The shadow atlases are 2D depth textures in compare mode, and three
+    // leaves them on whatever units its last program used. PIXI's batch
+    // shader declares sixteen plain sampler2Ds, one per unit, and the
+    // driver refuses the draw outright if any of them points at a compare
+    // texture — sampled or not. three's own binding cache is reset before
+    // its next pass, so clearing the units costs it nothing.
+    Reactor3D.Shadows.unbindFrom(this._renderer);
 };
 
 Reactor3D.Viewport.prototype._initializeCanvas = function() {
@@ -6142,8 +6149,26 @@ Reactor3D.MapScene.prototype.syncVolumeLights = function(declared, focus) {
             cosHalf = Math.cos((Math.min(angle, 178) * Math.PI) / 360);
         }
 
+        // A beam stops where it lands, and lands as a bright dot: the beam
+        // itself reaches only to the surface, and a small point light sits
+        // on the surface there so the spot it makes is lit like one.
+        let reach = radius;
+        let hit = null;
+        if (beam) {
+            const landed = Reactor3D.beamHit(light.x, light.y, y, ax, ay, az, radius, this);
+            if (landed !== null) {
+                reach = landed;
+                hit = { x: x + ax * reach, y: y + ay * reach, z: z + az * reach };
+                // The dot sits on the near face of what the beam struck. A
+                // camera farther along the beam than the landing is looking
+                // at that surface's back — through a wall the view has
+                // hidden, from behind it — and cannot see the dot.
+                const eye = Reactor3D.viewEye();
+                hit.facesEye = !eye || ((eye.x - hit.x) * ax + (eye.y - hit.y) * ay + (eye.z - hit.z) * az) <= 0;
+            }
+        }
         const at = count * 4;
-        pos[at] = x; pos[at + 1] = y; pos[at + 2] = z; pos[at + 3] = radius;
+        pos[at] = x; pos[at + 1] = y; pos[at + 2] = z; pos[at + 3] = reach;
         // The colour's w says the shape: 0 a sphere, 1 a cone, 2 a beam. The
         // aim's w is what that shape needs — the cone's cosine of its half
         // angle, the beam's half width in tiles.
@@ -6154,17 +6179,32 @@ Reactor3D.MapScene.prototype.syncVolumeLights = function(declared, focus) {
         // the body count, not the light count.
         if (light.body !== false) {
             bodies.place(bodyCount, {
-                x, y, z, radius, spot, beam, width, r, g, b, angle, ax, ay, az,
+                x, y, z, radius: reach, spot, beam, width, r, g, b, angle, ax, ay, az, hit,
                 intensity: light.intensity === undefined ? 1 : light.intensity
             });
             bodyCount++;
         }
+        if (hit && count + 1 < max) {
+            count++;
+            const dot = count * 4;
+            const dotGain = gain * Reactor3D.BEAM_DOT_GAIN;
+            pos[dot] = hit.x; pos[dot + 1] = hit.y; pos[dot + 2] = hit.z;
+            pos[dot + 3] = Math.max(width * Reactor3D.BEAM_DOT_REACH, 0.3);
+            col[dot] = r * dotGain; col[dot + 1] = g * dotGain; col[dot + 2] = b * dotGain; col[dot + 3] = 0;
+            aim[dot] = 0; aim[dot + 1] = -1; aim[dot + 2] = 0; aim[dot + 3] = -1;
+        }
         if (light.shadow !== false) {
+            const gap = Math.hypot((light.x || 0) - fx, (light.y || 0) - fy) - radius;
             candidates.push({
                 index: count,
                 id: light.id !== undefined && light.id !== null ? String(light.id) : "#" + count,
                 x, y: y + Math.max(0, Reactor3D.SHADOW_LIFT - height), z, radius,
-                gap: Math.hypot((light.x || 0) - fx, (light.y || 0) - fy) - radius
+                gap,
+                // Rows go first to the lights whose reach covers the focus,
+                // nearest first — a torch in the player's hand before a
+                // screen glow across the hall, however far that one reaches
+                // — and only then to the ones that stop short of it.
+                rank: gap <= 0 ? gap + radius : 1e4 + gap
             });
         }
         count++;
@@ -6201,9 +6241,36 @@ Reactor3D.MapScene.prototype.lightBodies = function() {
     const cores = [];
     const cones = [];
     const beams = [];
+    const dots = [];
     const bodies = {
-        group, glows, cores, cones, beams,
+        group, glows, cores, cones, beams, dots,
         place(index, light) {
+            // The laser dot: a bright soft disc where a beam lands, drawn a
+            // hair back along the beam so the surface it lit does not hide it.
+            let dot = dots[index];
+            if (light.beam && light.hit && light.hit.facesEye !== false) {
+                if (!dot) {
+                    dot = new THREE.Sprite(new THREE.SpriteMaterial({
+                        map: Reactor3D.roundLightTexture(),
+                        blending: THREE.AdditiveBlending,
+                        transparent: true,
+                        depthWrite: false,
+                        depthTest: true,
+                        fog: false
+                    }));
+                    dot.renderOrder = 14;
+                    group.add(dot);
+                    dots[index] = dot;
+                }
+                dot.visible = true;
+                dot.position.set(light.hit.x - light.ax * 0.03, light.hit.y - light.ay * 0.03, light.hit.z - light.az * 0.03);
+                const dotSize = Math.max(light.width * Reactor3D.BEAM_DOT_SIZE, 0.12);
+                dot.scale.set(dotSize, dotSize, 1);
+                dot.material.color.setRGB(light.r, light.g, light.b);
+                dot.material.opacity = Math.min(1, Reactor3D.VOLUME_GLOW * 1.8 * light.intensity);
+            } else if (dot) {
+                dot.visible = false;
+            }
             let core = cores[index];
             if (!core) {
                 core = new THREE.Sprite(new THREE.SpriteMaterial({
@@ -6286,9 +6353,10 @@ Reactor3D.MapScene.prototype.lightBodies = function() {
             for (let i = count; i < glows.length; i++) glows[i].visible = false;
             for (let i = count; i < cones.length; i++) if (cones[i]) cones[i].visible = false;
             for (let i = count; i < beams.length; i++) if (beams[i]) beams[i].visible = false;
+            for (let i = count; i < dots.length; i++) if (dots[i]) dots[i].visible = false;
         },
         dispose() {
-            for (const list of [cores, glows, cones, beams]) {
+            for (const list of [cores, glows, cones, beams, dots]) {
                 for (const body of list) {
                     if (!body) continue;
                     if (body.parent) body.parent.remove(body);
@@ -6686,6 +6754,15 @@ Reactor3D.LIGHT_BEAM = "beam";
 Reactor3D.DEFAULT_BEAM_LENGTH = 8;
 // A beam's full thickness in tiles: the shader and the body take half.
 Reactor3D.DEFAULT_BEAM_WIDTH = 0.08;
+// Where a beam lands: the dot's size and the little light's reach, as
+// multiples of the beam's width, and how much brighter than the beam.
+Reactor3D.BEAM_DOT_SIZE = 4;
+Reactor3D.BEAM_DOT_REACH = 8;
+Reactor3D.BEAM_DOT_GAIN = 1.5;
+// The size the 3D database previews every model at: its longest side in
+// tiles. A light effect's reach and width are authored against that, and
+// grow with the placed instance.
+Reactor3D.EFFECT_PREVIEW_SPAN = 1.6;
 
 /** Whether a light has a direction to aim: a cone or a beam. */
 Reactor3D.lightIsAimed = function(light) {
@@ -6786,28 +6863,35 @@ Reactor3D.lightUniforms = function() {
         rrLightColor: { value: new Float32Array(n * 4) },   // r, g, b (× intensity × gain), spot flag
         rrLightAim: { value: new Float32Array(n * 4) },     // aim x, y, z, cos(half angle)
         rrAmbient: { value: new Float32Array([1, 1, 1]) },
-        // Which shadow slot each light samples, -1 for none.
+        // Which shadow tile each light samples, -1 for none.
         rrLightShadow: { value: new Float32Array(n).fill(-1) },
-        // Per slot: near, far, dynamic map live, softness (in cube units).
-        rrShadowInfo: { value: new Float32Array(this.SHADOW_SLOTS * 4) },
-        // Per slot: where the map was rendered from (a floor light's is lifted).
+        // Per tile: near, far, its dynamic tile (-1 for none), softness (in face units).
+        rrShadowInfo: { value: new Float32Array(this.SHADOW_SLOTS * 4).fill(-1) },
+        // Per tile: where the strip was rendered from (a floor light's is lifted).
         rrShadowPos: { value: new Float32Array(this.SHADOW_SLOTS * 4) },
-        rrShadowBias: { value: this.SHADOW_BIAS }
+        rrShadowBias: { value: this.SHADOW_BIAS },
+        // The static atlas and the dynamic atlas: every casting light's six
+        // faces live in one texture each, so a program carries two samplers
+        // however many lights cast.
+        rrShadowAtlas: { value: null },
+        rrShadowDynAtlas: { value: null },
+        // 1/faces across, 1/rows in the static atlas, 1/rows in the dynamic
+        // one, and one texel in face units.
+        rrShadowGrid: { value: new Float32Array([1 / 6, 1, 1, 1 / 512]) }
     };
-    for (let k = 0; k < this.SHADOW_SLOTS; k++) {
-        this._lightUniforms["rrShadowMap" + k] = { value: null };
-        this._lightUniforms["rrShadowDyn" + k] = { value: null };
-    }
     return this._lightUniforms;
 };
 
 /**
- * The shadow term, when a program carries one: each slot is a cube depth
- * map rendered from a light (three's own shadow pass, see `Reactor3D.Shadows`)
- * and sampled with hardware depth comparison. A light with a slot multiplies
- * its falloff by the visibility of the fragment from the source: the static
- * map holds the props and the map's models, the dynamic one whoever moved
- * this frame, and the darker of the two wins.
+ * The shadow term, when a program carries one. Every casting light owns a
+ * row of the atlas: six 90-degree faces side by side, rendered from the
+ * light (see `Reactor3D.Shadows`) and sampled with hardware depth
+ * comparison. A light with a tile multiplies its falloff by the visibility
+ * of the fragment from the source: the static atlas holds the props and
+ * the map's models, the dynamic one whoever moved this frame, and the
+ * darker of the two wins. The face is chosen from the major axis of the
+ * light-to-fragment vector exactly as a cube map would choose it, then
+ * projected onto that face and offset into the row.
  */
 Reactor3D.shadowGlsl = function(taps) {
     const slots = this.SHADOW_SLOTS;
@@ -6816,13 +6900,10 @@ Reactor3D.shadowGlsl = function(taps) {
         "uniform float rrLightShadow[" + this.SHADER_LIGHTS + "];",
         "uniform vec4 rrShadowInfo[" + slots + "];",
         "uniform vec4 rrShadowPos[" + slots + "];",
-        "uniform float rrShadowBias;"
-    ];
-    for (let k = 0; k < slots; k++) {
-        lines.push("uniform samplerCubeShadow rrShadowMap" + k + ";");
-        lines.push("uniform samplerCubeShadow rrShadowDyn" + k + ";");
-    }
-    lines.push(
+        "uniform float rrShadowBias;",
+        "uniform sampler2DShadow rrShadowAtlas;",
+        "uniform sampler2DShadow rrShadowDynAtlas;",
+        "uniform vec4 rrShadowGrid;",
         "float rrShadowNoise(vec2 p) { return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); }",
         "vec2 rrShadowTap(int i, float phi) {",
         "\tfloat r = sqrt((float(i) + 0.5) / 5.0);",
@@ -6830,43 +6911,45 @@ Reactor3D.shadowGlsl = function(taps) {
         "\treturn vec2(cos(t), sin(t)) * r;",
         "}",
         // The stored depth is the face camera's projected depth (a 90-degree
-        // frustum per cube face), so the compare value is rebuilt the same
-        // way from the major axis of the light-to-fragment vector.
-        "float rrCubeShadow(samplerCubeShadow map, vec3 d, vec4 info) {",
+        // frustum per face), so the compare value is rebuilt the same way
+        // from the major axis of the light-to-fragment vector. The face's
+        // right and up match the cameras in Reactor3D.SHADOW_FACES.
+        "float rrAtlasShadow(sampler2DShadow atlas, float rowScale, float row, vec3 d, vec4 info) {",
         "\tvec3 a = abs(d);",
         "\tfloat z = max(max(a.x, a.y), a.z);",
         "\tif (z < info.x || z > info.y) return 1.0;",
         "\tfloat dp = (info.y * (z - info.x)) / (z * (info.y - info.x)) + rrShadowBias;",
-        "\tvec3 dir = normalize(d);",
+        "\tfloat face;",
+        "\tvec2 uv;",
+        "\tif (a.x >= a.y && a.x >= a.z) { face = d.x > 0.0 ? 0.0 : 1.0; uv = vec2(d.z * sign(d.x), d.y); }",
+        "\telse if (a.y >= a.z) { face = d.y > 0.0 ? 2.0 : 3.0; uv = vec2(d.x, d.z * sign(d.y)); }",
+        "\telse { face = d.z > 0.0 ? 4.0 : 5.0; uv = vec2(-d.x * sign(d.z), d.y); }",
+        "\tuv = uv / z * 0.5 + 0.5;",
+        "\tvec2 base = vec2(face * rrShadowGrid.x, row * rowScale);",
+        "\tvec2 scale = vec2(rrShadowGrid.x, rowScale);",
+        // A tap never leaves its face: the filter's footprint would read the
+        // neighbouring face's depth as this one's.
+        "\tfloat pad = rrShadowGrid.w;",
         "#if RR_SHADOW_TAPS > 1",
-        "\tvec3 ad = abs(dir);",
-        "\tvec3 t = ad.x > ad.z ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);",
-        "\tt = normalize(cross(dir, t));",
-        "\tvec3 b = cross(dir, t);",
         "\tfloat phi = rrShadowNoise(gl_FragCoord.xy) * 6.283185307179586;",
         "\tfloat s = 0.0;",
         "\tfor (int i = 0; i < 5; i++) {",
-        "\t\tvec2 o = rrShadowTap(i, phi) * info.w;",
-        "\t\ts += texture(map, vec4(dir + t * o.x + b * o.y, dp));",
+        "\t\tvec2 q = clamp(uv + rrShadowTap(i, phi) * info.w, pad, 1.0 - pad);",
+        "\t\ts += texture(atlas, vec3(base + q * scale, dp));",
         "\t}",
         "\treturn s * 0.2;",
         "#else",
-        "\treturn texture(map, vec4(dir, dp));",
+        "\treturn texture(atlas, vec3(base + clamp(uv, pad, 1.0 - pad) * scale, dp));",
         "#endif",
         "}",
-        "float rrShadowAt(int slot, vec3 p) {"
-    );
-    for (let k = 0; k < slots; k++) {
-        lines.push(
-            "\tif (slot == " + k + ") {",
-            "\t\tvec3 d = p - rrShadowPos[" + k + "].xyz;",
-            "\t\tfloat s = rrCubeShadow(rrShadowMap" + k + ", d, rrShadowInfo[" + k + "]);",
-            "\t\tif (rrShadowInfo[" + k + "].z > 0.5) s = min(s, rrCubeShadow(rrShadowDyn" + k + ", d, rrShadowInfo[" + k + "]));",
-            "\t\treturn s;",
-            "\t}"
-        );
-    }
-    lines.push("\treturn 1.0;", "}");
+        "float rrShadowAt(int slot, vec3 p) {",
+        "\tvec4 info = rrShadowInfo[slot];",
+        "\tvec3 d = p - rrShadowPos[slot].xyz;",
+        "\tfloat s = rrAtlasShadow(rrShadowAtlas, rrShadowGrid.y, float(slot), d, info);",
+        "\tif (info.z >= 0.0) s = min(s, rrAtlasShadow(rrShadowDynAtlas, rrShadowGrid.z, info.z, d, info));",
+        "\treturn s;",
+        "}"
+    ];
     return lines.join("\n") + "\n";
 };
 
@@ -7028,16 +7111,20 @@ Reactor3D.litMaterial = function(material) {
 //-----------------------------------------------------------------------------
 // Shadows
 //
-// A light's map is a cube of depth rendered from the source, by three's own
-// shadow pass — the point lights that render it live off-scene, so they
-// light nothing and change no program's parameters, and the maps are read
-// back through uniforms the lit materials declare themselves. Two maps per
-// light: a STATIC one, holding the props and placed models, rendered only
-// when something in it moved or a light did, at the coarsest distance level
-// a model has; and a DYNAMIC one, holding the characters, rendered each
-// frame a character stands in the light's reach and skipped otherwise. The
-// nearest few lights to the focus get slots; the rest cast none. A weak GPU
-// gets two slots at 256 and a single tap; the rest four at 512 and five.
+// Every casting light renders six 90-degree faces of depth from where it
+// stands into a row of a shared atlas, and the lit materials sample that
+// atlas with hardware depth comparison inside their light loop. Two
+// atlases: a STATIC one, holding the props and placed models, whose rows
+// are rendered only when a light arrives or moves or a prop in its reach
+// does, at the coarsest distance level a model has; and a smaller DYNAMIC
+// one, holding the characters, whose rows are rendered only when a
+// character in that light's reach has moved. A program carries two
+// samplers however many lights cast, so the atlas — not the sampler limit
+// — says how many may: eight rows at 512 with five taps on a capable GPU,
+// four at 256 with one tap on a weak one. Lights with nothing in reach
+// need no row at all. The work is spread: a few rows a frame, nearest to
+// the player first, and a row keeps its last rendering until the new one
+// is drawn.
 
 /**
  * The GPU's class as the 3D code sees it.
@@ -7143,6 +7230,14 @@ Reactor3D.viewFrustum = function() {
 };
 
 /** Whether a sphere of `radius` at (x, y, z) can reach anything on screen. */
+/** Where the drawing camera stands, in world units, or null with no viewport. */
+Reactor3D.viewEye = function() {
+    const viewport = this.viewport();
+    const camera = viewport && viewport.camera ? viewport.camera() : null;
+    if (!camera || typeof THREE === "undefined") return null;
+    return camera.getWorldPosition(this._viewEye || (this._viewEye = new THREE.Vector3()));
+};
+
 Reactor3D.sphereInView = function(x, y, z, radius) {
     const frustum = this.viewFrustum();
     if (!frustum) return true;
@@ -7154,27 +7249,72 @@ Reactor3D.sphereInView = function(x, y, z, radius) {
 
 /** "auto" follows the GPU tier; "off" draws none anywhere. */
 Reactor3D.SHADOWS = "auto";
-/** How many lights can cast at once — the samplers are declared per slot. */
-Reactor3D.SHADOW_SLOTS = 4;
 /**
+ * The most rows either atlas may hold: the uniform arrays are declared this
+ * long, and a tier uses up to this many.
+ */
+Reactor3D.SHADOW_SLOTS = 8;
+/**
+ * `slots` is the static atlas's rows — how many lights may cast at once —
+ * and `dynamicSlots` the dynamic atlas's, how many of those may also carry
+ * moving characters. `staticPerFrame` and `dynamicPerFrame` cap how many
+ * rows are rendered in one frame; the rest wait, nearest to the player
+ * first, and keep their last rendering meanwhile.
+ *
  * `dynamicTriangles` is the ceiling on the geometry the moving casters may
- * put into ONE cube map. It is a real ceiling, not a hint: a cube is six
- * faces and a slot holds four lights, so every triangle a character casts is
- * drawn up to twenty-four times a frame. The Demo's start map made that
- * concrete — ten dynamic casters totalling 1.93M triangles (two characters
- * of 595k each, two of 255k, all skinned) cost 289 ms of a 392 ms frame on
- * an integrated Radeon, and dropping them to the cheapest five took the
- * frame to 107 ms with everything else untouched. The full tier's budget
- * is sized for a party: two characters reduced the way the import
- * optimizer reduces them (about 150k each) both cast, on a GPU that can
- * redraw a cube of that in the time a frame has to spare.
+ * put into ONE row. It is a real ceiling, not a hint: a row is six faces,
+ * so every triangle a character casts is drawn six times per row it enters.
+ * The Demo's start map made that concrete — ten dynamic casters totalling
+ * 1.93M triangles (two characters of 595k each, two of 255k, all skinned)
+ * cost 289 ms of a 392 ms frame on an integrated Radeon, and dropping them
+ * to the cheapest five took the frame to 107 ms with everything else
+ * untouched. The full tier's budget is sized for a party: two characters
+ * reduced the way the import optimizer reduces them (about 150k each) both
+ * cast, on a GPU that can redraw a strip of that in the time a frame has
+ * to spare.
  */
 Reactor3D.SHADOW_QUALITY = {
-    full: { slots: 4, size: 512, taps: 5, dynamicTriangles: 320000 },
-    weak: { slots: 2, size: 256, taps: 1, dynamicTriangles: 30000 }
+    full: { slots: 8, dynamicSlots: 3, size: 512, taps: 5, dynamicTriangles: 320000, staticPerFrame: 2, dynamicPerFrame: 2 },
+    weak: { slots: 4, dynamicSlots: 1, size: 256, taps: 1, dynamicTriangles: 30000, staticPerFrame: 1, dynamicPerFrame: 1 }
 };
+/**
+ * The six faces of a row, in atlas order: the direction each camera looks
+ * and its up. `shadowGlsl` picks the face from the major axis of the
+ * light-to-fragment vector and projects with the matching right and up, so
+ * the two tables must agree (right = cross(dir, up), as three's lookAt has it).
+ */
+Reactor3D.SHADOW_FACES = [
+    { dir: [1, 0, 0], up: [0, 1, 0] }, { dir: [-1, 0, 0], up: [0, 1, 0] },
+    { dir: [0, 1, 0], up: [0, 0, 1] }, { dir: [0, -1, 0], up: [0, 0, -1] },
+    { dir: [0, 0, 1], up: [0, 1, 0] }, { dir: [0, 0, -1], up: [0, 1, 0] }
+];
 /** The cube camera's near plane, in tiles; far is the light's reach. */
 Reactor3D.SHADOW_NEAR = 0.1;
+/**
+ * How far a casting light may drift before its maps are rendered again
+ * from the new place, in tiles. A light riding an animated part (a screen
+ * glow on a monitor arm that keeps extending) moves a hair every frame,
+ * and a map keyed on the exact position redrew the reactor and three
+ * consoles six faces each, every frame, for a shadow nobody could tell
+ * from the last one. The maps hold, and are read from where they were
+ * rendered, until the light has moved this far.
+ */
+Reactor3D.SHADOW_STATIC_MOVE = 0.25;
+/**
+ * The fewest frames between two renderings of the same row while it still
+ * shows something. Bounds what a drifting light costs: a torch in the
+ * player's hand, or a screen glow on an arm that keeps extending, redraws
+ * the props around it at most this often, and is read from its last
+ * rendering meanwhile.
+ */
+Reactor3D.SHADOW_STATIC_INTERVAL = 10;
+/**
+ * How far a casting character, or one of its bones, must move before the
+ * rows it stands in are drawn again, in tiles. An idle animation breathes
+ * a hand's width and back; redrawing every frame for that was the whole
+ * per-frame cost of shadows on a still map.
+ */
+Reactor3D.SHADOW_DYNAMIC_MOVE = 0.03;
 /** Added to the compare depth, over and above the slope offset below. */
 Reactor3D.SHADOW_BIAS = 0.0004;
 /**
@@ -7218,19 +7358,27 @@ Reactor3D.shadowsWanted = function(mapData) {
 
 Reactor3D.Shadows = {
     _active: false,
-    _slots: null,
     _renderer: null,
+    _atlas: null,
+    _dynAtlas: null,
+    _tiles: null,
+    _dynTiles: null,
     _sentinel: null,
     _pending: null,
     _quality: null,
-    _cameras: null,
+    _camera: null,
     _static: new Set(),
     _dynamic: new Set(),
     _candidates: [],
     _generation: 0,
+    _seenGeneration: NaN,
+    _seenLodSwaps: NaN,
     _staticHash: NaN,
     _dynamicHash: NaN,
     _casting: null,
+    _castChanges: [],
+    _frame: 0,
+    backlog: 0,
 
     quality() {
         if (this._quality) return this._quality;
@@ -7245,14 +7393,14 @@ Reactor3D.Shadows = {
     /**
      * Whether a program compiled for `renderer` should carry the shadow
      * samplers: only while shadows are on, and only in the renderer whose
-     * context the maps were rendered in. Programs are cached per renderer,
+     * context the atlas was rendered in. Programs are cached per renderer,
      * so the same material compiles plain elsewhere under the same key.
      */
     appliesTo(renderer) {
         return this._active && (renderer == null || renderer === this._renderer);
     },
 
-    /** Something in the static maps changed in a way the transform hash cannot see. */
+    /** Something in the static rows changed in a way the transform hash cannot see. */
     invalidate() {
         this._generation++;
     },
@@ -7270,7 +7418,7 @@ Reactor3D.Shadows = {
             child.castShadow = true;
             child.layers.enable(layer);
             child.layers.disable(other);
-            child.customDistanceMaterial = this.casterMaterialFor(child.material);
+            child.customDepthMaterial = this.casterMaterialFor(child.material, !!child.isSkinnedMesh);
         });
         root.userData.reactorShadowCaster = dynamic ? "dynamic" : "static";
         (dynamic ? this._dynamic : this._static).add(root);
@@ -7280,26 +7428,42 @@ Reactor3D.Shadows = {
     },
 
     /**
-     * What a caster is drawn with into a map: three's distance material
-     * with the slope offset. three copies the object's map, alpha test and
-     * side onto it per draw, so plain surfaces share one; a cut-out gets
-     * its own, because the map is part of its program.
+     * What a caster is drawn with into a row: a depth material with the
+     * slope offset and no colour write. Plain surfaces share one per side
+     * (and skinned meshes their own, so a program is never re-fetched as a
+     * shared material alternates between skinned and rigid draws); a
+     * cut-out gets its own, because the map is part of its program, and
+     * follows the source's map as it animates. Front faces are drawn from
+     * the back, as three's shadow pass draws them, so a surface does not
+     * shade itself into acne.
      */
-    casterMaterialFor(material) {
+    casterMaterialFor(material, skinned) {
         const first = Array.isArray(material) ? material[0] : material;
+        const side = first && first.side !== undefined ? first.side : THREE.FrontSide;
+        const flipped = side === THREE.FrontSide ? THREE.BackSide : side === THREE.BackSide ? THREE.FrontSide : THREE.DoubleSide;
         const make = () => {
-            const distance = new THREE.MeshDistanceMaterial();
-            distance.polygonOffset = true;
-            distance.polygonOffsetFactor = Reactor3D.SHADOW_SLOPE_BIAS[0];
-            distance.polygonOffsetUnits = Reactor3D.SHADOW_SLOPE_BIAS[1];
-            return distance;
+            const depth = new THREE.MeshDepthMaterial();
+            depth.polygonOffset = true;
+            depth.polygonOffsetFactor = Reactor3D.SHADOW_SLOPE_BIAS[0];
+            depth.polygonOffsetUnits = Reactor3D.SHADOW_SLOPE_BIAS[1];
+            depth.colorWrite = false;
+            depth.side = flipped;
+            depth.__rrCaster = true;
+            return depth;
         };
         if (first && first.alphaTest > 0) {
-            if (!first.__reactorCasterMaterial) first.__reactorCasterMaterial = make();
+            if (!first.__reactorCasterMaterial) {
+                const cutout = make();
+                cutout.__rrCutout = true;
+                cutout.map = first.map || null;
+                cutout.alphaTest = first.alphaTest;
+                first.__reactorCasterMaterial = cutout;
+            }
             return first.__reactorCasterMaterial;
         }
-        if (!this._casterMaterial) this._casterMaterial = make();
-        return this._casterMaterial;
+        const pool = this._casterMaterials || (this._casterMaterials = {});
+        const key = (skinned ? "skinned" : "rigid") + flipped;
+        return pool[key] || (pool[key] = make());
     },
 
     /** This frame's lights that may cast, from `syncVolumeLights`. */
@@ -7308,11 +7472,13 @@ Reactor3D.Shadows = {
     },
 
     /**
-     * Which candidate takes which slot: the nearest `count` to the focus,
-     * each kept in the slot it already had so its cached map survives.
+     * Which candidate takes which row: the best-ranked `count` (nearest to
+     * the focus, by `gap` when nothing ranked them), each kept in the row
+     * it already had so its rendering survives.
      */
     assign(candidates, count, previous) {
-        const chosen = (candidates || []).slice().sort((a, b) => a.gap - b.gap).slice(0, count);
+        const rankOf = c => (c.rank !== undefined ? c.rank : c.gap);
+        const chosen = (candidates || []).slice().sort((a, b) => rankOf(a) - rankOf(b)).slice(0, count);
         const result = [];
         for (let k = 0; k < count; k++) result.push(null);
         const pending = [];
@@ -7329,9 +7495,9 @@ Reactor3D.Shadows = {
     },
 
     /**
-     * The far plane a slot's maps are rendered to. A light's reach breathes
-     * with flicker and pulse, and a map rendered to one far plane is read
-     * against that same plane, so the slot keeps a plane a little past the
+     * The far plane a row is rendered to. A light's reach breathes with
+     * flicker and pulse, and a row rendered to one far plane is read
+     * against that same plane, so the row keeps a plane a little past the
      * reach and moves it only when the reach leaves the band — otherwise a
      * candle would re-render every prop in the room sixty times a second.
      */
@@ -7340,24 +7506,50 @@ Reactor3D.Shadows = {
         return Math.ceil((radius * 1.15) / 0.5) * 0.5;
     },
 
-    _makeLight(size) {
-        const light = new THREE.PointLight(0xffffff, 0, 1);
-        light.castShadow = true;
-        light.shadow.mapSize.set(size, size);
-        light.shadow.camera.near = Reactor3D.SHADOW_NEAR;
-        light.shadow.camera.far = 1;
-        light.shadow.camera.updateProjectionMatrix();
-        light.shadow.autoUpdate = false;
-        light.shadow.needsUpdate = true;
-        light.shadow.bias = 0;
-        return light;
+    /**
+     * An atlas: `rows` strips of six `size`-pixel faces, a depth texture in
+     * compare mode (what a `sampler2DShadow` must be bound to) behind a
+     * one-byte colour attachment nothing writes to. Cleared once here, so
+     * every row reads as fully lit until it is rendered, and so the depth
+     * texture exists before any program names it — a shadow sampler bound
+     * to three's empty fallback texture fails the draw outright.
+     */
+    _makeAtlas(renderer, size, rows) {
+        const width = size * 6;
+        const height = size * rows;
+        const target = new THREE.WebGLRenderTarget(width, height, {
+            format: THREE.RedFormat,
+            type: THREE.UnsignedByteType,
+            minFilter: THREE.NearestFilter,
+            magFilter: THREE.NearestFilter,
+            generateMipmaps: false,
+            depthBuffer: true,
+            stencilBuffer: false
+        });
+        target.texture.name = "shadow-atlas";
+        const depth = new THREE.DepthTexture(width, height, THREE.UnsignedIntType);
+        depth.format = THREE.DepthFormat;
+        depth.compareFunction = THREE.LessEqualCompare;
+        depth.minFilter = THREE.LinearFilter;
+        depth.magFilter = THREE.LinearFilter;
+        depth.generateMipmaps = false;
+        depth.name = "shadow-atlas-depth";
+        target.depthTexture = depth;
+        const was = renderer.getRenderTarget();
+        target.scissorTest = false;
+        target.viewport.set(0, 0, width, height);
+        renderer.setRenderTarget(target);
+        renderer.clear(true, true, false);
+        renderer.setRenderTarget(was);
+        return { target, size, rows };
     },
 
     /**
      * The sentinel is drawn first in every pass and draws nothing: its
      * `onBeforeRender` is the one hook three fires with a render in
-     * progress, which the depth passes need — `renderBufferDirect` reads
-     * the render state that only exists inside `renderer.render`.
+     * progress, which is when the rows are rendered — after every group's
+     * visibility for the frame is settled, before the first lit draw reads
+     * the atlas.
      */
     _makeSentinel() {
         const geometry = new THREE.BufferGeometry();
@@ -7372,80 +7564,74 @@ Reactor3D.Shadows = {
         return mesh;
     },
 
-    _ensureSlots(renderer) {
-        if (this._slots && this._renderer === renderer) return this._slots;
-        this.disposeSlots();
-        this._renderer = renderer;
-        const size = this.quality().size;
-        const slots = [];
-        for (let k = 0; k < Reactor3D.SHADOW_SLOTS; k++) {
-            slots.push({ light: this._makeLight(size), dyn: this._makeLight(size), id: null, key: "", far: 0 });
-        }
-        const probe = layer => {
-            const camera = new THREE.Camera();
-            camera.layers.set(layer);
-            return camera;
-        };
-        this._cameras = { static: probe(Reactor3D.SHADOW_LAYER_STATIC), dynamic: probe(Reactor3D.SHADOW_LAYER_DYNAMIC) };
-        this._sentinel = this._makeSentinel();
-        this._slots = slots;
-        this._primeMaps(renderer, slots);
-        return slots;
+    _makeTile() {
+        // `origin`, `far` and `key` describe what the row holds (or, before
+        // its first render, what was asked for); `want` a newer request the
+        // row has not been rendered to yet, while the old rendering is
+        // still read from where it was made.
+        return { id: null, key: "", far: 0, origin: null, want: null, candidate: null, gap: 0, dirty: false, valid: false, stamp: 0, tile: -1 };
     },
 
     /**
-     * Give every slot's two maps a real depth cube before any program can
-     * name them. A lit program declares a `samplerCubeShadow` per slot, and
-     * a sampler of that type must be bound to a depth texture in compare
-     * mode — three's fallback for a null one is its empty RGBA cube, which
-     * the driver rejects at draw time as a texture/sampler mismatch and the
-     * draw is dropped. On a map with fewer casting lights than slots that
-     * is every lit surface, every frame, drawn as nothing. The maps are
-     * rendered once here from an empty scene, through three's own shadow
-     * pass so they are built exactly as the real ones are; an empty depth
-     * map reads as fully lit, which is what an unassigned slot should say.
+     * The two atlases, the rows that book them, and the camera that draws
+     * them, for this renderer. The row count bends to the context's largest
+     * texture; a face never does, so a cramped GPU gets fewer lights, not
+     * blurrier shadows.
      */
-    _primeMaps(renderer, slots) {
-        const lights = [];
-        for (const slot of slots) lights.push(slot.light, slot.dyn);
-        const empty = new THREE.Scene();
-        const wasEnabled = renderer.shadowMap.enabled;
-        renderer.shadowMap.enabled = true;
-        try {
-            renderer.shadowMap.render(lights, empty, this._cameras.static);
-        } finally {
-            renderer.shadowMap.enabled = wasEnabled;
-        }
-        // A slot's first real render must still happen.
-        for (const light of lights) light.shadow.needsUpdate = true;
+    _ensureAtlas(renderer) {
+        if (this._atlas && this._renderer === renderer) return;
+        this.disposeSlots();
+        this._renderer = renderer;
+        const quality = this.quality();
+        const max = (renderer.capabilities && renderer.capabilities.maxTextureSize) || 4096;
+        let size = quality.size;
+        while (size * 6 > max && size > 64) size >>= 1;
+        const rows = Math.max(1, Math.min(quality.slots, Reactor3D.SHADOW_SLOTS, Math.floor(max / size)));
+        const dynRows = Math.max(1, Math.min(quality.dynamicSlots, Reactor3D.SHADOW_SLOTS, Math.floor(max / size)));
+        this._atlas = this._makeAtlas(renderer, size, rows);
+        this._dynAtlas = this._makeAtlas(renderer, size, dynRows);
+        this._tiles = [];
+        for (let k = 0; k < rows; k++) this._tiles.push(this._makeTile());
+        this._dynTiles = [];
+        for (let j = 0; j < dynRows; j++) this._dynTiles.push(this._makeTile());
+        this._camera = new THREE.PerspectiveCamera(90, 1, Reactor3D.SHADOW_NEAR, 1);
+        this._sentinel = this._makeSentinel();
+        this._frame = 0;
+        this._seenGeneration = NaN;
+        this._seenLodSwaps = NaN;
+        this._bindMaps(Reactor3D.lightUniforms());
     },
 
     disposeSlots() {
-        if (this._slots) {
-            for (const slot of this._slots) {
-                for (const light of [slot.light, slot.dyn]) {
-                    if (light.shadow.map) light.shadow.map.dispose();
-                    light.shadow.map = null;
-                }
-            }
+        for (const atlas of [this._atlas, this._dynAtlas]) {
+            if (!atlas) continue;
+            if (atlas.target.depthTexture) atlas.target.depthTexture.dispose();
+            atlas.target.dispose();
         }
         if (this._sentinel) {
             if (this._sentinel.parent) this._sentinel.parent.remove(this._sentinel);
             this._sentinel.geometry.dispose();
             this._sentinel.material.dispose();
         }
+        this._atlas = null;
+        this._dynAtlas = null;
+        this._tiles = null;
+        this._dynTiles = null;
+        this._camera = null;
         this._sentinel = null;
         this._pending = null;
-        this._slots = null;
         this._renderer = null;
         this._staticHash = NaN;
-        // The maps are gone, so nothing may be judged unchanged against them.
+        // The rows are gone, so nothing may be judged unchanged against them.
         this._dynamicHash = NaN;
+        this._seenGeneration = NaN;
+        this._seenLodSwaps = NaN;
+        for (const root of this._static) delete root.userData.rrShadowHash;
+        for (const root of this._dynamic) { delete root.userData.rrShadowHash; delete root.userData.rrShadowPose; }
         const uniforms = Reactor3D.lightUniforms();
-        for (let k = 0; k < Reactor3D.SHADOW_SLOTS; k++) {
-            uniforms["rrShadowMap" + k].value = null;
-            uniforms["rrShadowDyn" + k].value = null;
-        }
+        uniforms.rrShadowAtlas.value = null;
+        uniforms.rrShadowDynAtlas.value = null;
+        uniforms.rrShadowInfo.value.fill(-1);
     },
 
     dispose() {
@@ -7453,9 +7639,11 @@ Reactor3D.Shadows = {
         this._static.clear();
         this._dynamic.clear();
         this._casting = null;
+        this._castChanges = [];
         this._dynamicHash = NaN;
         this._candidates = [];
         this._active = false;
+        this.backlog = 0;
         Reactor3D.lightUniforms().rrLightShadow.value.fill(-1);
     },
 
@@ -7468,24 +7656,123 @@ Reactor3D.Shadows = {
         });
     },
 
+    /** A number that changes when a static root moves, hides, or appears. */
+    _staticHashOf(root) {
+        if (!root.visible) return 0.11;
+        const e = root.matrixWorld.elements;
+        return e[12] * 1.7 + e[13] * 2.3 + e[14] * 3.1 + e[0] * 0.7 + e[5] * 1.1 + e[10] * 1.3 + e[1] * 0.3 + e[8] * 0.5 + 1;
+    },
+
     /**
-     * A number that changes when a static caster moves, appears, hides or
-     * swaps its level. Cheaper than tracking every path that can move one.
+     * Whether a casting character has moved or animated since its rows were
+     * last told so. Root transforms alone are not enough: a character
+     * animating on the spot never moves its root, and freezing its shadow
+     * while it moved would be the very artefact the dynamic row exists to
+     * avoid — so a skinned caster also watches two of its bones. Each point
+     * must travel SHADOW_DYNAMIC_MOVE from where it was last reported: an
+     * idle animation sways less than that and back, and never adds up.
      */
-    _staticChanged() {
-        let hash = this._generation * 0.37 + Reactor3D._lodSwaps * 0.53;
-        let n = 0;
-        for (const root of this._static) {
-            if (!root.parent) { this._static.delete(root); continue; }
-            n++;
-            if (!root.visible) { hash += n * 0.11; continue; }
-            const e = root.matrixWorld.elements;
-            hash += n * (e[12] * 1.7 + e[13] * 2.3 + e[14] * 3.1 + e[0] * 0.7 + e[5] * 1.1 + e[10] * 1.3 + e[1] * 0.3 + e[8] * 0.5 + 1);
+    _dynamicMoved(root) {
+        const data = root.userData;
+        const pose = data.rrShadowPose || (data.rrShadowPose = new Float32Array(10).fill(NaN));
+        const points = this._posePoints;
+        const e = root.matrixWorld.elements;
+        points[0] = e[12]; points[1] = e[13]; points[2] = e[14];
+        const skeleton = data.rrShadowSkeleton !== undefined
+            ? data.rrShadowSkeleton
+            : (data.rrShadowSkeleton = this._firstSkeleton(root));
+        const bones = skeleton && skeleton.bones.length ? skeleton.bones : null;
+        for (let i = 0; i < 2; i++) {
+            const bone = bones ? bones[i === 0 ? 0 : bones.length >> 1] : null;
+            const b = bone ? bone.matrixWorld.elements : e;
+            points[3 + i * 3] = b[12]; points[4 + i * 3] = b[13]; points[5 + i * 3] = b[14];
         }
-        hash += n * 1000;
-        const changed = hash !== this._staticHash;
-        this._staticHash = hash;
-        return changed;
+        points[9] = root.visible ? 1 : 0;
+        const limit = Reactor3D.SHADOW_DYNAMIC_MOVE * Reactor3D.SHADOW_DYNAMIC_MOVE;
+        let moved = pose[9] !== points[9];
+        for (let i = 0; i < 9 && !moved; i += 3) {
+            const dx = points[i] - pose[i];
+            const dy = points[i + 1] - pose[i + 1];
+            const dz = points[i + 2] - pose[i + 2];
+            const d = dx * dx + dy * dy + dz * dz;
+            if (!(d <= limit)) moved = true;
+        }
+        if (moved) pose.set(points);
+        return moved;
+    },
+    _posePoints: new Float32Array(10),
+
+    /**
+     * Which roots of a set changed since the last look, as the places they
+     * were and the places they are, each with the root's span — so a row
+     * can tell whether the change was in its reach. A root that left the
+     * scene reports where it stood. `all` says every row is stale: a
+     * caster was added or re-marked, or a model swapped its distance level.
+     */
+    _changedRoots(set, dynamic) {
+        const points = [];
+        for (const root of set) {
+            if (!root.parent) {
+                set.delete(root);
+                if (dynamic && this._casting) this._casting.delete(root);
+                if (root.userData.rrShadowAt) points.push(root.userData.rrShadowAt);
+                delete root.userData.rrShadowHash;
+                delete root.userData.rrShadowPose;
+                continue;
+            }
+            if (dynamic && root.userData.rrShadowCasts === false) continue;
+            if (dynamic) {
+                if (!this._dynamicMoved(root)) continue;
+            } else {
+                const hash = this._staticHashOf(root);
+                if (hash === root.userData.rrShadowHash) continue;
+                root.userData.rrShadowHash = hash;
+            }
+            const e = root.matrixWorld.elements;
+            const now = { x: e[12], y: e[13], z: e[14], r: Reactor3D.instanceSpan(root) };
+            if (root.userData.rrShadowAt) points.push(root.userData.rrShadowAt);
+            points.push(now);
+            root.userData.rrShadowAt = now;
+        }
+        return points;
+    },
+
+    _changedStatics() {
+        const points = this._changedRoots(this._static, false);
+        const all = this._generation !== this._seenGeneration || Reactor3D._lodSwaps !== this._seenLodSwaps;
+        this._seenGeneration = this._generation;
+        this._seenLodSwaps = Reactor3D._lodSwaps;
+        return { all, points };
+    },
+
+    _changedDynamics() {
+        const points = this._changedRoots(this._dynamic, true);
+        for (const at of this._castChanges) points.push(at);
+        this._castChanges.length = 0;
+        return { all: false, points };
+    },
+
+    /** Whether any of the reported places lies within a row's reach. */
+    _touches(points, origin, far) {
+        for (const p of points) {
+            const reach = far + (p.r || 0);
+            const dx = p.x - origin.x;
+            const dy = p.y - origin.y;
+            const dz = p.z - origin.z;
+            if (dx * dx + dy * dy + dz * dz <= reach * reach) return true;
+        }
+        return false;
+    },
+
+    /** Something in the static rows changed since the last look. */
+    _staticChanged() {
+        const change = this._changedStatics();
+        return change.all || change.points.length > 0;
+    },
+
+    /** A casting character moved or animated since the last look. */
+    _dynamicChanged() {
+        return this._changedDynamics().points.length > 0;
     },
 
     /**
@@ -7517,44 +7804,36 @@ Reactor3D.Shadows = {
 
     /**
      * A root's triangles, cached against the distance-level counter so a
-     * swap re-reads it. Walking eighty meshes a frame to add up index counts
-     * is itself measurable when the answer only changes on a swap.
+     * model that swapped its level is counted again.
      */
     _casterTriangles(root) {
-        const data = root.userData;
-        if (data.rrCasterTris !== undefined && data.rrCasterTrisAt === Reactor3D._lodSwaps) {
-            return data.rrCasterTris;
-        }
+        const data = root.userData || (root.userData = {});
+        if (data.rrShadowTris !== undefined && data.rrShadowTrisAt === Reactor3D._lodSwaps) return data.rrShadowTris;
         let total = 0;
         root.traverse(child => {
-            if (!child.isMesh) return;
+            if (!child.isMesh || !child.geometry) return;
             const geometry = child.geometry;
-            if (!geometry) return;
-            if (geometry.index) total += geometry.index.count / 3;
-            else if (geometry.attributes && geometry.attributes.position) total += geometry.attributes.position.count / 3;
+            const index = geometry.index;
+            const position = geometry.attributes && geometry.attributes.position;
+            const count = index ? index.count : (position ? position.count : 0);
+            total += count / 3;
         });
-        data.rrCasterTris = total;
-        data.rrCasterTrisAt = Reactor3D._lodSwaps;
+        data.rrShadowTris = total;
+        data.rrShadowTrisAt = Reactor3D._lodSwaps;
         return total;
     },
 
     /**
-     * Choose the moving casters this frame can afford, nearest the focus
-     * first, and take the rest off the dynamic layer so the depth pass never
-     * sees them. Nearest-first rather than cheapest-first on purpose: the
-     * shadow a player is looking for is the one under their own feet, and a
-     * rule that spent the budget on whatever happened to be smallest would
-     * drop exactly that one. A caster already casting keeps casting until
-     * the budget genuinely runs out, so walking past a lamp does not switch
-     * a shadow on and off with every step.
+     * Which characters may cast this frame: nearest the focus first, until
+     * the tier's triangle budget is spent. Returns what it decided, or null
+     * when there was nothing to decide.
      */
     _budgetDynamic(focus) {
         const budget = this.quality().dynamicTriangles;
         const casting = this._casting || (this._casting = new Set());
         if (!focus || !(budget > 0)) {
             // No budget: everything casts again. `_casting` must still list
-            // them, because it is what `_dynamicChanged` hashes — an empty
-            // set would hash to a constant and freeze every dynamic map.
+            // them, because it is what the dynamic rows draw.
             const all = new Set();
             for (const root of this._dynamic) {
                 if (!root.parent) { this._dynamic.delete(root); continue; }
@@ -7581,8 +7860,8 @@ Reactor3D.Shadows = {
 
         // The nearest caster is allowed past the budget, because a rule that
         // could refuse the only shadow on screen is worse than one frame of
-        // honest cost — but only so far past it. A cube is six faces, so a
-        // caster costs six times its triangles every time its map is redrawn:
+        // honest cost — but only so far past it. A row is six faces, so a
+        // caster costs six times its triangles every time its row is redrawn:
         // an unreduced 595k-triangle character is 3.6M a redraw, and no
         // shadow is worth that on an integrated GPU. Past the ceiling it
         // casts nothing and the model wants reducing instead.
@@ -7609,46 +7888,25 @@ Reactor3D.Shadows = {
         return { casters: wanted.size, considered: ranked.length, triangles: Math.round(spent) };
     },
 
-    /** Put a root's meshes on or off the dynamic depth layer. */
+    /**
+     * Put a root's meshes on or off the dynamic depth layer. Either way is
+     * a change the rows in its reach must see: a character refused by the
+     * budget leaves a shadow behind otherwise, and one admitted has none.
+     */
     _setCasts(root, on) {
         const layer = Reactor3D.SHADOW_LAYER_DYNAMIC;
+        const was = root.userData.rrShadowCasts;
         root.traverse(child => {
             if (!child.isMesh) return;
             if (on) child.layers.enable(layer);
             else child.layers.disable(layer);
         });
-    },
-
-    /**
-     * A number that changes when a casting character moves or animates.
-     * Root transforms alone are not enough: a character animating on the
-     * spot never moves its root, and freezing its shadow while it moved
-     * would be the very artefact the dynamic map exists to avoid — so a
-     * skinned caster also folds in two of its bones.
-     */
-    _dynamicChanged() {
-        let hash = 0;
-        let n = 0;
-        for (const root of (this._casting || [])) {
-            if (!root.parent || !root.visible) continue;
-            n++;
-            const e = root.matrixWorld.elements;
-            hash += n * (e[12] * 1.7 + e[13] * 2.3 + e[14] * 3.1 + e[0] * 0.7 + e[5] * 1.1 + e[10] * 1.3);
-            const skeleton = root.userData.rrShadowSkeleton !== undefined
-                ? root.userData.rrShadowSkeleton
-                : (root.userData.rrShadowSkeleton = this._firstSkeleton(root));
-            if (!skeleton || !skeleton.bones.length) continue;
-            const bones = skeleton.bones;
-            for (const bone of [bones[0], bones[bones.length >> 1]]) {
-                if (!bone) continue;
-                const b = bone.matrixWorld.elements;
-                hash += n * (b[12] * 5.1 + b[13] * 6.7 + b[14] * 7.3);
-            }
-        }
-        hash += n * 1000;
-        const changed = hash !== this._dynamicHash;
-        this._dynamicHash = hash;
-        return changed;
+        root.userData.rrShadowCasts = on;
+        if (was === on || (was === undefined && on)) return;
+        const e = root.matrixWorld ? root.matrixWorld.elements : null;
+        if (e) this._castChanges.push({ x: e[12], y: e[13], z: e[14], r: Reactor3D.instanceSpan(root) });
+        delete root.userData.rrShadowHash;
+        delete root.userData.rrShadowPose;
     },
 
     _firstSkeleton(root) {
@@ -7659,12 +7917,12 @@ Reactor3D.Shadows = {
         return found;
     },
 
-    /** Whether any character stands within a light's reach. */
+    /** Whether any casting character stands within a light's reach. */
     _dynamicWithin(candidate, far) {
         const reachBase = far || candidate.radius;
         for (const root of this._dynamic) {
             if (!root.parent) { this._dynamic.delete(root); continue; }
-            if (!root.visible) continue;
+            if (!root.visible || root.userData.rrShadowCasts === false) continue;
             const e = root.matrixWorld.elements;
             const span = Reactor3D.instanceSpan(root) || 1;
             const reach = reachBase + span;
@@ -7674,6 +7932,30 @@ Reactor3D.Shadows = {
             if (dx * dx + dy * dy + dz * dz <= reach * reach) return true;
         }
         return false;
+    },
+
+    /** Whether any prop stands within a light's reach. */
+    _staticWithin(candidate, far) {
+        const reachBase = far || candidate.radius;
+        for (const root of this._static) {
+            if (!root.parent) { this._static.delete(root); continue; }
+            if (!root.visible) continue;
+            const e = root.matrixWorld.elements;
+            const reach = reachBase + (Reactor3D.instanceSpan(root) || 1);
+            const dx = e[12] - candidate.x;
+            const dy = e[13] - candidate.y;
+            const dz = e[14] - candidate.z;
+            if (dx * dx + dy * dy + dz * dz <= reach * reach) return true;
+        }
+        return false;
+    },
+
+    /**
+     * Whether a light has anything to shadow at all. One with nothing in
+     * reach takes no row: its falloff already says everything.
+     */
+    _castersWithin(candidate, far) {
+        return this._staticWithin(candidate, far) || this._dynamicWithin(candidate, far);
     },
 
     /** Static casters at their coarsest level for the duration of `fn`. */
@@ -7707,11 +7989,11 @@ Reactor3D.Shadows = {
 
     /**
      * The frame's shadow work, decided before the first pass: which light
-     * takes which slot, which maps need rendering, and the uniforms that
+     * takes which row, which rows need rendering, and the uniforms that
      * say so. The rendering itself waits for the sentinel, inside the pass.
      */
     render(renderer, scene, mapData) {
-        if (typeof THREE === "undefined" || !renderer || !scene || !renderer.shadowMap) return;
+        if (typeof THREE === "undefined" || !renderer || !scene || typeof renderer.setRenderTarget !== "function") return;
         const uniforms = Reactor3D.lightUniforms();
         const want = Reactor3D.shadowsWanted(mapData);
         if (!want) {
@@ -7723,108 +8005,376 @@ Reactor3D.Shadows = {
             if (this._sentinel && this._sentinel.parent) this._sentinel.parent.remove(this._sentinel);
             return;
         }
-        const fresh = !this._slots || this._renderer !== renderer;
-        const slots = this._ensureSlots(renderer);
+        const fresh = !this._atlas || this._renderer !== renderer;
+        this._ensureAtlas(renderer);
         if (this._sentinel.parent !== scene) scene.add(this._sentinel);
-        renderer.shadowMap.enabled = true;
         if (scene.matrixWorldAutoUpdate !== false) scene.updateMatrixWorld();
         const quality = this.quality();
-        const staticDirty = this._staticChanged();
+        const tiles = this._tiles;
+        const dynTiles = this._dynTiles;
+        this._frame++;
+        const staticChange = this._changedStatics();
         // Which characters can afford to cast, and whether any of them has
-        // moved or animated since the last maps were drawn. Both must run
-        // before the slot loop: the budget decides what `_dynamicChanged`
-        // is even hashing.
+        // moved or animated since the rows were drawn. Both must run before
+        // the row loop: the budget decides what the change list even holds.
         this.lastBudget = this._budgetDynamic(this._focusPoint(scene));
-        const dynamicDirty = this._dynamicChanged();
-        const assigned = this.assign(this._candidates, quality.slots, slots.map(s => (s.id === null ? null : { id: s.id })));
-        const shadowOf = uniforms.rrLightShadow.value;
-        shadowOf.fill(-1);
-        const info = uniforms.rrShadowInfo.value;
-        const statics = [];
-        const dynamics = [];
-        for (let k = 0; k < slots.length; k++) {
-            const slot = slots[k];
+        const dynamicChange = this._changedDynamics();
+
+        // Only a light with something in reach wants a row.
+        const farById = new Map();
+        for (const tile of tiles) if (tile.id !== null) farById.set(tile.id, tile.far);
+        const wanted = [];
+        for (const candidate of this._candidates) {
+            candidate.far = this.farFor(candidate.radius, farById.get(candidate.id) || 0);
+            if (this._castersWithin(candidate, candidate.far)) wanted.push(candidate);
+        }
+        const assigned = this.assign(wanted, tiles.length, tiles.map(t => (t.id === null ? null : { id: t.id })));
+        const dynWanted = [];
+        for (let k = 0; k < tiles.length; k++) {
+            const tile = tiles[k];
             const candidate = assigned[k] || null;
-            const at = k * 4;
             if (!candidate) {
-                slot.id = null;
-                slot.key = "";
-                info[at + 2] = 0;
-                // A map must exist for every sampler the program declares.
-                if (fresh || !slot.light.shadow.map) { slot.light.shadow.needsUpdate = true; statics.push(slot.light); }
-                if (fresh || !slot.dyn.shadow.map) { slot.dyn.shadow.needsUpdate = true; dynamics.push(slot.dyn); }
+                tile.id = null;
+                tile.key = "";
+                tile.candidate = null;
+                tile.valid = false;
+                tile.dirty = false;
                 continue;
             }
-            const far = this.farFor(candidate.radius, slot.id === candidate.id ? slot.far : 0);
-            const key = candidate.id + "|" + candidate.x.toFixed(3) + "," + candidate.y.toFixed(3) + ","
-                + candidate.z.toFixed(3) + "|" + far;
-            const moved = key !== slot.key;
-            slot.id = candidate.id;
-            slot.key = key;
-            slot.far = far;
-            for (const light of [slot.light, slot.dyn]) {
-                light.position.set(candidate.x, candidate.y, candidate.z);
-                light.distance = far;
-                light.updateMatrixWorld(true);
+            const far = candidate.far;
+            const keyFor = (origin, plane) => candidate.id + "|" + origin.x.toFixed(3) + "," + origin.y.toFixed(3) + ","
+                + origin.z.toFixed(3) + "|" + plane;
+            tile.candidate = candidate;
+            tile.gap = candidate.gap;
+            if (tile.id !== candidate.id || fresh) {
+                // Another light's rendering, or none: this light casts
+                // nothing until its own row is drawn.
+                tile.id = candidate.id;
+                tile.origin = { x: candidate.x, y: candidate.y, z: candidate.z };
+                tile.far = far;
+                tile.key = keyFor(tile.origin, far);
+                tile.want = null;
+                tile.valid = false;
+                tile.dirty = true;
+            } else {
+                // The row is rendered from, and read from, one origin: it
+                // follows the light only once the light has drifted past
+                // SHADOW_STATIC_MOVE or the reach band moved — and even
+                // then the old rendering is read from its own origin until
+                // the new one lands, rather than the light losing its
+                // shadows for the frames in between.
+                const held = tile.far === far
+                    && Math.hypot(candidate.x - tile.origin.x, candidate.y - tile.origin.y, candidate.z - tile.origin.z) <= Reactor3D.SHADOW_STATIC_MOVE;
+                if (held) {
+                    tile.want = null;
+                } else {
+                    const origin = { x: candidate.x, y: candidate.y, z: candidate.z };
+                    tile.want = { origin, far, key: keyFor(origin, far) };
+                    tile.dirty = true;
+                }
+                if (staticChange.all || this._touches(staticChange.points, tile.origin, tile.far)) tile.dirty = true;
             }
-            shadowOf[candidate.index] = k;
-            const pos = uniforms.rrShadowPos.value;
-            pos[at] = candidate.x;
-            pos[at + 1] = candidate.y;
-            pos[at + 2] = candidate.z;
-            info[at] = Reactor3D.SHADOW_NEAR;
-            info[at + 1] = far;
-            const dynamic = this._dynamicWithin(candidate, far);
-            info[at + 2] = dynamic ? 1 : 0;
-            info[at + 3] = Reactor3D.SHADOW_SOFTNESS / quality.size;
-            if (moved || staticDirty || fresh || !slot.light.shadow.map) {
-                slot.light.shadow.needsUpdate = true;
-                statics.push(slot.light);
+            if (this._dynamicWithin(candidate, far)) dynWanted.push({ id: candidate.id, gap: candidate.gap, rank: candidate.rank, tile: k });
+        }
+        // The dynamic rows go to the nearest of those lights with a
+        // character in reach, and follow their light's static row.
+        const dynAssigned = this.assign(dynWanted, dynTiles.length, dynTiles.map(d => (d.id === null ? null : { id: d.id })));
+        for (let j = 0; j < dynTiles.length; j++) {
+            const row = dynTiles[j];
+            const chosen = dynAssigned[j] || null;
+            if (!chosen) {
+                row.id = null;
+                row.key = "";
+                row.tile = -1;
+                row.valid = false;
+                row.dirty = false;
+                continue;
             }
-            // A dynamic map is only worth redrawing when something in it
-            // actually changed. Before this, a slot with any character in
-            // reach redrew six cube faces of every casting character every
-            // frame, standing perfectly still — on the Demo's start map that
-            // was 289 ms of a 392 ms frame with nothing moving at all.
-            if ((dynamic && (dynamicDirty || moved)) || fresh || !slot.dyn.shadow.map) {
-                slot.dyn.shadow.needsUpdate = true;
-                dynamics.push(slot.dyn);
+            const tile = tiles[chosen.tile];
+            row.tile = chosen.tile;
+            if (row.id !== chosen.id || row.key !== tile.key) {
+                row.id = chosen.id;
+                row.key = tile.key;
+                row.valid = false;
+                row.dirty = true;
+            } else if (dynamicChange.points.length && this._touches(dynamicChange.points, tile.origin, tile.far)) {
+                row.dirty = true;
             }
         }
-        this._pending = { renderer, scene, statics, dynamics, activate: !this._active };
-        this.lastFrame = { statics: statics.length, dynamics: dynamics.length, slots: assigned.filter(Boolean).length };
+        // This frame's share of the work: rows with nothing to show yet
+        // first, then the nearest; dynamic rows the longest unrefreshed
+        // first. A row that already shows something is redrawn no more
+        // often than SHADOW_STATIC_INTERVAL allows, so a light riding an
+        // animated part, or a torch in the player's hand, redraws the props
+        // around it a few times a second rather than every frame.
+        const interval = Reactor3D.SHADOW_STATIC_INTERVAL;
+        const staticJobs = tiles.filter(t => t.id !== null && t.dirty && (!t.valid || this._frame - t.stamp >= interval))
+            .sort((a, b) => (a.valid - b.valid) || (a.gap - b.gap))
+            .slice(0, quality.staticPerFrame || 1);
+        const dynJobs = dynTiles.filter(d => d.id !== null && d.dirty)
+            .sort((a, b) => (a.valid - b.valid) || (a.stamp - b.stamp))
+            .slice(0, quality.dynamicPerFrame || 1);
+        this.backlog = tiles.filter(t => t.id !== null && t.dirty).length - staticJobs.length
+            + dynTiles.filter(d => d.id !== null && d.dirty).length - dynJobs.length;
+        this._publish(uniforms);
+        this._pending = { renderer, scene, statics: staticJobs, dynamics: dynJobs, activate: !this._active };
+        this.lastFrame = {
+            statics: staticJobs.length, dynamics: dynJobs.length,
+            slots: assigned.filter(Boolean).length, dynamicSlots: dynAssigned.filter(Boolean).length,
+            candidates: this._candidates.length, wanted: wanted.length, backlog: this.backlog
+        };
+        if (!this._reported) {
+            // Once, so a "why does X cast no shadow" report carries the tier,
+            // the row counts and the moving-caster budget it was made under.
+            this._reported = true;
+            console.info("RPG Reactor shadows: " + Reactor3D.tier() + " tier, " + tiles.length + " casting light row(s), "
+                + dynTiles.length + " moving-caster row(s), " + quality.dynamicTriangles + " moving-caster triangles per row, faces "
+                + this._atlas.size + "px");
+        }
+    },
+
+    /**
+     * The uniforms that say which light reads which row: only a row whose
+     * rendering matches its light is offered, and a dynamic row only while
+     * its static row is.
+     */
+    _publish(uniforms) {
+        const shadowOf = uniforms.rrLightShadow.value;
+        const info = uniforms.rrShadowInfo.value;
+        const pos = uniforms.rrShadowPos.value;
+        shadowOf.fill(-1);
+        const tiles = this._tiles || [];
+        const dynTiles = this._dynTiles || [];
+        const size = this._atlas ? this._atlas.size : 512;
+        for (let k = 0; k < tiles.length; k++) {
+            const tile = tiles[k];
+            const at = k * 4;
+            info[at + 2] = -1;
+            if (tile.id === null || !tile.candidate) continue;
+            pos[at] = tile.origin.x;
+            pos[at + 1] = tile.origin.y;
+            pos[at + 2] = tile.origin.z;
+            info[at] = Reactor3D.SHADOW_NEAR;
+            info[at + 1] = tile.far;
+            info[at + 3] = Reactor3D.SHADOW_SOFTNESS / size;
+            if (tile.valid) shadowOf[tile.candidate.index] = k;
+        }
+        for (let j = 0; j < dynTiles.length; j++) {
+            const row = dynTiles[j];
+            if (row.id === null || !row.valid || row.tile < 0) continue;
+            const tile = tiles[row.tile];
+            if (!tile || !tile.valid || tile.id !== row.id || tile.key !== row.key) continue;
+            info[row.tile * 4 + 2] = j;
+        }
+    },
+
+    /**
+     * Which of a row's six faces have any caster in them: a face looking at
+     * the ceiling over a lamp has nothing to draw, and a strip of empty
+     * faces is most of what a light standing among a few props renders.
+     * The test is the caster's centre against the face's 90-degree frustum
+     * with the caster's span as slack.
+     */
+    _faceMask(origin, far, roots) {
+        let mask = 0;
+        const p = [0, 0, 0];
+        for (const root of roots) {
+            if (!root.parent || !root.visible || root.userData.rrShadowCasts === false) continue;
+            const e = root.matrixWorld.elements;
+            const r = Reactor3D.instanceSpan(root) || 1;
+            p[0] = e[12] - origin.x;
+            p[1] = e[13] - origin.y;
+            p[2] = e[14] - origin.z;
+            const d = Math.sqrt(p[0] * p[0] + p[1] * p[1] + p[2] * p[2]);
+            if (d - r > far) continue;
+            if (d <= r) return 63;
+            for (let axis = 0; axis < 3; axis++) {
+                const o1 = Math.abs(p[(axis + 1) % 3]) - r;
+                const o2 = Math.abs(p[(axis + 2) % 3]) - r;
+                const forward = p[axis] + r;
+                if (forward > 0 && o1 <= forward && o2 <= forward) mask |= 1 << (axis * 2);
+                const back = -p[axis] + r;
+                if (back > 0 && o1 <= back && o2 <= back) mask |= 1 << (axis * 2 + 1);
+            }
+            if (mask === 63) return mask;
+        }
+        return mask;
+    },
+
+    /**
+     * Casters drawn with their depth materials instead of their own, for
+     * the duration of a pass; returns what to hand `_unswap`. A cut-out's
+     * caster follows the source's map, which a sprite sheet swaps as it
+     * animates.
+     */
+    _swapCasters(roots) {
+        const swapped = [];
+        for (const root of roots) {
+            if (!root.parent || !root.visible) continue;
+            root.traverse(child => {
+                const caster = child.isMesh ? child.customDepthMaterial : null;
+                if (!caster || !caster.__rrCaster) return;
+                const source = child.material;
+                if (caster.__rrCutout && source && !Array.isArray(source)) {
+                    const map = source.map || null;
+                    if (caster.map !== map) {
+                        caster.map = map;
+                        caster.needsUpdate = true;
+                    }
+                    caster.alphaTest = source.alphaTest;
+                }
+                child.material = caster;
+                swapped.push(child, source);
+            });
+        }
+        return swapped;
+    },
+
+    _unswap(swapped) {
+        for (let i = 0; i < swapped.length; i += 2) swapped[i].material = swapped[i + 1];
+    },
+
+    /**
+     * One row: six faces of depth from `origin`, each cleared and, when a
+     * caster stands in it, drawn through three's ordinary render with the
+     * camera's layers set to the casters' layer — so it culls to the face,
+     * skins, and honours cut-outs as the main pass does. The scene's world
+     * matrices are already this frame's; the nested renders must not walk
+     * them six times over.
+     */
+    _renderTile(renderer, scene, atlas, row, origin, far, layer, roots) {
+        const size = atlas.size;
+        const target = atlas.target;
+        const camera = this._camera;
+        camera.layers.set(layer);
+        camera.near = Reactor3D.SHADOW_NEAR;
+        camera.far = far;
+        camera.updateProjectionMatrix();
+        camera.position.set(origin.x, origin.y, origin.z);
+        const mask = this._faceMask(origin, far, roots);
+        for (let face = 0; face < 6; face++) {
+            target.viewport.set(face * size, row * size, size, size);
+            target.scissor.set(face * size, row * size, size, size);
+            target.scissorTest = true;
+            renderer.setRenderTarget(target);
+            renderer.clear(false, true, false);
+            if (!(mask & (1 << face))) continue;
+            const spec = Reactor3D.SHADOW_FACES[face];
+            camera.up.set(spec.up[0], spec.up[1], spec.up[2]);
+            camera.lookAt(origin.x + spec.dir[0], origin.y + spec.dir[1], origin.z + spec.dir[2]);
+            camera.updateMatrixWorld(true);
+            renderer.render(scene, camera);
+        }
     },
 
     /**
      * The depth passes, from the sentinel's hook. On the frame shadows come
-     * on, every map is rendered before any program declares a sampler for
-     * it, and only then do the lit materials switch to the shadow variant —
-     * a shadow sampler bound to no depth texture fails the draw outright.
+     * on, the atlas is bound before any program declares a sampler for it,
+     * and only then do the lit materials switch to the shadow variant — a
+     * shadow sampler bound to no depth texture fails the draw outright.
      */
     _flush() {
         const pending = this._pending;
         if (!pending) return;
         this._pending = null;
         const { renderer, scene, statics, dynamics } = pending;
-        const shadowMap = renderer.shadowMap;
-        if (statics.length) {
-            this._atCoarsestLod(() => shadowMap.render(statics, scene, this._cameras.static));
+        if (statics.length || dynamics.length) {
+            const target = renderer.getRenderTarget();
+            const autoClear = renderer.autoClear;
+            const autoUpdate = scene.matrixWorldAutoUpdate;
+            const background = scene.background;
+            renderer.autoClear = false;
+            scene.matrixWorldAutoUpdate = false;
+            scene.background = null;
+            try {
+                if (statics.length) {
+                    const swapped = this._swapCasters(this._static);
+                    try {
+                        this._atCoarsestLod(() => {
+                            for (const tile of statics) {
+                                const to = tile.want || tile;
+                                this._renderTile(renderer, scene, this._atlas, this._tiles.indexOf(tile), to.origin, to.far,
+                                    Reactor3D.SHADOW_LAYER_STATIC, this._static);
+                            }
+                        });
+                    } finally {
+                        this._unswap(swapped);
+                    }
+                    for (const tile of statics) {
+                        if (tile.want) {
+                            tile.origin = tile.want.origin;
+                            tile.far = tile.want.far;
+                            tile.key = tile.want.key;
+                            tile.want = null;
+                        }
+                        tile.valid = true;
+                        tile.dirty = false;
+                        tile.stamp = this._frame;
+                    }
+                }
+                if (dynamics.length) {
+                    const roots = this._casting || this._dynamic;
+                    const swapped = this._swapCasters(roots);
+                    try {
+                        for (const row of dynamics) {
+                            const tile = this._tiles[row.tile];
+                            if (!tile || tile.id !== row.id) continue;
+                            this._renderTile(renderer, scene, this._dynAtlas, this._dynTiles.indexOf(row), tile.origin, tile.far,
+                                Reactor3D.SHADOW_LAYER_DYNAMIC, roots);
+                        }
+                    } finally {
+                        this._unswap(swapped);
+                    }
+                    for (const row of dynamics) {
+                        const tile = this._tiles[row.tile];
+                        if (tile) row.key = tile.key;
+                        row.valid = true;
+                        row.dirty = false;
+                        row.stamp = this._frame;
+                    }
+                }
+            } finally {
+                renderer.setRenderTarget(target);
+                renderer.autoClear = autoClear;
+                scene.matrixWorldAutoUpdate = autoUpdate;
+                scene.background = background;
+            }
         }
-        if (dynamics.length) shadowMap.render(dynamics, scene, this._cameras.dynamic);
-        this._bindMaps(Reactor3D.lightUniforms());
+        const uniforms = Reactor3D.lightUniforms();
+        this._bindMaps(uniforms);
+        this._publish(uniforms);
         if (pending.activate) {
             this._active = true;
             this.refreshMaterials(scene);
         }
     },
 
-    _bindMaps(uniforms) {
-        const slots = this._slots || [];
-        for (let k = 0; k < slots.length; k++) {
-            const slot = slots[k];
-            uniforms["rrShadowMap" + k].value = slot.light.shadow.map ? slot.light.shadow.map.depthTexture : null;
-            uniforms["rrShadowDyn" + k].value = slot.dyn.shadow.map ? slot.dyn.shadow.map.depthTexture : null;
+    /**
+     * Take the atlases off every 2D texture unit of a context another
+     * library is about to draw through (see `Viewport._resetPixi`). Nothing
+     * to do while no atlas exists.
+     */
+    unbindFrom(renderer) {
+        if (!this._atlas || !renderer || this._renderer !== renderer || typeof renderer.getContext !== "function") return;
+        const gl = renderer.getContext();
+        const units = (renderer.capabilities && renderer.capabilities.maxTextures) || 16;
+        for (let unit = 0; unit < units; unit++) {
+            gl.activeTexture(gl.TEXTURE0 + unit);
+            gl.bindTexture(gl.TEXTURE_2D, null);
         }
+        gl.activeTexture(gl.TEXTURE0);
+    },
+
+    _bindMaps(uniforms) {
+        const atlas = this._atlas;
+        const dyn = this._dynAtlas;
+        uniforms.rrShadowAtlas.value = atlas ? atlas.target.depthTexture : null;
+        uniforms.rrShadowDynAtlas.value = dyn ? dyn.target.depthTexture : null;
+        const grid = uniforms.rrShadowGrid.value;
+        grid[0] = 1 / 6;
+        grid[1] = atlas ? 1 / atlas.rows : 1;
+        grid[2] = dyn ? 1 / dyn.rows : 1;
+        grid[3] = atlas ? 1 / atlas.size : 1 / 512;
     }
 };
 
@@ -7993,6 +8543,43 @@ Reactor3D.lightSegmentBlocked = function(x0, y0, h0, x1, y1, h1) {
         if (this.lightBlockHeightAt(x0 + dx * t, y0 + dy * t) > height + 0.3) return true;
     }
     return false;
+};
+
+/**
+ * Where a laser lands: how far along its aim the first surface stops it,
+ * in tiles, or null when nothing within reach does. The ground, roofs, a
+ * room's shell and its walls are the map's light-block heights, marched a
+ * sixth of a tile at a time in three dimensions; placed models are their
+ * world bounds, and a model the beam starts inside (the one carrying it)
+ * never stops its own beam. `x, y` are the packer's tile coordinates, `h`
+ * the world height the beam leaves from, `length` its reach.
+ */
+Reactor3D.BEAM_MARCH_STEP = 1 / 6;
+Reactor3D.beamHit = function(x, y, h, ax, ay, az, length, scene) {
+    let best = null;
+    const step = this.BEAM_MARCH_STEP;
+    for (let d = step; d <= length; d += step) {
+        const py = h + ay * d;
+        if (py <= this.lightBlockHeightAt(x + ax * d, y + az * d)) { best = d; break; }
+    }
+    const instances = scene && scene._modelInstances;
+    if (instances && typeof THREE !== "undefined") {
+        const ray = this._beamRay || (this._beamRay = new THREE.Ray());
+        const box = this._beamBox || (this._beamBox = new THREE.Box3());
+        const hit = this._beamPoint || (this._beamPoint = new THREE.Vector3());
+        ray.origin.set(x + 0.5, h, y + 1);
+        ray.direction.set(ax, ay, az).normalize();
+        for (const holder of instances.values()) {
+            const object = holder && holder.object;
+            if (!object || !object.visible) continue;
+            box.setFromObject(object);
+            if (box.isEmpty() || box.containsPoint(ray.origin)) continue;
+            if (!ray.intersectBox(box, hit)) continue;
+            const d = hit.distanceTo(ray.origin);
+            if (d > 0.05 && d < length && (best === null || d < best)) best = d;
+        }
+    }
+    return best;
 };
 
 /** How far a beam gets before the first wall in its way, in tiles. */
@@ -13620,6 +14207,19 @@ Reactor3D.effectLight = function(object, effect, key) {
     const world = this.effectAnchorWorld(object, effect, this._fxLightScratch || (this._fxLightScratch = new THREE.Vector3()));
     if (!world) return null;
     const spec = effect.light;
+    // Reach and width were authored on the model as the database shows it
+    // — longest side EFFECT_PREVIEW_SPAN tiles — and scale with the
+    // instance, as an anchored animation does: a glow that lit a two-tile
+    // console lights the nine-tile one the same way, and a light on an
+    // arm mounted seven tiles up still reaches the floor.
+    const extent = object.userData && object.userData.glbSize;
+    const span = extent ? Math.max(extent.x || 0, extent.y || 0, extent.z || 0) : 0;
+    let grow = 1;
+    if (span > 0) {
+        const worldScale = object.getWorldScale(this._fxLightScale || (this._fxLightScale = new THREE.Vector3())).x;
+        const size = worldScale * span / this.EFFECT_PREVIEW_SPAN;
+        if (size > 0) grow = size;
+    }
     let yaw = 0;
     let pitch = spec.pitch;
     if (spec.type !== this.LIGHT_POINT) {
@@ -13643,8 +14243,8 @@ Reactor3D.effectLight = function(object, effect, key) {
     return {
         id: key || effect.name, type: spec.type,
         x: world.x - 0.5, y: world.z - 1, height: world.y, groundY: 0,
-        radius: spec.radius, colour: spec.colour, intensity: spec.intensity,
-        angle: spec.angle, width: spec.width, yaw, pitch,
+        radius: spec.radius * grow, colour: spec.colour, intensity: spec.intensity,
+        angle: spec.angle, width: spec.width * grow, yaw, pitch,
         occlude: spec.occlude, shadow: spec.shadow, body: spec.body
     };
 };
@@ -14911,7 +15511,10 @@ Reactor3D.playModelAnimation = function(character, name, options) {
     if (!this._modelActions) this._modelActions = {};
     const key = this.modelInstanceKey(character);
     const frame = typeof Graphics !== "undefined" ? Graphics.frameCount : 0;
-    const entry = { name: String(name), frame, repeat: !!(options && options.repeat) };
+    const entry = { name: String(name), frame, repeat: !!(options && options.repeat),
+        // The whole list this play belongs to, on its last entry, when the
+        // list loops: the end of this play starts the list again.
+        sequence: options && Array.isArray(options.sequence) ? options.sequence.slice() : null };
     // Plays QUEUE: several Play Model Animation commands in a row run one
     // after another on the model, so an event can fire a whole sequence and
     // end at once — no Waits, no player standing frozen while a tank goes
@@ -14923,6 +15526,37 @@ Reactor3D.playModelAnimation = function(character, name, options) {
     const queue = Array.isArray(this._modelActions[key]) ? this._modelActions[key] : [];
     queue.push(entry);
     this._modelActions[key] = queue;
+};
+
+/**
+ * Play several animations one after another: a door's open, then its
+ * settle; a turret's raise, then its sweep. `repeat` loops the whole list.
+ * One name with repeat is the plain repeating play.
+ */
+Reactor3D.playModelSequence = function(character, names, repeat) {
+    const list = (Array.isArray(names) ? names : [names]).map(name => String(name || "")).filter(Boolean);
+    if (!list.length) return;
+    if (list.length === 1) {
+        this.playModelAnimation(character, list[0], { repeat: !!repeat });
+        return;
+    }
+    for (let i = 0; i < list.length; i++) {
+        this.playModelAnimation(character, list[i], { sequence: repeat && i === list.length - 1 ? list : null });
+    }
+};
+
+/** The animations a placed prop plays, in order: the list, or the one older files hold. */
+Reactor3D.propAnimationList = function(prop) {
+    if (!prop) return [];
+    const list = Array.isArray(prop.animations) ? prop.animations : (prop.animation ? [prop.animation] : []);
+    return list.map(name => String(name || "")).filter(Boolean);
+};
+
+/** The effects a placed prop plays, all at once: the list, or the one older files hold. */
+Reactor3D.propEffectList = function(prop) {
+    if (!prop) return [];
+    const list = Array.isArray(prop.effects) ? prop.effects : (prop.effect ? [prop.effect] : []);
+    return list.map(name => String(name || "")).filter(Boolean);
 };
 
 /*
@@ -15391,7 +16025,7 @@ Reactor3D.MapScene.prototype.syncCharacterModels = function(characters) {
                             frame + Reactor3D.modelRuleDuration(rule, holder.binding.clips));
                     }
                     holder.action = until > frame
-                        ? { name: pending.name, frame, until, repeat: !!pending.repeat }
+                        ? { name: pending.name, frame, until, repeat: !!pending.repeat, sequence: pending.sequence || null }
                         : null;
                 }
                 if (!queue.length) delete Reactor3D._modelActions[key];
@@ -15401,9 +16035,14 @@ Reactor3D.MapScene.prototype.syncCharacterModels = function(characters) {
                 // queued behind it, which takes the stage after this cycle.
                 const queued = Reactor3D._modelActions && Reactor3D._modelActions[key];
                 const rule = holder.rules.find(entry => entry.trigger === "action" && entry.name === holder.action.name);
+                const ended = holder.action;
                 holder.action = rule && (rule.repeat || holder.action.repeat) && !(queued && queued.length)
                     ? { name: holder.action.name, frame, until: frame + Reactor3D.modelRuleDuration(rule, holder.binding.clips), repeat: holder.action.repeat }
                     : null;
+                // The last play of a looping list: the list goes round again.
+                if (!holder.action && ended.sequence && !(queued && queued.length)) {
+                    Reactor3D.playModelSequence(character, ended.sequence, true);
+                }
             }
             // Timed effects ride the action clock, each firing once.
             const fxKey = holder.action ? holder.action.name + ":" + holder.action.frame : "";
@@ -16100,8 +16739,9 @@ Reactor3D.installPropHooks = function() {
             // over whatever the page dance left behind.
             event.setDirection(prop.direction);
             event._direction = prop.direction;
-            if (prop.animation) Reactor3D.playModelAnimation(event, prop.animation, { repeat: prop.repeat });
-            if (prop.effect) Reactor3D.playModelEffect(event, prop.effect);
+            const animations = Reactor3D.propAnimationList(prop);
+            if (animations.length) Reactor3D.playModelSequence(event, animations, !!prop.repeat);
+            for (const name of Reactor3D.propEffectList(prop)) Reactor3D.playModelEffect(event, name);
             // A character whose real position differs from its cell is one
             // mid-step, and the stock update slides it home every frame. A
             // prop placed between tiles is not mid-step: it stands there.

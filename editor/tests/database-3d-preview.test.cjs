@@ -69,5 +69,6 @@ test('Optimize sits with the cost panel, acts on the selected model, and reaches
     assert.match(db, /const entry = this\.listModels\(\)\.find\(m => m\.name === this\.selectedName\);\n\s*if \(!entry\) return say\(this\._t\('Select a model first\.'\)\);/, 'one model, the selected one');
     assert.match(db, /stats\.prepend\(line\);/, 'the result is said where the button is');
     const ui = read('DatabaseEditorUI.js');
-    assert.match(ui, /uiManager: window\.reactor && window\.reactor\.uiManager \};/, 'the shim carries the dialog host');
+    assert.match(ui, /uiManager: window\.reactor && window\.reactor\.uiManager,/, 'the shim carries the dialog host');
+    assert.match(ui, /refreshMap3DView: \(\) => window\.reactor && window\.reactor\.projectController/, 'and forwards a sidecar save to the map view');
 });

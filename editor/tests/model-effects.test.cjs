@@ -46,7 +46,7 @@ test('the runtime plays anchored animations through a stand-in target and regist
     assert.match(runtime, /current\.effects = sidecar \? Reactor3D\.readModelEffects\(sidecar\) : \[\];/);
     assert.match(runtime, /for \(const name of Reactor3D\.takeModelEffects\(character\)\)/);
     assert.match(runtime, /Reactor3D\.updateAnchoredAnimations\(holder\);/);
-    assert.match(read('runtime/reactor_main.js'), /runtime revision: 20260904.7/);
+    assert.match(read('runtime/reactor_main.js'), /runtime revision: 20260904.13/);
 });
 
 test('the editor wires the Play 3D Effect command and the Effects section', () => {
@@ -99,7 +99,7 @@ test('a model base transform wraps every instance and effects carry a turn', () 
     assert.equal((runtime.match(/applyModelTransform\(object, (?:this|Reactor3D)\.readModelTransform\(sidecar\)\)/g) || []).length, 5, 'every instance site applies the base transform');
     assert.match(runtime, /sprite\._animation = Object\.assign\(\{\}, animation, \{/, 'effect turn and size ride on a copy of the record');
     assert.match(runtime, /holder\.action = rule && \(rule\.repeat \|\| holder\.action\.repeat\)/, 'a repeating action starts over');
-    assert.match(read('runtime/reactor_main.js'), /runtime revision: 20260904.7/);
+    assert.match(read('runtime/reactor_main.js'), /runtime revision: 20260904.13/);
 });
 
 test('the 3D editor card chooses model, parts, bones and effects, and edits each with sliders', () => {
@@ -154,7 +154,7 @@ test('effects play on their own by state, and scale proportionally or per axis',
     const runtime = read('runtime/reactor_3d.js');
     assert.match(runtime, /Reactor3D\.updateTriggeredEffects\(holder, character, \{/);
     assert.match(runtime, /this\._handle\.setScale\(uniform \* axes\[0\], uniform \* axes\[1\], uniform \* axes\[2\]\);/);
-    assert.match(read('runtime/reactor_main.js'), /runtime revision: 20260904.7/);
+    assert.match(read('runtime/reactor_main.js'), /runtime revision: 20260904.13/);
     const db3d = read('editor/src/database/Database3DEditor.js');
     assert.match(db3d, /this\._fxPreviewDef = raw;/, 'the preview follows the live effect');
     assert.match(db3d, /_scaleSlidersHtml\(prefix, scale\)/);
@@ -195,7 +195,7 @@ test('video effects, mesh collision, repeat and player-relative controls are wir
     assert.match(runtime, /Reactor3D\.spawnVideoEffect = function\(effect, character, holder\)/);
     assert.match(read('runtime/reactor_media_surfaces.js'), /anchor: anchor,/);
     assert.match(read('runtime/reactor_media_surfaces.js'), /Reactor3D\.effectAnchorWorld\(holder\.object, \{ anchor: descriptor\.anchor \}/);
-    assert.match(read('runtime/reactor_main.js'), /runtime revision: 20260904.7/);
+    assert.match(read('runtime/reactor_main.js'), /runtime revision: 20260904.13/);
     const db3d = read('editor/src/database/Database3DEditor.js');
     assert.match(db3d, /class="r3d-fx-type"/);
     assert.match(db3d, /_playVideoPreview\(raw\) \{/);
@@ -416,7 +416,10 @@ test('saving a model sidecar reaches the map 3D view without a restart', () => {
     const source = fs.readFileSync(path.join(repoRoot, 'editor', 'src', 'database', 'Database3DEditor.js'), 'utf8');
     const save = source.slice(source.indexOf('\n    saveRules() {'), source.indexOf('\n    }\n', source.indexOf('\n    saveRules() {')));
     assert.match(save, /RREventPreviewModels\.clear\(\);/, 'the cached template (with its sidecar) is dropped');
-    assert.match(save, /this\.projectController\?\.refreshMap3DView\?\.\(\);/, 'and the map view rebuilds');
+    assert.match(save, /if \(controller && typeof controller\.refreshMap3DView === 'function'\) controller\.refreshMap3DView\(\);/, 'and the map view rebuilds');
+    // The database hands its 3D editor a stand-in controller; a stand-in without a refresh let every save fall through until a restart.
+    const ui = fs.readFileSync(path.join(repoRoot, 'editor', 'src', 'DatabaseEditorUI.js'), 'utf8');
+    assert.match(ui, /refreshMap3DView: \(\) => window\.reactor && window\.reactor\.projectController[\s\S]*?\.refreshMap3DView\(\) : undefined/, 'the stand-in forwards to the real controller');
 });
 
 test('a prop lists the tiles it blocks by the same rule, turned to its facing', () => {
@@ -608,4 +611,37 @@ test('a light that names its ground stands at an absolute height, with no facade
     }
     const three = read('runtime/reactor_3d.js');
     assert.equal((three.match(/facade && light\.groundY === undefined \? facade\.lift : 0/g) || []).length, 2, 'both pools agree');
+});
+
+test('a placed prop plays several animations in order, loops the list, and fires every effect; a light grows with its instance', () => {
+    require(path.join(repoRoot, 'runtime', 'libs', 'three.js'));
+    const THREE = global.THREE;
+    // The queue: three names, the last carrying the list so the end of it starts the list again.
+    Reactor3D._modelActions = {};
+    const character = { _eventId: 7 };
+    Reactor3D.modelInstanceKey = () => 'e7';
+    Reactor3D.playModelSequence(character, ['open', 'settle', 'hum'], true);
+    const queue = Reactor3D._modelActions.e7;
+    assert.deepEqual(queue.map(entry => entry.name), ['open', 'settle', 'hum']);
+    assert.equal(queue[0].sequence, null);
+    assert.deepEqual(queue[2].sequence, ['open', 'settle', 'hum'], 'the last entry knows the list');
+    Reactor3D._modelActions = {};
+    Reactor3D.playModelSequence(character, ['spin'], true);
+    assert.equal(Reactor3D._modelActions.e7[0].repeat, true, 'one name with Repeat is the plain repeating play');
+    assert.equal(Reactor3D._modelActions.e7[0].sequence, null);
+    delete Reactor3D._modelActions;
+    const three = fs.readFileSync(path.join(repoRoot, 'runtime', 'reactor_3d.js'), 'utf8');
+    assert.match(three, /if \(!holder\.action && ended\.sequence && !\(queued && queued\.length\)\) \{\s*Reactor3D\.playModelSequence\(character, ended\.sequence, true\);/, 'the list goes round again when its last play ends');
+    // A light effect's reach follows the instance: the database shows every model at EFFECT_PREVIEW_SPAN.
+    const object = new THREE.Group();
+    object.userData.glbSize = { x: 1, y: 2, z: 1 };
+    object.scale.setScalar(Reactor3D.EFFECT_PREVIEW_SPAN / 2);
+    object.updateMatrixWorld(true);
+    const effect = { name: 'glow', anchor: { part: '', offset: [0, 0, 0] }, light: Reactor3D.readEffectLight({ type: 'spot', radius: 3, width: 0.1 }) };
+    assert.ok(Math.abs(Reactor3D.effectLight(object, effect, 'k').radius - 3) < 1e-9, 'at the preview size the authored reach holds');
+    object.scale.setScalar(Reactor3D.EFFECT_PREVIEW_SPAN * 5 / 2);
+    object.updateMatrixWorld(true);
+    const grown = Reactor3D.effectLight(object, effect, 'k');
+    assert.ok(Math.abs(grown.radius - 15) < 1e-9, 'five times the size, five times the reach (' + grown.radius + ')');
+    assert.ok(Math.abs(grown.width - 0.5) < 1e-9, 'and the width');
 });

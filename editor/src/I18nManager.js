@@ -15226,3 +15226,22 @@ Object.assign(RR_I18N_STRINGS['id'], { "r3dfx.lightPreset": "Prasetel", "r3dfx.l
 Object.assign(RR_I18N_STRINGS['vi'], { "r3dfx.lightPreset": "Cài đặt sẵn", "r3dfx.lightPresetNone": "Tùy chỉnh" });
 Object.assign(RR_I18N_STRINGS['th'], { "r3dfx.lightPreset": "พรีเซ็ต", "r3dfx.lightPresetNone": "กำหนดเอง" });
 Object.assign(RR_I18N_STRINGS['tr'], { "r3dfx.lightPreset": "Ön ayar", "r3dfx.lightPresetNone": "Özel" });
+// 3D-M tab: the animation and effect choice lists.
+Object.assign(RR_I18N_STRINGS['en'], { "props.animations": "Animations (in order)", "props.effects": "Effects" });
+Object.assign(RR_I18N_STRINGS['ja'], { "props.animations": "アニメーション（順番に）", "props.effects": "エフェクト" });
+Object.assign(RR_I18N_STRINGS['es'], { "props.animations": "Animaciones (en orden)", "props.effects": "Efectos" });
+Object.assign(RR_I18N_STRINGS['zh-Hant'], { "props.animations": "動畫（依序）", "props.effects": "效果" });
+Object.assign(RR_I18N_STRINGS['zh-Hans'], { "props.animations": "动画（按顺序）", "props.effects": "效果" });
+Object.assign(RR_I18N_STRINGS['ru'], { "props.animations": "Анимации (по порядку)", "props.effects": "Эффекты" });
+Object.assign(RR_I18N_STRINGS['pt'], { "props.animations": "Animações (em ordem)", "props.effects": "Efeitos" });
+Object.assign(RR_I18N_STRINGS['de'], { "props.animations": "Animationen (der Reihe nach)", "props.effects": "Effekte" });
+Object.assign(RR_I18N_STRINGS['fr'], { "props.animations": "Animations (dans l'ordre)", "props.effects": "Effets" });
+Object.assign(RR_I18N_STRINGS['el'], { "props.animations": "Κινήσεις (με τη σειρά)", "props.effects": "Εφέ" });
+Object.assign(RR_I18N_STRINGS['ko'], { "props.animations": "애니메이션 (순서대로)", "props.effects": "이펙트" });
+Object.assign(RR_I18N_STRINGS['ar'], { "props.animations": "الحركات (بالترتيب)", "props.effects": "التأثيرات" });
+Object.assign(RR_I18N_STRINGS['it'], { "props.animations": "Animazioni (in ordine)", "props.effects": "Effetti" });
+Object.assign(RR_I18N_STRINGS['pl'], { "props.animations": "Animacje (po kolei)", "props.effects": "Efekty" });
+Object.assign(RR_I18N_STRINGS['id'], { "props.animations": "Animasi (berurutan)", "props.effects": "Efek" });
+Object.assign(RR_I18N_STRINGS['vi'], { "props.animations": "Hoạt ảnh (theo thứ tự)", "props.effects": "Hiệu ứng" });
+Object.assign(RR_I18N_STRINGS['th'], { "props.animations": "แอนิเมชัน (ตามลำดับ)", "props.effects": "เอฟเฟกต์" });
+Object.assign(RR_I18N_STRINGS['tr'], { "props.animations": "Animasyonlar (sırayla)", "props.effects": "Efektler" });

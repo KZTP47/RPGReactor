@@ -491,7 +491,18 @@ class DatabaseEditorUI {
                 break;
             case 'reactor3d': {
                 const { detailEl } = this.prepareDatabaseSection('reactor3d', this._dbTitle('reactor3d', '3D Models'), { showListPanel: false });
-                this.reactor3dEditor.projectController = { getCurrentProject: () => this.currentProject, mapEditor3D: this.callbacks.getMapEditor3D ? this.callbacks.getMapEditor3D() : (window.reactor && window.reactor.mapEditor3D), uiManager: window.reactor && window.reactor.uiManager };
+                this.reactor3dEditor.projectController = {
+                    getCurrentProject: () => this.currentProject,
+                    mapEditor3D: this.callbacks.getMapEditor3D ? this.callbacks.getMapEditor3D() : (window.reactor && window.reactor.mapEditor3D),
+                    uiManager: window.reactor && window.reactor.uiManager,
+                    // A saved sidecar must reach the map behind the database:
+                    // the stand-in used to carry no refresh at all, and the
+                    // save's optional call fell through — every edit to a
+                    // model's effects waited for a restart of the app.
+                    refreshMap3DView: () => window.reactor && window.reactor.projectController
+                        && typeof window.reactor.projectController.refreshMap3DView === 'function'
+                        ? window.reactor.projectController.refreshMap3DView() : undefined
+                };
                 this.reactor3dEditor.show(detailEl);
                 return;
             }

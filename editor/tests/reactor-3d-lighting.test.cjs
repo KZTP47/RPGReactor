@@ -363,9 +363,9 @@ test('lights are geometry, not simulated lights', () => {
     // Nothing per-light — and, since the ambient is a plain multiplier on the
     // material colour, no three light of any kind.
     assert.doesNotMatch(three, /new THREE\.AmbientLight/);
-    // The one point light is the shadow rig's: off-scene, at zero intensity,
-    // there only to render a depth cube (see Reactor3D.Shadows).
-    assert.deepEqual(three.match(/new THREE\.PointLight\([^)]*\)/g), ['new THREE.PointLight(0xffffff, 0, 1)'],
+    // Not even for shadows: the atlas rows are drawn with the module's own
+    // face camera (see Reactor3D.Shadows), so no three light exists at all.
+    assert.equal(three.match(/new THREE\.PointLight\(/g), null,
         'a light per lantern is what broke the shader');
     assert.doesNotMatch(three, /new THREE\.SpotLight/);
 
@@ -805,8 +805,8 @@ test('flat shadows blend over a colour-bearing opaque core', () => {
         'the colour pass does not cut partially transparent footing shadows');
     assert.match(source, /const opaqueCore = group\.billboard[\s\S]*new THREE\.MeshBasicMaterial/,
         'flat geometry receives the same opaque colour core as billboards');
-    assert.doesNotMatch(source, /colorWrite = false/,
-        'no colorless prepass may punch the destination out from under a shadow');
+    assert.deepEqual(source.match(/\w+\.colorWrite = false/g), ['depth.colorWrite = false'],
+        'no colorless prepass may punch the destination out from under a shadow; the one that writes no colour is the shadow caster, drawing into the atlas');
 });
 
 test('multi-cell foliage gap fill stays faint and owns no opaque depth', () => {

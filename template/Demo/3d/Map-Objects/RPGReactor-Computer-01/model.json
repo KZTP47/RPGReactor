@@ -34,9 +34,5 @@
       "type": "video",
       "trigger": "always"
     }
-  ],
-  "lods": [
-    "RPGReactor-Computer-01.lod1.glb",
-    "RPGReactor-Computer-01.lod2.glb"
   ]
 }

@@ -1004,7 +1004,11 @@ class Database3DEditor {
             // editor keeps drawing the model it loaded at startup.
             delete this._templates[entry.name];
             if (typeof RREventPreviewModels !== 'undefined' && RREventPreviewModels.clear) RREventPreviewModels.clear();
-            this.projectController?.refreshMap3DView?.();
+            // Through whichever controller can reach the map: the database's
+        // stand-in forwards, and the real one is the fallback.
+        const controller = this.projectController && typeof this.projectController.refreshMap3DView === 'function'
+            ? this.projectController : (window.reactor && window.reactor.projectController);
+        if (controller && typeof controller.refreshMap3DView === 'function') controller.refreshMap3DView();
             await this.selectModel(entry);
 
             const before = (original.length / 1048576).toFixed(1);
@@ -1123,7 +1127,11 @@ class Database3DEditor {
         // sidecar it was read with: a changed effect trigger or rule went
         // on playing the old way there until the editor was reopened.
         if (typeof RREventPreviewModels !== 'undefined' && RREventPreviewModels.clear) RREventPreviewModels.clear();
-        this.projectController?.refreshMap3DView?.();
+        // Through whichever controller can reach the map: the database's
+        // stand-in forwards, and the real one is the fallback.
+        const controller = this.projectController && typeof this.projectController.refreshMap3DView === 'function'
+            ? this.projectController : (window.reactor && window.reactor.projectController);
+        if (controller && typeof controller.refreshMap3DView === 'function') controller.refreshMap3DView();
     }
 
     rebuildPlayback() {
@@ -1466,7 +1474,7 @@ class Database3DEditor {
         }
         const extent = template.userData.glbSize || { x: 1, y: 1, z: 1 };
         const span = Math.max(extent.x, extent.y, extent.z, 0.0001);
-        this._scale = 1.6 / span;
+        this._scale = (typeof Reactor3D !== 'undefined' && Reactor3D.EFFECT_PREVIEW_SPAN ? Reactor3D.EFFECT_PREVIEW_SPAN : 1.6) / span;
         object.scale.setScalar(this._scale);
         // Orbit around the model's mid-height, not the ground plane: a
         // tall character aimed at its feet crops its head out of frame.
@@ -4027,11 +4035,120 @@ class Database3DEditor {
         live.core.material.opacity = Math.min(1, Reactor3D.VOLUME_GLOW * light.intensity);
         live.core.visible = light.body !== false;
         for (const kind of Object.keys(live.bodies)) if (light.body === false) live.bodies[kind].visible = false;
+        // A beam lands on the model when it is aimed at it: the body stops
+        // there, a dot sits there, and a small light lights the spot.
+        const packed = [light];
+        const landed = light.type === 'beam' ? this._beamLanding(live, light, x, y, z) : null;
+        if (landed) {
+            body.scale.y = landed.distance;
+            if (!live.dot) {
+                live.dot = new THREE.Sprite(new THREE.SpriteMaterial({
+                    map: Reactor3D.roundLightTexture ? Reactor3D.roundLightTexture() : null,
+                    blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, depthTest: true
+                }));
+                live.dot.renderOrder = 14;
+                live.dot.userData.__reactorOverlay = true;
+                live.group.add(live.dot);
+            }
+            live.dot.visible = light.body !== false;
+            live.dot.position.copy(landed.point).addScaledVector(landed.aim, -0.03);
+            const dotSize = Math.max(light.width * Reactor3D.BEAM_DOT_SIZE, 0.12);
+            live.dot.scale.set(dotSize, dotSize, 1);
+            live.dot.material.color.copy(colour);
+            live.dot.material.opacity = Math.min(1, Reactor3D.VOLUME_GLOW * 1.8 * light.intensity);
+            packed[0] = Object.assign({}, light, { radius: landed.distance });
+            packed.push({
+                type: 'point', x: landed.point.x - 0.5, y: landed.point.z - 1, height: landed.point.y, groundY: 0,
+                radius: Math.max(light.width * Reactor3D.BEAM_DOT_REACH, 0.3), colour: light.colour,
+                intensity: light.intensity * Reactor3D.BEAM_DOT_GAIN
+            });
+        } else if (live.dot) {
+            live.dot.visible = false;
+        }
         // The model itself takes the light through the game's own shader.
         if (Reactor3D.packLightUniforms) {
-            Reactor3D.packLightUniforms([light], { intensity: this.LIGHT_PREVIEW_AMBIENT, colour: 0xffffff });
+            Reactor3D.packLightUniforms(packed, { intensity: this.LIGHT_PREVIEW_AMBIENT, colour: 0xffffff });
         }
         this._syncLightGizmo(light);
+    }
+
+    /**
+     * Where a previewed beam lands on the model, or null. Kept cheap for a
+     * weak machine: rigid meshes are ray-tested for real, a skinned mesh
+     * only by its bounds (three tests a skinned mesh triangle by triangle
+     * with the skinning applied, which is what made the preview stutter),
+     * a mesh the beam starts inside never stops its own beam, and a cast
+     * runs at most a few times a second while the beam is moving — the
+     * last answer holds in between. The beam's own source sits on the
+     * model, so hits within a few centimetres of it are its own skin.
+     */
+    _beamLanding(live, light, x, y, z) {
+        if (!this._object || typeof THREE === 'undefined') return null;
+        const key = [x, y, z, light.yaw, light.pitch, light.radius].map(v => Math.round(v * 100) / 100).join(',');
+        const now = performance.now();
+        if (live.landing && (live.landing.key === key || now - live.landing.at < this.BEAM_LANDING_INTERVAL)) {
+            return live.landing.value;
+        }
+        const yaw = (light.yaw * Math.PI) / 180;
+        const pitch = (light.pitch * Math.PI) / 180;
+        const aim = new THREE.Vector3(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch)).normalize();
+        const origin = new THREE.Vector3(x, y, z);
+        if (!live.targets || live.targetsFor !== this._object) {
+            const rigid = [];
+            const skinned = [];
+            this._object.traverse(node => {
+                if (!node.isMesh || (node.userData && node.userData.__reactorOverlay)) return;
+                (node.isSkinnedMesh ? skinned : rigid).push(node);
+            });
+            live.targets = { rigid, skinned };
+            live.targetsFor = this._object;
+        }
+        let best = null;
+        if (live.targets.rigid.length) {
+            const caster = live.caster || (live.caster = new THREE.Raycaster());
+            caster.set(origin, aim);
+            caster.near = 0.05;
+            caster.far = light.radius;
+            const hit = caster.intersectObjects(live.targets.rigid, false)[0];
+            if (hit) best = { distance: hit.distance, point: hit.point.clone(), aim };
+        }
+        if (live.targets.skinned.length) {
+            const ray = live.ray || (live.ray = new THREE.Ray());
+            const box = live.box || (live.box = new THREE.Box3());
+            const point = new THREE.Vector3();
+            ray.set(origin, aim);
+            for (const mesh of live.targets.skinned) {
+                // Posed bounds from the bones, not the vertices: a rig's
+                // cached box is whatever the loader left, a walk moves it,
+                // and re-skinning sixty thousand vertices to find out costs
+                // twenty milliseconds — two dozen bone positions cost none.
+                this._skinnedBounds(mesh, box);
+                if (box.isEmpty() || box.containsPoint(origin) || !ray.intersectBox(box, point)) continue;
+                const distance = point.distanceTo(origin);
+                if (distance > 0.05 && distance < light.radius && (!best || distance < best.distance)) {
+                    best = { distance, point: point.clone(), aim };
+                }
+            }
+        }
+        live.landing = { key, value: best, at: now };
+        return best;
+    }
+
+    /** How often a moving beam re-asks where it lands, in milliseconds. */
+    get BEAM_LANDING_INTERVAL() { return 150; }
+
+    /** A skinned mesh's posed bounds, in world space, from where its bones are. */
+    _skinnedBounds(mesh, box) {
+        box.makeEmpty();
+        const bones = mesh.skeleton ? mesh.skeleton.bones : null;
+        if (!bones || !bones.length) return box.setFromObject(mesh);
+        const at = this._boneScratch || (this._boneScratch = new THREE.Vector3());
+        for (const bone of bones) {
+            if (!bone) continue;
+            box.expandByPoint(bone.getWorldPosition(at));
+        }
+        // Flesh stands off its bones by about this much on a character.
+        return box.expandByScalar(0.25);
     }
 
     /** The placed model's span in the preview's own units, for gizmo sizes. */
@@ -4272,6 +4389,7 @@ class Database3DEditor {
         }
         live.core.material.dispose();
         live.material.dispose();
+        if (live.dot) live.dot.material.dispose();
         if (live.beamMaterial && live.beamMaterial !== live.material) live.beamMaterial.dispose();
         this._fxLight = null;
         this._disposeLightGizmo();
@@ -4591,7 +4709,6 @@ class Database3DEditor {
             return;
         }
         this._stopVideoPreview();
-        this._stopLightPreview();
         const layer = this._effectPreviewLayer();
         const animations = this.databaseManager?.data?.animations || [];
         const record = animations[Number(raw && raw.animation)];
@@ -4706,6 +4823,7 @@ class Database3DEditor {
         this._fxPreviewDef = null;
         this._fxPreviewRecord = null;
         this._fxTriggered = null;
+        this._fxTriggeredLight = null;
     }
 
     /**
@@ -4719,27 +4837,37 @@ class Database3DEditor {
         const list = this.rawEffects.map((raw, index) => index === this.selectedEffect && this._effectWork ? this._effectWork : raw);
         const moving = !!this._sim.walking;
         const dashing = !!this._sim.dashing;
+        // One animation or movie at a time, and beside it one light: a
+        // console's screen glow and its static both play, as they do in
+        // the game. The selected light wins over another that is on.
         let wanted = null;
         let wantedIndex = -1;
+        let wantedLight = null;
+        let wantedLightIndex = -1;
         list.forEach((raw, index) => {
-            if (wanted) return;
             const trigger = raw && raw.trigger;
+            const isLight = raw && raw.type === 'light';
             const playable = raw && (raw.type === 'video' ? !!(raw.video && raw.video.file)
-                : raw.type === 'light' ? true : Number(raw.animation) > 0);
+                : isLight ? true : Number(raw.animation) > 0);
             if (!raw || !trigger || trigger === 'action' || !playable) return;
             const active = trigger === 'always'
                 || (trigger === 'moving' && moving)
                 || (trigger === 'walking' && moving && !dashing)
                 || (trigger === 'dashing' && dashing)
                 || (trigger === 'idle' && !moving);
-            if (active) { wanted = raw; wantedIndex = index; }
+            if (!active) return;
+            if (isLight) {
+                if (!wantedLight || index === this.selectedEffect) { wantedLight = raw; wantedLightIndex = index; }
+            } else if (!wanted) {
+                wanted = raw;
+                wantedIndex = index;
+            }
         });
         const layer = this._fxPreview;
         if (wanted) {
             // Keyed by its place in the list, not its name: typing a new
             // name must not read as a new effect and restart the video.
-            const playing = wanted.type === 'video' ? !!this._fxVideo
-                : wanted.type === 'light' ? !!this._fxLight : !!(layer && layer.active);
+            const playing = wanted.type === 'video' ? !!this._fxVideo : !!(layer && layer.active);
             if (this._fxTriggered !== wantedIndex || !playing) {
                 this._playEffectPreview(wanted);
                 this._fxTriggered = wantedIndex;
@@ -4751,7 +4879,21 @@ class Database3DEditor {
                 this._fxPreviewDef = wanted;
             }
         } else if (this._fxTriggered !== null && this._fxTriggered !== undefined) {
-            this._stopEffectPreview();
+            if (layer) layer.stop();
+            if (this._fxQuad) this._fxQuad.mesh.visible = false;
+            this._stopVideoPreview();
+            this._fxTriggered = null;
+        }
+        if (wantedLight) {
+            if (this._fxTriggeredLight !== wantedLightIndex || !this._fxLight) {
+                this._playLightPreview(wantedLight);
+                this._fxTriggeredLight = wantedLightIndex;
+            } else if (this._fxLight.raw !== wantedLight) {
+                this._fxLight.raw = wantedLight;
+            }
+        } else if (this._fxTriggeredLight !== null && this._fxTriggeredLight !== undefined) {
+            this._stopLightPreview();
+            this._fxTriggeredLight = null;
         }
     }
 

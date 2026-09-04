@@ -247,7 +247,7 @@ test('a beam is a constant-width cylinder of light: read, packed, shaded and bod
     const three = read('runtime/reactor_3d.js');
     assert.match(three, /new THREE\.CylinderGeometry\(1, 1, 1, 24, 1, true\)/);
     assert.match(three, /beamBody\.quaternion\.setFromUnitVectors\(down, aimVector\)/);
-    assert.match(three, /for \(const list of \[cores, glows, cones, beams\]\)/, 'disposed with the rest');
+    assert.match(three, /for \(const list of \[cores, glows, cones, beams, dots\]\) \{/, 'disposed with the rest');
     assert.match(three, /this\.lightIsAimed\(light\) && light\.followFacing && carrier\.direction/, 'a carried beam turns with its carrier');
     const sprites = read('runtime/reactor_sprites.js');
     assert.match(sprites, /reactorFlatLightTexture\(beam \? "beam" : spot \? "cone" : "round"\)/);
@@ -340,4 +340,76 @@ test('AmbientLight eases the map ambient through ambientFor, and the 3D path re-
     for (const name of ['LightSwitch', 'TransformLight', 'AmbientLight']) {
         assert.match(three, new RegExp('registerCommand\\("RPGReactor", "' + name + '"'));
     }
+});
+
+test('a beam stops where it lands and leaves a dot there: the march, the models, the packer, the preview', () => {
+    // The march: a raised cell ahead stops the beam at its face; a clear run does not.
+    const savedBlock = Reactor3D.lightBlockHeightAt;
+    Reactor3D.lightBlockHeightAt = (x, y) => (Math.round(x) >= 5 ? 3 : 0);
+    try {
+        const level = Reactor3D.beamHit(1, 1, 1, 1, 0, 0, 10, null);
+        assert.ok(level !== null && level >= 3.4 && level <= 3.7, 'a level beam from x=1 meets the block at x≈4.5 (' + level + ')');
+        assert.equal(Reactor3D.beamHit(1, 1, 1, 0, 0, 1, 3, null), null, 'nothing ahead: no landing');
+        const dive = Reactor3D.beamHit(1, 1, 1, 0, -1, 0, 5, null);
+        assert.ok(dive !== null && dive <= 1.2, 'aimed straight down it lands on the ground within a step (' + dive + ')');
+    } finally {
+        Reactor3D.lightBlockHeightAt = savedBlock;
+    }
+    // Placed models: their bounds stop it; the one it starts inside never does.
+    require(path.join(repoRoot, 'runtime', 'libs', 'three.js'));
+    const THREE = global.THREE;
+    Reactor3D.lightBlockHeightAt = () => -100;
+    try {
+        const crate = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1));
+        crate.position.set(4.5, 0.5, 2);
+        crate.updateMatrixWorld(true);
+        const carrier = new THREE.Mesh(new THREE.BoxGeometry(1, 2, 1));
+        carrier.position.set(1.5, 1, 2);
+        carrier.updateMatrixWorld(true);
+        const scene = { _modelInstances: new Map([['a', { object: carrier }], ['b', { object: crate }]]) };
+        const hit = Reactor3D.beamHit(1, 1, 1, 1, 0, 0, 10, scene);
+        assert.ok(hit !== null && Math.abs(hit - 2.5) < 1e-6, 'the crate face at x=4 is 2.5 tiles out (' + hit + ')');
+    } finally {
+        Reactor3D.lightBlockHeightAt = savedBlock;
+    }
+    const three = fs.readFileSync(path.join(repoRoot, 'runtime', 'reactor_3d.js'), 'utf8');
+    // The packer: the beam's reach is the landing, the next light is the dot on the surface, the body gets the hit.
+    const scene = Object.create(Reactor3D.MapScene.prototype);
+    const placed = [];
+    scene.lightBodies = () => ({ place: (i, l) => placed.push(l), trim: () => {} });
+    const saved = { facadeAt: Reactor3D.facadeAt, surfaceHeightAt: Reactor3D.surfaceHeightAt, beamHit: Reactor3D.beamHit };
+    Reactor3D.facadeAt = () => null;
+    Reactor3D.surfaceHeightAt = () => 0;
+    Reactor3D.beamHit = () => 2;
+    try {
+        scene.syncVolumeLights([{ type: 'beam', x: 1, y: 1, height: 1, radius: 8, width: 0.1, yaw: 0, pitch: 0, colour: 0xff0000, intensity: 1 }], { x: 1, y: 1 });
+        const u = Reactor3D.lightUniforms();
+        assert.equal(u.rrLightCount.value, 2, 'the beam and its dot');
+        assert.equal(u.rrLightPos.value[3], 2, 'the beam reaches only to the landing');
+        assert.equal(u.rrLightColor.value[7], 0, 'the dot is a point light');
+        assert.ok(Math.abs(u.rrLightPos.value[6] - 4) < 1e-6, 'two tiles along +z from z=2');
+        assert.ok(Math.abs(u.rrLightPos.value[7] - Math.max(0.1 * Reactor3D.BEAM_DOT_REACH, 0.3)) < 1e-6, 'its reach scales with the width');
+        assert.equal(placed[0].radius, 2, 'the body stops there too');
+        assert.ok(placed[0].hit && Math.abs(placed[0].hit.z - 4) < 1e-6, 'and knows where');
+        // A camera past the landing looks at the surface's back: no dot for it.
+        const savedEye = Reactor3D.viewEye;
+        Reactor3D.viewEye = () => ({ x: 1.5, y: 1, z: 9 });
+        placed.length = 0;
+        scene.syncVolumeLights([{ type: 'beam', x: 1, y: 1, height: 1, radius: 8, width: 0.1, yaw: 0, pitch: 0, colour: 0xff0000, intensity: 1 }], { x: 1, y: 1 });
+        assert.equal(placed[0].hit.facesEye, false, 'the eye beyond the wall sees no dot');
+        Reactor3D.viewEye = () => ({ x: 1.5, y: 1, z: 0 });
+        placed.length = 0;
+        scene.syncVolumeLights([{ type: 'beam', x: 1, y: 1, height: 1, radius: 8, width: 0.1, yaw: 0, pitch: 0, colour: 0xff0000, intensity: 1 }], { x: 1, y: 1 });
+        assert.equal(placed[0].hit.facesEye, true, "the eye on the beam's side does");
+        Reactor3D.viewEye = savedEye;
+        assert.match(three, /if \(light\.beam && light\.hit && light\.hit\.facesEye !== false\) \{/, 'the body pool honours it');
+        scene.syncVolumeLights([], null);
+    } finally {
+        Object.assign(Reactor3D, saved);
+    }
+    assert.match(three, /group, glows, cores, cones, beams, dots,/, 'the body pool carries the dots');
+    const editor = fs.readFileSync(path.join(repoRoot, 'editor', 'src', 'database', 'Database3DEditor.js'), 'utf8');
+    assert.match(editor, /_beamLanding\(live, light, x, y, z\) \{/);
+    assert.match(editor, /_skinnedBounds\(mesh, box\)/, 'a rig is bounded by its bones, never re-skinned per cast');
+    assert.match(editor, /now - live\.landing\.at < this\.BEAM_LANDING_INTERVAL/, 'and a moving beam re-asks a few times a second, not every frame');
 });

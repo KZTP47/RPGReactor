@@ -43,10 +43,10 @@ test('a playtest saves a checkpoint after a battle, only in test mode, only with
     assert.equal(api.DataManager._playtestCheckpointBusy, false, 'and does not wedge the next one');
 });
 
-test('the checkpoint hooks are where MZ autosaves, the title offers F9, and F9 reaches the title scene', () => {
+test('the checkpoint hooks are where MZ autosaves, F9 reaches the title scene, and the title art says nothing', () => {
     assert.match(scenes, /Scene_Battle\.prototype\.terminate = function\(\) \{[\s\S]*?if \(!BattleManager\.isBattleTest\(\) && DataManager\.isPlaytestCheckpointEnabled\(\)\) \{\n\s*DataManager\.savePlaytestCheckpoint\("after battle"\);/);
     assert.match(scenes, /Scene_Map\.prototype\.onTransferEnd = function\(\) \{[\s\S]*?DataManager\.savePlaytestCheckpoint\("map " \+ \$gameMap\.mapId\(\)\);/);
-    assert.match(scenes, /this\.createPlaytestCheckpointHint\(\);/);
+    assert.doesNotMatch(scenes, /createPlaytestCheckpointHint|resume playtest checkpoint/, 'nothing about the checkpoint is drawn on the title art');
     assert.match(scenes, /Scene_Title\.prototype\.resumePlaytestCheckpoint = function\(\) \{[\s\S]*?DataManager\.loadGame\(DataManager\.PLAYTEST_CHECKPOINT_ID\)[\s\S]*?\$gameSystem\.onAfterLoad\(\);/);
     assert.match(core, /case 120: \/\/ F9[\s\S]*?resumePlaytestCheckpoint\(\);/);
 });

@@ -19,8 +19,17 @@ test('props are validated and held to the map', () => {
     assert.deepEqual(prop, {
         id: 1, name: 'Props/console', ext: '.glb', file: '', texture: '',
         x: 9, y: 0, z: 512, yaw: 40, pitch: 0, roll: 0, direction: 2, size: 3, scale: 1, passable: true,
-        animation: '', repeat: false, effect: ''
+        animations: [], animation: '', repeat: false, effects: [], effect: ''
     });
+    // Several animations in order and several effects at once; older files with one of each read as lists of one.
+    const lists = { id: 2, width: 10, height: 8, note: '<3d>' };
+    const many = Elevation.propById(lists, Elevation.addProp(lists, { name: 'Props/door', x: 1, y: 1, animations: ['open', ' settle ', 'open'], effects: ['glow', 'hum'] }));
+    assert.deepEqual(many.animations, ['open', 'settle'], 'trimmed, each once, in order');
+    assert.equal(many.animation, 'open', 'the singular field is the first');
+    assert.deepEqual(many.effects, ['glow', 'hum']);
+    assert.equal(many.effect, 'glow');
+    const old = Elevation.propById(lists, Elevation.addProp(lists, { name: 'Props/lamp', x: 2, y: 2, animation: 'flicker', effect: 'shine' }));
+    assert.deepEqual([old.animations, old.effects], [['flicker'], ['shine']], "an older file's single fields read as lists");
     assert.equal(Elevation.addProp(map, { name: 'Props/crate', x: 2.37, y: 4.5 }), 2);
     assert.equal(Elevation.updateProp(map, 2, { x: 2.37 }), false, 'same values are not a change');
     assert.equal(Elevation.updateProp(map, 2, { yaw: -190, z: 1.5 }), true);
@@ -77,7 +86,7 @@ test('runtime hooks lift props and read their free position after the events are
     const sprites = read('runtime/reactor_sprites.js');
     assert.match(sprites, /Reactor3D\.installPropHooks\(\)/);
     assert.match(sprites, /this\.y -= this\._character\._reactorLift \* \$gameMap\.tileHeight\(\);/);
-    assert.match(read('runtime/reactor_main.js'), /runtime revision: 20260904.7/);
+    assert.match(read('runtime/reactor_main.js'), /runtime revision: 20260904.13/);
 });
 
 test('the editor has a props tab, a manager, and 3D placement with pose rings', () => {
@@ -131,8 +140,8 @@ test('props are chosen in the model picker and can start with an animation or ef
     assert.match(manager, /openModelPicker\(\) \{/);
     assert.match(manager, /new ModelGraphicPicker\(this\.projectController\)/);
     assert.match(manager, /id="model-props-choose"/);
-    assert.match(manager, /id="model-props-animation"/);
-    assert.match(manager, /id="model-props-effect"/);
+    assert.match(manager, /id="model-props-animations" class="mp-choice-list"/, 'animations are a checkbox list');
+    assert.match(manager, /id="model-props-effects" class="mp-choice-list"/, 'effects are a checkbox list');
     assert.doesNotMatch(manager, /model-props-list/, 'the inline model list is gone');
     const map = { id: 1, width: 4, height: 4 };
     Elevation.addProp(map, { name: 'Props/console', animation: 'boot', effect: 'alarm', yaw: 30 });
@@ -142,9 +151,12 @@ test('props are chosen in the model picker and can start with an animation or ef
     Reactor3D.installProps(installed);
     assert.equal(installed.events[Reactor3D.PROP_EVENT_BASE + 1].reactorProp.animation, 'boot');
     const runtime = read('runtime/reactor_3d.js');
-    assert.match(runtime, /if \(prop\.animation\) Reactor3D\.playModelAnimation\(event, prop\.animation, \{ repeat: prop\.repeat \}\);/);
-    assert.match(runtime, /if \(prop\.effect\) Reactor3D\.playModelEffect\(event, prop\.effect\);/);
-    assert.match(read('runtime/reactor_main.js'), /runtime revision: 20260904.7/);
+    assert.match(runtime, /const animations = Reactor3D\.propAnimationList\(prop\);\s*if \(animations\.length\) Reactor3D\.playModelSequence\(event, animations, !!prop\.repeat\);/, 'the list plays in order, looping as a whole');
+    assert.match(runtime, /for \(const name of Reactor3D\.propEffectList\(prop\)\) Reactor3D\.playModelEffect\(event, name\);/, 'every chosen effect fires');
+    assert.deepEqual(Reactor3D.propAnimationList({ animation: 'boot' }), ['boot']);
+    assert.deepEqual(Reactor3D.propAnimationList({ animations: ['a', 'b'], animation: 'a' }), ['a', 'b']);
+    assert.deepEqual(Reactor3D.propEffectList({ effects: ['x', '', 'y'] }), ['x', 'y']);
+    assert.match(read('runtime/reactor_main.js'), /runtime revision: 20260904.13/);
 });
 
 test('editing a placed prop re-poses its instance instead of rebuilding the set', () => {
@@ -173,7 +185,7 @@ test('picking the same model again keeps the chosen animation and effect; the ef
     const source = fs.readFileSync(path.join(editorRoot, 'src', 'ModelPropsManager.js'), 'utf8');
     const choose = source.slice(source.indexOf('\n    chooseModel(model) {'), source.indexOf('\n    }\n', source.indexOf('\n    chooseModel(model) {')));
     assert.match(choose, /const same = this\.model && model && this\.model\.name === model\.name && this\.model\.file === model\.file;/);
-    assert.match(choose, /if \(!same\) \{\s*this\.fields\.animation = '';\s*this\.fields\.effect = '';\s*\}/);
+    assert.match(choose, /if \(!same\) \{\s*this\.fields\.animations = \[\];\s*this\.fields\.effects = \[\];\s*\}/);
     assert.match(source, /const effects = ModelPropsManager\.modelEffectNames\(project\.path, name\);/, 'effects carry their trigger');
     assert.match(source, /names\.push\(\{ name: String\(effect\.name\), trigger: effect\.trigger \|\| 'action' \}\);/);
 });

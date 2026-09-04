@@ -145,13 +145,14 @@ test('a light effect previews the way the game lights: presets shared, a soft co
     assert.doesNotMatch(editor, /new THREE\.Mesh\(new THREE\.SphereGeometry\(1, 12, 10\)/);
     // The model takes the light through the game's shader injection, and the shared uniforms are put back after.
     assert.match(editor, /Reactor3D\.litMaterial\(material\);\s*material\.needsUpdate = true;/);
-    assert.match(editor, /Reactor3D\.packLightUniforms\(\[light\], \{ intensity: this\.LIGHT_PREVIEW_AMBIENT/);
+    assert.match(editor, /Reactor3D\.packLightUniforms\(packed, \{ intensity: this\.LIGHT_PREVIEW_AMBIENT/);
     assert.match(editor, /uniforms\.rrAmbient\.value\.set\(saved\.ambient\);\s*uniforms\.rrLightCount\.value = saved\.count;/);
     const three = fs.readFileSync(path.join(repoRoot, 'runtime', 'reactor_3d.js'), 'utf8');
     assert.match(three, /Reactor3D\.packLightUniforms = function\(lights, ambient\) \{/);
     // Always / Moving / Idle keep a light on in the preview, like a movie.
-    assert.match(editor, /: raw\.type === 'light' \? true : Number\(raw\.animation\) > 0\);/);
-    assert.match(editor, /: wanted\.type === 'light' \? !!this\._fxLight : !!\(layer && layer\.active\);/);
+    assert.match(editor, /: isLight \? true : Number\(raw\.animation\) > 0\);/);
+    assert.match(editor, /if \(isLight\) \{\s*if \(!wantedLight \|\| index === this\.selectedEffect\)/, 'a light previews beside another Always effect');
+    assert.match(editor, /if \(wantedLight\) \{\s*if \(this\._fxTriggeredLight !== wantedLightIndex \|\| !this\._fxLight\)/, 'the light has its own slot beside the animation or movie');
 });
 
 test('a light effect wears the prop gizmo in the database preview, and every control follows every edit', () => {

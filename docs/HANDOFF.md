@@ -1,5 +1,141 @@
 # Handoff - 0.98.5 In Progress
 
+## 2026-09-04 — Shadow atlas: every light in reach casts, two samplers total
+
+Owner rejected the nearest-4 rule ("all lights should cast shadows if
+they're within the range of the light... we have to be smart about it")
+and asked whether the lights should combine into one shadow texture. They
+do now. `Reactor3D.Shadows` (runtime `20260904.13`) renders each casting
+light's six 90-degree faces into a ROW of one 2D depth atlas
+(`rrShadowAtlas`, 6×size wide, rows×size tall, R8 colour + UnsignedInt
+depth in LessEqual compare mode, linear = hardware 2×2 PCF) and a second
+small atlas for moving casters (`rrShadowDynAtlas`). The lit shader picks
+the face from the major axis of light→fragment like a cube lookup, projects
+with the face's right/up (`SHADOW_FACES`, right = dir × up as three's
+lookAt has it), clamps taps inside the face by one texel, and offsets into
+`row`. `rrShadowInfo[k] = (near, far, dynRow|-1, softness)`,
+`rrShadowPos[k]` = the row's rendered origin, `rrShadowGrid = (1/6, 1/rows,
+1/dynRows, 1/size)`. `SHADOW_SLOTS` (uniform array length) is 8;
+`SHADOW_QUALITY.full = 8 rows / 3 dyn / 512 / 5 taps / 2 static + 2 dyn
+rows per frame`, weak `4 / 1 / 256 / 1 tap / 1 + 1`.
+
+How rows are rendered: NOT three's shadow pass any more (it cannot draw a
+point light into a 2D target: `faceCount` comes from the map type). Each
+face is `target.viewport/scissor` set, `renderer.clear(depth)`, then
+`renderer.render(scene, faceCamera)` with the camera's layers set to the
+caster layer, the casters' `material` swapped to their
+`customDepthMaterial` (`casterMaterialFor`: MeshDepthMaterial, slope
+offset, colorWrite off, side flipped like three does; one shared per
+side×skinned, cut-outs their own with the map synced per pass), and
+`scene.matrixWorldAutoUpdate=false`, `renderer.autoClear=false`,
+`scene.background=null` for the duration. `_faceMask` skips faces with no
+caster in them (a caster's centre vs the face's 90° frustum with its span
+as slack). Statics render at coarsest LOD as before.
+
+Who gets a row: candidates whose reach covers any caster
+(`_castersWithin`), ranked by `rank` from `syncVolumeLights` (covering the
+focus → distance; else 1e4+gap), so the torch in hand beats a 50-tile
+screen glow. Dynamic rows: among assigned lights with a casting character
+in reach, same rank. Dirty tracking is per row: `_changedRoots` reports
+the old and new position of each static/dynamic root that changed, and a
+row is dirty only if a point lies in its reach (`_touches`). A character
+"changed" when its root or one of two bones moved `SHADOW_DYNAMIC_MOVE`
+(0.03 tile) from where it was last reported — idle breathing no longer
+redraws anything (was every frame). A light that drifts > 0.25 tile asks
+for a new rendering (`tile.want`) but keeps reading the old one from its
+old origin until it lands, and a valid row is redrawn no more often than
+`SHADOW_STATIC_INTERVAL` (10 frames). A row for a NEW light is not read
+until rendered (`tile.valid`). `_publish` writes the uniforms from row
+state; `_flush` (sentinel hook) renders this frame's jobs then publishes.
+
+Gotcha found live: the atlases are 2D compare-mode textures, and after
+three's pass they stay bound on texture units. PIXI's batch shader
+declares 16 `sampler2D`s pointing at units 0..15, and ANGLE refuses the
+draw ("Mismatch between texture format and sampler type") if ANY of them
+holds a compare texture, sampled or not — the old cube maps never
+collided because cubes bind to a different target. `Viewport._resetPixi`
+now calls `Shadows.unbindFrom(renderer)` (bind null on every 2D unit;
+three's own cache is reset before its next pass). Diagnose this class by
+wrapping `gl.drawElements` and reading the program's samplers + bound
+textures on the first `getError()` (in `scratchpad/shadow-atlas-harness.cjs`).
+
+Measured (`scratchpad/shadow-atlas-harness.cjs`, Demo copy, full tier,
+dedicated GPU): 8 rows all valid, 16-19 candidates all wanting rows, no
+GL errors, no failed programs; frozen-clock on/off screenshots differ in
+29% of pixels, 99.9% of them darker with shadows on. Idle: 6/40 frames
+render a dynamic row (the follower's sway), 18/40 a static row (six
+screen glows riding animated arms, each ≤ 1 row per 10 frames). CPU per
+row ~0.9 ms static / ~1.8 ms dynamic on this box. Weak tier (TIER=weak):
+4 rows, 1 dyn, 1536×1024 atlas, same checks pass. Editor map view:
+active, 8 rows, no failed programs (`editor-lighting-harness.cjs`, now
+pointed at the session's Demo copy via SCRATCH). Not verified: a real
+integrated GPU; the atlas is ~63 MB VRAM on full (3072×4096 depth + R8)
+and ~10 MB on weak — drop `size` if a laptop objects.
+
+## 2026-09-04 — Shadows: why some things cast and others do not; the per-frame static redraw
+
+Owner: the screen spotlights shadow the plant and the tank but not the
+reactor, the computers, the mascot or the actors. Probed in the running
+Demo (`scratchpad/shadow-casters-harness.cjs`, which lists every caster
+with its triangle count, whether it is casting, the slots and per-frame
+map renders). Facts: (1) only `quality.slots` lights cast at once — the
+nearest to the player (4 full / 2 weak) — every other light casts
+nothing, whatever its flag; the Demo has 11 map lights + 8 screen glows
+with shadows on, so most never get a slot. (2) Moving casters (characters,
+events with models) share a per-map triangle budget, nearest first: full
+320k / weak 30k. On my box: actors 149k+149k cast, plant 8k and tank 6.5k
+cast, the two mascots 64k and the bike 227k do not (312k spent). On a WEAK
+tier only the plant and the tank fit — which is exactly the owner's list,
+so their game likely runs at the weak tier (two GPUs; the iGPU matches the
+weak pattern). The shadow system now prints its tier/slots/budget once
+(`RPG Reactor shadows: …`) — ask for that line. (3) Props are static
+casters (reactor 370k, computers 488k each) and DO render into the static
+map when their light has a slot. Found on the way and fixed: the static
+maps re-rendered EVERY FRAME because the screen glows ride animated arms
+and the slot key was the exact light position — `SHADOW_STATIC_MOVE`
+origin hold (0.25 tile; maps rendered from and read from the held origin).
+Dynamic maps still redraw each frame while any casting character animates,
+by design. Also fixed: my tier line called a non-existent `gpuTier()` (it
+is `tier()`) and crashed the game every frame for a few minutes of the
+owner's session; Computer-01's stale `lods` list removed from the Demo.
+
+## 2026-09-04 — A model sidecar save reaches the map view (for real this time)
+
+Owner: editing a model's effects in the database did nothing on the map
+until an app restart. `saveRules` called
+`this.projectController?.refreshMap3DView?.()`, but the database hands its
+3D editor a STAND-IN controller (`DatabaseEditorUI` `case 'reactor3d'`: three
+fields) with no such method, so the optional call fell through; the 08-30
+"reaches the map 3D view" fix had only pinned the source text. The stand-in
+now forwards `refreshMap3DView` to `window.reactor.projectController`, and
+`saveRules` falls back to the real controller. Probe
+(`scratchpad/db3d-save-refresh-harness.cjs`): save radius 7.5 → one
+refresh, one rebuild, prop 12 reads 7.5 with the database still open.
+**Harness hazard found by that probe:** the scratch Demo copy had `3d/`
+symlinked to the real Demo, so the save wrote into the owner's Monitor Arm
+sidecar (restored to radius 3 by hand; `git diff` the two tracked
+`model.json` files before committing — the mascot's laser and the arm's
+glow are the owner's own edits). The copy's `3d/` is a real copy now.
+
+## 2026-09-04 — Placed models: effect lists, animation sequences, light reach (runtime `20260904.11`)
+
+Owner: a spot on the Monitor Arm set On demand and chosen on a placement
+showed nowhere; Always in the DB killed it; the 3D-M tab took one
+animation and one effect. Findings: the light WAS on and packed in game
+and editor (`scratchpad/prop-light-game-harness.cjs`,
+`prop-light-editor-harness.cjs`) — its authored 3-tile reach never grew
+with the 9.2-tile placement mounted 7 tiles up. `effectLight` now scales
+reach/width by instance span ÷ `Reactor3D.EFFECT_PREVIEW_SPAN` (1.6, the DB
+preview's fit). The DB's `_updateTriggeredEffectPreview` previewed one
+effect only (the arm's Always movie beat the light); a light now has its
+own slot. Props: `animations[]` (sequence, `repeat` loops the list via
+`playModelSequence` + the `sequence` field on the last queue entry) and
+`effects[]`; 3D-M checkbox lists (`_fillChoiceSelects`, `_checkedNames`);
+`MapEditor3D.animateModel` queue mirrors the game. Old single fields still
+read. Verified: prop 12 reach 17.25, Walking→Running loop on event 2, arm
+movie + light together, lists ticked (`db3d-arm-harness.cjs`,
+`props-lists-harness.cjs`).
+
 ## 2026-09-04 — Light as a 3D model effect type (runtime `20260904.4`)
 
 Queued item (3) from the lighting roadmap, built in two forks on a
@@ -46,6 +182,22 @@ lists `skeleton.bones` of every SkinnedMesh (the mascot's joints are NOT
 the select when it offers the previous part (else the form detached a bone
 anchor on Play/Save); beam `width` = full thickness (half into `aim.w` and
 the body scale; 2D bar = width × tw), floor 0.005, default 0.08, laser 0.04.
+Laser landing (runtime `20260904.8`): `Reactor3D.beamHit` (march through
+`lightBlockHeightAt` + model AABBs, own carrier excluded) in the volume
+packer → reach shortened, dot point light packed as the next slot (counts
+against SHADER_LIGHTS), `bodies.dots[]` sprite; DB preview `_beamLanding`
+(rigid meshes precise, skinned via `_skinnedBounds` from bone positions,
+150 ms rate limit). The dot hides when the camera is farther along the
+beam than the landing (`hit.facesEye`; owner saw the dot on a hidden wall
+from behind it). Not done: the 2D flat pool and the flat 2D compositor
+draw the full-length bar with no dot. `scratchpad/beam-game-harness.cjs`
+pushes a beam into `$dataMap.reactor3d.lights`, reads the packed uniforms,
+and moves the camera behind/in front of the struck wall. **Harness rule (owner asked):** every
+game harness that boots a project COPY calls
+`scratchpad/harness-lib.cjs` `syncRuntimeInto(copyDir)` before spawning
+NW.js — the copy's js/ is a snapshot and `sync-runtime.cjs` only knows the
+bundled templates; the stale-runtime symptom was a `bodies.dots`
+undefined in a game that had the new packer everywhere else.
 `scratchpad/db3d-mascot-harness.cjs` selects the mascot, adds a laser,
 places it on the head through `_placeEffectAnchor`, walks, samples the
 anchor world position per frame, and screenshots edge-on and side views.
@@ -304,7 +456,7 @@ did per draw is silently missing).
 
 Playtest checkpoints take the 20-45 minute walk out of the loop: in a
 playtest the runtime saves slot 99 after every battle and map transfer,
-the title shows *F9: resume checkpoint*, F9 loads it. Verified end to end
+F9 on the title loads it (the on-screen hint was removed 09-04 at the owner's request; the console line says so). Verified end to end
 in the harness (save → title hint → F9 → map). Harness runs are not in
 test mode (`Utils.isOptionValid("test")` is false under
 `--remote-debugging-port`); force it with

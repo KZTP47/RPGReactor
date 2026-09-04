@@ -416,20 +416,11 @@ Scene_Title.prototype.create = function() {
     this.createForeground();
     this.createWindowLayer();
     this.createCommandWindow();
-    this.createPlaytestCheckpointHint();
 };
 
-/** In a playtest with a checkpoint on disk: a line at the bottom left saying F9 resumes it. */
-Scene_Title.prototype.createPlaytestCheckpointHint = function() {
-    if (!DataManager.hasPlaytestCheckpoint()) return;
-    const bitmap = new Bitmap(Graphics.width, 28);
-    bitmap.fontSize = 16;
-    bitmap.outlineWidth = 3;
-    bitmap.drawText("F9: resume playtest checkpoint", 8, 0, Graphics.width - 16, 28, "left");
-    this._playtestCheckpointHint = new Sprite(bitmap);
-    this._playtestCheckpointHint.y = Graphics.height - 30;
-    this.addChild(this._playtestCheckpointHint);
-};
+// F9 on the title screen resumes a playtest checkpoint. Nothing on the
+// title art says so: the line the checkpoint save prints to the console
+// does, and the title is the game's, not the tool's.
 
 /** Loads the playtest checkpoint and goes to its map, as a load would. */
 Scene_Title.prototype.resumePlaytestCheckpoint = function() {

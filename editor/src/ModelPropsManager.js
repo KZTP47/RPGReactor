@@ -19,7 +19,7 @@ class ModelPropsManager {
         this.active = false;            // the M tab is up
         this.selectedId = null;
         this.model = null;              // the list entry a new prop is placed from
-        this.fields = { size: 2, scale: 1, direction: 2, z: 0, passable: false, yaw: 0, pitch: 0, roll: 0, animation: '', repeat: false, effect: '' };
+        this.fields = { size: 2, scale: 1, direction: 2, z: 0, passable: false, yaw: 0, pitch: 0, roll: 0, animations: [], repeat: false, effects: [] };
         this._undo = [];
         this._redo = [];
         this._textures = new Map();
@@ -298,7 +298,7 @@ class ModelPropsManager {
             x, y, z: this.fields.z, direction: this.fields.direction,
             yaw: this.fields.yaw, pitch: this.fields.pitch, roll: this.fields.roll,
             size: this.fields.size, scale: this.fields.scale, passable: this.fields.passable,
-            animation: this.fields.animation, repeat: this.fields.repeat, effect: this.fields.effect
+            animations: this.fields.animations.slice(), repeat: this.fields.repeat, effects: this.fields.effects.slice()
         });
         if (id) {
             this.selectedId = id;
@@ -335,7 +335,9 @@ class ModelPropsManager {
             // The panel's fields become the selected prop's, so the next
             // placement repeats it unless something is changed first.
             this.fields = { size: prop.size, scale: prop.scale, direction: prop.direction, z: prop.z, passable: prop.passable,
-                yaw: prop.yaw, pitch: prop.pitch, roll: prop.roll, animation: prop.animation || '', repeat: !!prop.repeat, effect: prop.effect || '' };
+                yaw: prop.yaw, pitch: prop.pitch, roll: prop.roll,
+                animations: (prop.animations || (prop.animation ? [prop.animation] : [])).slice(), repeat: !!prop.repeat,
+                effects: (prop.effects || (prop.effect ? [prop.effect] : [])).slice() };
             this.model = { name: prop.name, ext: prop.ext, file: prop.file, texture: prop.texture };
         }
         this.render();
@@ -510,13 +512,13 @@ class ModelPropsManager {
                             </select>
                         </label>
                         <label>${escape(t('props.lift'))}${stepper('model-props-z', 0, 512, 0.25, 0)}</label>
-                        <label>${escape(t('props.animation'))}
-                            <select id="model-props-animation" style="width: 100%; margin-top: 2px; font-size: 11px; padding: 3px 4px; background: var(--color-bg-input); color: var(--color-text); border: 1px solid var(--color-border-input); border-radius: 3px;"></select>
+                        <div style="grid-column: 1 / -1;">${escape(t('props.animations'))}
+                            <div id="model-props-animations" class="mp-choice-list"></div>
                             <label style="display: flex; align-items: center; gap: 4px; margin-top: 3px; color: var(--color-text); cursor: pointer;"><input type="checkbox" id="model-props-repeat"> ${escape(t('props.repeat'))}</label>
-                        </label>
-                        <label>${escape(t('props.effect'))}
-                            <select id="model-props-effect" style="width: 100%; margin-top: 2px; font-size: 11px; padding: 3px 4px; background: var(--color-bg-input); color: var(--color-text); border: 1px solid var(--color-border-input); border-radius: 3px;"></select>
-                        </label>
+                        </div>
+                        <div style="grid-column: 1 / -1;">${escape(t('props.effects'))}
+                            <div id="model-props-effects" class="mp-choice-list"></div>
+                        </div>
                         <label style="grid-column: 1 / -1; display: flex; align-items: center; gap: 6px; color: var(--color-text); cursor: pointer;">
                             <input type="checkbox" id="model-props-passable"> ${escape(t('props.passable'))}
                         </label>
@@ -549,9 +551,9 @@ class ModelPropsManager {
                 z: Math.max(0, number('model-props-z', 0)),
                 passable: !!byId('model-props-passable')?.checked,
                 yaw: this.fields.yaw || 0, pitch: this.fields.pitch || 0, roll: this.fields.roll || 0,
-                animation: byId('model-props-animation')?.value || '',
+                animations: this._checkedNames('model-props-animations'),
                 repeat: !!byId('model-props-repeat')?.checked,
-                effect: byId('model-props-effect')?.value || ''
+                effects: this._checkedNames('model-props-effects')
             };
             if (this.selectedId) this.update(this.selectedId, this.fields);
         };
@@ -560,7 +562,7 @@ class ModelPropsManager {
         byId('model-props-passable')?.addEventListener('change', readFields);
         byId('model-props-animation')?.addEventListener('change', readFields);
         byId('model-props-repeat')?.addEventListener('change', readFields);
-        byId('model-props-effect')?.addEventListener('change', readFields);
+        for (const id of ['model-props-animations', 'model-props-effects']) byId(id)?.addEventListener('change', readFields);
         container.querySelectorAll('[data-props-step]').forEach(button => button.addEventListener('click', () => {
             const input = byId(button.dataset.target);
             if (!input) return;
@@ -656,23 +658,37 @@ class ModelPropsManager {
         }
     }
 
+    /** The names ticked in a choice list, in the list's order. */
+    _checkedNames(id) {
+        const host = this.panel && this.panel.querySelector('#' + id);
+        if (!host) return [];
+        return [...host.querySelectorAll('input[type=checkbox]:checked')].map(box => box.value).filter(Boolean);
+    }
+
+    /**
+     * The model's animations and effects as checkbox lists: several
+     * effects play together, and the animations ticked play in the order
+     * the model declares them, looping as a whole when Repeat is on.
+     */
     _fillChoiceSelects() {
         const panel = this.panel;
         if (!panel) return;
         const { actions, effects } = this._modelChoices();
         const escape = text => String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
-        const fill = (id, entries, current) => {
-            const select = panel.querySelector('#' + id);
-            if (!select) return;
+        const fill = (id, entries, chosen) => {
+            const host = panel.querySelector('#' + id);
+            if (!host) return;
             const list = entries.map(entry => (typeof entry === 'string' ? { name: entry, trigger: '' } : entry));
-            if (current && !list.some(entry => entry.name === current)) list.unshift({ name: current, trigger: '' });
-            select.innerHTML = `<option value="">${escape(this._t('props.none'))}</option>`
-                + list.map(entry => `<option value="${escape(entry.name)}"${entry.name === current ? ' selected' : ''}>${escape(entry.name)}${entry.trigger && entry.trigger !== 'action' ? ` (${escape(entry.trigger)})` : ''}</option>`).join('');
-            select.value = current || '';
-            select.disabled = !this.model;
+            for (const name of chosen) if (!list.some(entry => entry.name === name)) list.unshift({ name, trigger: '' });
+            host.innerHTML = list.length
+                ? list.map(entry => `<label class="mp-choice${chosen.indexOf(entry.name) >= 0 ? ' checked' : ''}"><input type="checkbox" value="${escape(entry.name)}"${chosen.indexOf(entry.name) >= 0 ? ' checked' : ''}${this.model ? '' : ' disabled'}> <span>${escape(entry.name)}</span>${entry.trigger && entry.trigger !== 'action' ? `<em>${escape(entry.trigger)}</em>` : ''}</label>`).join('')
+                : `<div class="mp-choice-empty">${escape(this._t('props.none'))}</div>`;
+            host.querySelectorAll('input[type=checkbox]').forEach(box => box.addEventListener('change', () => {
+                box.parentElement.classList.toggle('checked', box.checked);
+            }));
         };
-        fill('model-props-animation', actions, this.fields.animation || '');
-        fill('model-props-effect', effects, this.fields.effect || '');
+        fill('model-props-animations', actions, this.fields.animations || []);
+        fill('model-props-effects', effects, this.fields.effects || []);
         const repeat = panel.querySelector('#model-props-repeat');
         if (repeat) { repeat.checked = !!this.fields.repeat; repeat.disabled = !this.model; }
     }
@@ -687,8 +703,8 @@ class ModelPropsManager {
         // A new model means a new placement, not a swap of the selected one.
         this.selectedId = null;
         if (!same) {
-            this.fields.animation = '';
-            this.fields.effect = '';
+            this.fields.animations = [];
+            this.fields.effects = [];
         }
         this.render();
         this._syncPanel();

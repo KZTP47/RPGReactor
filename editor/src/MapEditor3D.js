@@ -1612,8 +1612,9 @@ class MapEditor3D {
                 // Picking tests the box, not the mesh: a raycast through a
                 // million triangles on every mouse move is what jitters.
                 object.userData.pickBox = new THREE.Box3().setFromObject(object);
-                this.animateModel(object, template, prop.animation ? { name: prop.animation, repeat: !!prop.repeat } : null);
-                this.playModelEffects(object, template, prop.effect);
+                const names = Reactor3D.propAnimationList ? Reactor3D.propAnimationList(prop) : (prop.animation ? [prop.animation] : []);
+                this.animateModel(object, template, names.length ? { names, repeat: !!prop.repeat } : null);
+                this.playModelEffects(object, template, Reactor3D.propEffectList ? Reactor3D.propEffectList(prop) : prop.effect);
                 if (this.selectedPropId === prop.id) this.selectProp(prop.id);
             });
         }
@@ -1636,9 +1637,14 @@ class MapEditor3D {
         if (!driver) return;
         driver.object = object;
         driver.start = this._modelFrame || 0;
-        driver.action = action ? { name: action.name, frame: driver.start, repeat: !!action.repeat } : null;
+        // One name, or a list played in order; Repeat loops the whole list.
+        const names = action ? (Array.isArray(action.names) ? action.names.filter(Boolean) : (action.name ? [action.name] : [])) : [];
+        driver.sequence = names.length > 1 ? names.slice() : null;
+        driver.queue = names.slice(1);
+        driver.loop = !!(action && action.repeat);
+        driver.action = names.length ? { name: names[0], frame: driver.start, repeat: names.length === 1 && !!action.repeat } : null;
         if (driver.action && Reactor3D.rulesForPlacement) {
-            driver.rules = Reactor3D.rulesForPlacement(driver.rules, driver.action.name, driver.action.repeat);
+            for (const name of names) driver.rules = Reactor3D.rulesForPlacement(driver.rules, name, names.length === 1 && !!action.repeat);
         }
         if (!this.animatedModels) this.animatedModels = [];
         this.animatedModels.push(driver);
@@ -1650,15 +1656,16 @@ class MapEditor3D {
      * anchors — a database animation as an overlay over the canvas, a video
      * as a plane in the scene. State-triggered effects wait for the game.
      */
-    playModelEffects(object, template, chosenName) {
+    playModelEffects(object, template, chosen) {
         const sidecar = template && template.userData.reactorSidecar;
         if (!sidecar || typeof Reactor3D === 'undefined' || !Reactor3D.readModelEffects) return;
+        const chosenNames = new Set((Array.isArray(chosen) ? chosen : (chosen ? [chosen] : [])).map(String));
         const project = this.projectController?.getCurrentProject
             ? this.projectController.getCurrentProject() : this.projectController?.currentProject;
         const animations = window.reactor?.databaseManager?.data?.animations || [];
         const started = new Set();
         for (const effect of Reactor3D.readModelEffects(sidecar)) {
-            if (effect.trigger !== 'always' && effect.name !== chosenName) continue;
+            if (effect.trigger !== 'always' && !chosenNames.has(effect.name)) continue;
             if (started.has(effect.name)) continue;
             started.add(effect.name);
             if (effect.type === 'light' && effect.light) {
@@ -1941,7 +1948,14 @@ class MapEditor3D {
                 const rule = driver.rules.find(entry => entry.trigger === 'action' && entry.name === action.name);
                 const duration = rule ? Reactor3D.modelRuleDuration(rule, driver.clips) : 0;
                 if (rule && frame - action.frame >= duration) {
-                    action = (action.repeat || rule.repeat) ? Object.assign({}, action, { frame }) : null;
+                    if (driver.queue && driver.queue.length) {
+                        action = { name: driver.queue.shift(), frame, repeat: false };
+                    } else if (driver.sequence && driver.loop) {
+                        driver.queue = driver.sequence.slice(1);
+                        action = { name: driver.sequence[0], frame, repeat: false };
+                    } else {
+                        action = (action.repeat || rule.repeat) ? Object.assign({}, action, { frame }) : null;
+                    }
                     driver.action = action;
                 }
             }
@@ -1959,7 +1973,9 @@ class MapEditor3D {
      * facing, pitch/yaw/roll, lift, position, passability) is a pose.
      */
     static propIdentity(prop) {
-        return [prop.name, prop.ext, prop.file, prop.texture, prop.animation, prop.repeat ? 1 : 0, prop.effect].join('|');
+        return [prop.name, prop.ext, prop.file, prop.texture,
+            (prop.animations || (prop.animation ? [prop.animation] : [])).join(','), prop.repeat ? 1 : 0,
+            (prop.effects || (prop.effect ? [prop.effect] : [])).join(',')].join('|');
     }
 
     /** Re-pose a placed prop's instance: size and scale, facing and turn, lift and position. */
