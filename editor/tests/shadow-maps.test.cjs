@@ -34,7 +34,7 @@ test('a light casts by default; the sidecar, the editor and the frame all carry 
     assert.match(editor, /shadow: raw\.shadow !== false,/);
     const manager = read('editor/src/LightingManager.js');
     assert.match(manager, /shadow: light\.shadow,\n\s*animated:/, 'resolvedLights carries it');
-    assert.match(manager, /id: light\.id, type: light\.type,[\s\S]*?shadow: light\.shadow\n\s*\}\)\)\);/, 'feed3D hands id and flag to the compositor');
+    assert.match(manager, /id: light\.id, type: light\.type,[\s\S]*?shadow: light\.shadow\n\s*\}\)\)(?:\.concat\(modelLights\))?\);/, 'feed3D hands id and flag to the compositor');
     assert.match(manager, /\['shadow', 'lit\.shadow'\]/, 'the panel offers the flag beside On and Blocked by walls');
     const i18n = read('editor/src/I18nManager.js');
     assert.equal((i18n.match(/"lit\.shadow": "/g) || []).length, 18, 'named in every locale');
@@ -378,5 +378,5 @@ test('both viewports render the maps once a frame before the first pass, and the
     assert.match(editor, /if \(sprite && Reactor3D\.Shadows\) Reactor3D\.Shadows\.markCaster\(mesh, false\);/);
     assert.equal((editor.match(/Reactor3D\.Shadows\.markCaster\(object, !!template\.userData\.animated\);/g) || []).length, 2, 'event models and props');
 
-    assert.match(read('runtime/reactor_main.js'), /runtime revision: 20260903\.18/);
+    assert.match(read('runtime/reactor_main.js'), /runtime revision: 20260904\.7/);
 });

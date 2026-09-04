@@ -13,6 +13,13 @@
       "name": "Running",
       "clip": "Running",
       "part": ""
+    },
+    {
+      "type": "clip",
+      "trigger": "idle",
+      "name": "Idle_9",
+      "clip": "Idle_9",
+      "part": ""
     }
   ],
   "rig": {

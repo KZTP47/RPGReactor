@@ -10538,6 +10538,26 @@
       },
       "flicker": 0.08,
       "pulse": null
+    },
+    {
+      "id": "light1",
+      "type": "point",
+      "x": 24.13,
+      "y": 8.42,
+      "height": 2.5,
+      "yaw": 0,
+      "pitch": 0,
+      "radius": 5,
+      "angle": 70,
+      "color": "#ff2d95",
+      "intensity": 1.4,
+      "occlude": true,
+      "shadow": true,
+      "on": true,
+      "tag": "neon",
+      "attach": null,
+      "flicker": 0,
+      "pulse": null
     }
   ],
   "lighting": {

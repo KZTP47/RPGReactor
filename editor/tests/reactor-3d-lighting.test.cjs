@@ -575,7 +575,7 @@ test('a pool sits where the thing casting it stands', () => {
     assert.match(three, /const cz = facade \? facade\.z : light\.y \+ 1;/);
     assert.match(three, /const y = standsOn \+ lift \+ 0\.02/,
         'and a wall light keeps its height — the quad lies flat at it');
-    assert.match(three, /const lift = facade \? facade\.lift : 0;/);
+    assert.match(three, /const lift = facade && light\.groundY === undefined \? facade\.lift : 0;/);
     assert.match(three, /const facade = Reactor3D\.facadeAt\(Math\.round\(light\.x\), Math\.round\(light\.y\)\);/);
     assert.match(three, /\? light\.groundY\n\s*: \(facade \? facade\.height/,
         'and a plugin that states a height still wins');

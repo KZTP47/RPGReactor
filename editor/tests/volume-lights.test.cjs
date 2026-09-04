@@ -52,7 +52,7 @@ test('a spot carries a pitch: read from the sidecar, bounded, resolved per frame
     const manager = read('editor/src/LightingManager.js');
     assert.match(manager, /yaw: light\.yaw, pitch: light\.pitch,/, 'resolvedLights carries it');
     assert.match(manager, /yaw: -light\.yaw, pitch: light\.pitch, occlude: light\.occlude/, 'feed3D hands it to the compositor');
-    assert.match(manager, /numberInput\('pitch', light\.pitch, -90, 90, 1\)/, 'the panel edits it for spots');
+    assert.match(manager, /this\._slider\('pitch', light\.pitch, -90, 90, 1\)/, 'the panel edits it for anything aimed');
     const i18n = read('editor/src/I18nManager.js');
     assert.equal((i18n.match(/"lit\.pitch": "/g) || []).length, 18, 'named in every locale');
 });
@@ -175,5 +175,169 @@ test('the field selects the nearest lights to the focus when there are more than
     } finally {
         Reactor3D.facadeAt = saved.facadeAt;
         Reactor3D.surfaceHeightAt = saved.surfaceHeightAt;
+    }
+});
+
+//-----------------------------------------------------------------------------
+// Beams, and the event commands that switch, move and recolour lights
+
+/** Globals a command path expects: a map with lights, a Game_Map, a clock. */
+function withLightWorld(map, frame, body) {
+    const saved = { $dataMap: global.$dataMap, $gameMap: global.$gameMap, Graphics: global.Graphics, $gamePlayer: global.$gamePlayer };
+    global.$dataMap = map;
+    global.$gameMap = { mapId: () => 7, event: () => null };
+    global.Graphics = { frameCount: frame };
+    global.$gamePlayer = undefined;
+    Reactor3D._nativeNorm = null;
+    try {
+        return body();
+    } finally {
+        for (const [key, value] of Object.entries(saved)) {
+            if (value === undefined) delete global[key];
+            else global[key] = value;
+        }
+    }
+}
+
+test('a beam is a constant-width cylinder of light: read, packed, shaded and bodied like one', () => {
+    Reactor3D._nativeNorm = null;
+    const map = { reactor3d: { lights: [
+        { id: 'laser', type: 'beam', x: 2, y: 3, yaw: 90, pitch: 0, height: 1, width: 0.3 },
+        { id: 'fat', type: 'beam', width: 99 },
+        { id: 'lamp', type: 'point' }
+    ] } };
+    const lights = Reactor3D.readMapLights(map);
+    assert.equal(lights[0].type, Reactor3D.LIGHT_BEAM);
+    assert.equal(lights[0].radius, Reactor3D.DEFAULT_BEAM_LENGTH, 'a beam defaults to its own length');
+    assert.equal(lights[0].width, 0.3);
+    assert.equal(lights[1].width, 5, 'width is bounded');
+    assert.equal(lights[2].width, Reactor3D.DEFAULT_BEAM_WIDTH, 'a point carries the default unused');
+    assert.equal(Reactor3D.lightIsAimed(lights[0]), true);
+    assert.equal(Reactor3D.lightIsAimed(lights[2]), false);
+    const resolved = Reactor3D.nativeLights(map);
+    assert.equal(resolved[0].width, 0.3, 'width reaches the compositor');
+
+    // Packed: colour.w = 2 says beam, aim.w carries HALF the width — width is the beam's full thickness.
+    const scene = Object.create(Reactor3D.MapScene.prototype);
+    const placed = [];
+    scene.lightBodies = () => ({ place: (i, l) => placed.push(l), trim: () => {} });
+    const saved = { facadeAt: Reactor3D.facadeAt, surfaceHeightAt: Reactor3D.surfaceHeightAt };
+    Reactor3D.facadeAt = () => null;
+    Reactor3D.surfaceHeightAt = () => 0;
+    try {
+        scene.syncVolumeLights([{ type: 'beam', x: 1, y: 1, height: 1, radius: 8, width: 0.25, yaw: 0, pitch: 0, colour: 0xff0000, intensity: 1 }], { x: 1, y: 1 });
+        const u = Reactor3D.lightUniforms();
+        assert.equal(u.rrLightColor.value[3], 2, 'flagged as a beam');
+        assert.equal(u.rrLightAim.value[3], 0.125, 'the aim carries half the width');
+        assert.ok(Math.abs(u.rrLightAim.value[2] - 1) < 1e-6, 'yaw 0 aims along +z, as a spot does');
+        assert.equal(placed[0].beam, true);
+        assert.equal(placed[0].width, 0.25);
+        scene.syncVolumeLights([], null);
+    } finally {
+        Reactor3D.facadeAt = saved.facadeAt;
+        Reactor3D.surfaceHeightAt = saved.surfaceHeightAt;
+    }
+
+    // Shaded: its own branch, before the cone's, on the axis distance.
+    const glsl = Reactor3D.lightGlsl(false);
+    assert.match(glsl, /if \(lc\.w > 1\.5\) \{[\s\S]*float t = dot\(d, aim\.xyz\);[\s\S]*float perp = length\(d - aim\.xyz \* t\);[\s\S]*smoothstep\(aim\.w, aim\.w \* 0\.35, perp\)[\s\S]*\} else if \(lc\.w > 0\.5\) \{/);
+    assert.match(glsl, /if \(t < 0\.0 \|\| t > lp\.w\) continue;/, 'nothing behind the source or past the length');
+
+    // Bodied: a cylinder aimed like the cone, and a flat bar in 2D.
+    const three = read('runtime/reactor_3d.js');
+    assert.match(three, /new THREE\.CylinderGeometry\(1, 1, 1, 24, 1, true\)/);
+    assert.match(three, /beamBody\.quaternion\.setFromUnitVectors\(down, aimVector\)/);
+    assert.match(three, /for \(const list of \[cores, glows, cones, beams\]\)/, 'disposed with the rest');
+    assert.match(three, /this\.lightIsAimed\(light\) && light\.followFacing && carrier\.direction/, 'a carried beam turns with its carrier');
+    const sprites = read('runtime/reactor_sprites.js');
+    assert.match(sprites, /reactorFlatLightTexture\(beam \? "beam" : spot \? "cone" : "round"\)/);
+    assert.match(sprites, /beam \? width \* tw : 2 \* Math\.tan\(spread\) \* reach/, 'the 2D bar is the full width');
+    assert.match(three, /beamBody\.scale\.set\(light\.width \* 0\.5, light\.radius, light\.width \* 0\.5\)/, 'the body is the full width across');
+    assert.match(three, /width: number\(entry\.width, this\.DEFAULT_BEAM_WIDTH, 0\.005, 5\)/, 'a laser can be a hair');
+});
+
+test('LightSwitch turns a light or a tag on, off and over', () => {
+    const map = { reactor3d: { lights: [
+        { id: 'a', type: 'point', tag: 'row' },
+        { id: 'b', type: 'point', tag: 'row', on: false },
+        { id: 'c', type: 'point' }
+    ] } };
+    withLightWorld(map, 10, () => {
+        assert.equal(Reactor3D.nativeLights(map).map(l => l.id).join(''), 'ac');
+        Reactor3D.switchLight('c', 'off');
+        assert.equal(Reactor3D.nativeLights(map).map(l => l.id).join(''), 'a');
+        Reactor3D.switchLight('c', 'toggle');
+        assert.equal(Reactor3D.nativeLights(map).map(l => l.id).join(''), 'ac');
+        Reactor3D.switchLight('#row', 'on');
+        assert.equal(Reactor3D.nativeLights(map).map(l => l.id).join(''), 'abc', 'the tag lit b');
+        Reactor3D.switchLight('#row', 'toggle');
+        assert.equal(Reactor3D.nativeLights(map).map(l => l.id).join(''), 'c', 'toggle reads the first tagged light');
+        assert.deepEqual(global.$gameMap._reactorLightStates, { c: true, '#row': false }, 'saved as plain state');
+    });
+});
+
+test('TransformLight eases a light, by id over its tag, and resets', () => {
+    const map = { reactor3d: { lights: [
+        { id: 'a', type: 'spot', x: 1, y: 1, yaw: 0, radius: 4, intensity: 1, color: '#000000', tag: 'row' },
+        { id: 'b', type: 'spot', x: 5, y: 1, yaw: 0, radius: 6, tag: 'row' }
+    ] } };
+    withLightWorld(map, 100, () => {
+        Reactor3D.transformLight('#row', { yaw: 90, intensity: '', color: '#ffffff' }, 100);
+        const block = global.$gameMap._reactorLightOverrides['#row'];
+        assert.equal(block.mapId, 7);
+        assert.deepEqual(block.to, { yaw: 90, color: 0xffffff }, 'an empty field is left alone');
+        assert.equal(block.duration, 100);
+        global.Graphics.frameCount = 150;
+        let lights = Reactor3D.nativeLights(map);
+        assert.equal(lights[0].yaw, -45, 'halfway there, in the scene convention');
+        assert.equal(lights[1].yaw, -45, 'every light of the tag');
+        assert.equal(lights[0].colour, 0x808080, 'colour eases per channel');
+        assert.equal(lights[1].radius, 6, 'an untouched field stays authored');
+        // The light's own override wins per field and starts from what it shows now.
+        Reactor3D.transformLight('a', { yaw: 0, radius: 2 }, 0);
+        const own = global.$gameMap._reactorLightOverrides.a;
+        assert.equal(own.from.yaw, 45, 'from where the tag ease had reached');
+        lights = Reactor3D.nativeLights(map);
+        assert.equal(lights[0].yaw, -0, 'immediate');
+        assert.equal(lights[0].radius, 2);
+        assert.equal(lights[0].colour, 0x808080, 'the tag still colours it');
+        assert.equal(lights[1].yaw, -45, 'b keeps riding the tag');
+        // Positions are authored-space: an offset when attached.
+        Reactor3D.transformLight('b', { x: 9, height: 3 }, 0);
+        lights = Reactor3D.nativeLights(map);
+        assert.equal(lights[1].x, 9);
+        assert.equal(lights[1].height, 3);
+        // A block from another map is ignored; a reset clears the key.
+        global.$gameMap._reactorLightOverrides.b.mapId = 99;
+        assert.equal(Reactor3D.nativeLights(map)[1].x, 5);
+        Reactor3D.transformLight('#row', null);
+        assert.equal(global.$gameMap._reactorLightOverrides['#row'], undefined);
+        assert.equal(Reactor3D.nativeLights(map)[1].yaw, -0);
+    });
+});
+
+test('AmbientLight eases the map ambient through ambientFor, and the 3D path re-applies a changed value', () => {
+    const map = { reactor3d: { lighting: { ambient: 0.2, ambientColour: '#000000' } } };
+    withLightWorld(map, 0, () => {
+        assert.deepEqual(Reactor3D.ambientFor(map), { intensity: 0.2, colour: 0 });
+        Reactor3D.setMapAmbient({ intensity: 1, color: '#ffffff' }, 10);
+        global.Graphics.frameCount = 5;
+        const mid = Reactor3D.ambientFor(map);
+        assert.ok(Math.abs(mid.intensity - 0.6) < 1e-9);
+        assert.equal(mid.colour, 0x808080);
+        global.Graphics.frameCount = 50;
+        assert.deepEqual(Reactor3D.ambientFor(map), { intensity: 1, colour: 0xffffff });
+        Reactor3D.setMapAmbient({ intensity: 0.5 }, 0);
+        assert.deepEqual(Reactor3D.ambientFor(map), { intensity: 0.5, colour: 0xffffff }, 'colour carried from where it was');
+        global.$gameMap._reactorAmbientOverride.mapId = 3;
+        assert.deepEqual(Reactor3D.ambientFor(map), { intensity: 0.2, colour: 0 }, 'another map\'s block is ignored');
+        Reactor3D.setMapAmbient(null);
+        assert.equal(global.$gameMap._reactorAmbientOverride, undefined);
+    });
+    const sprites = read('runtime/reactor_sprites.js');
+    assert.match(sprites, /const key = ambient\.intensity \* 16777216 \+ ambient\.colour;\n\s*if \(key !== this\._reactor3dAmbientKey\)/);
+    const three = read('runtime/reactor_3d.js');
+    for (const name of ['LightSwitch', 'TransformLight', 'AmbientLight']) {
+        assert.match(three, new RegExp('registerCommand\\("RPGReactor", "' + name + '"'));
     }
 });

@@ -1661,6 +1661,13 @@ class MapEditor3D {
             if (effect.trigger !== 'always' && effect.name !== chosenName) continue;
             if (started.has(effect.name)) continue;
             started.add(effect.name);
+            if (effect.type === 'light' && effect.light) {
+                // A light riding the model: resolved at its anchor every
+                // frame and handed to the lighting feed with the map's own.
+                (this.effectPlays || (this.effectPlays = [])).push({ object, effect, light: true,
+                    key: 'fx:' + (object.userData.propId !== undefined ? 'prop' + object.userData.propId : (object.userData.event ? 'ev' + object.userData.event.id : object.uuid)) + ':' + effect.name });
+                continue;
+            }
             if (effect.type === 'video' && effect.video && effect.video.file) {
                 const plane = this._videoEffectPlane(effect, project, template.userData.glbSize);
                 if (plane) {
@@ -1733,10 +1740,18 @@ class MapEditor3D {
     updateEffectPlays() {
         const plays = (this.effectPlays || []).filter(play => play.object.parent);
         this.effectPlays = plays;
+        // The lights placed models carry, rebuilt each frame for the feed.
+        const lights = [];
+        if (typeof Reactor3D !== 'undefined') Reactor3D._editorEffectLights = lights;
         if (!plays.length || !this.camera || !this.canvas) return;
         const rect = this.canvas.getBoundingClientRect();
         const scratch = this._effectScratch || (this._effectScratch = new THREE.Vector3());
         for (const play of plays) {
+            if (play.light) {
+                const light = Reactor3D.effectLight ? Reactor3D.effectLight(play.object, play.effect, play.key) : null;
+                if (light) lights.push(light);
+                continue;
+            }
             if (play.plane) {
                 // In the model's own frame: the anchor point, turned by the effect.
                 const local = play.object.worldToLocal(Reactor3D.effectAnchorWorld(play.object, play.effect, scratch).clone());

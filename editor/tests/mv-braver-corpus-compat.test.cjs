@@ -277,8 +277,8 @@ test('the MV APIs the audit found are supplied: video volume, fade sprite, conte
     assert.deepEqual(volumes, [0.4]);
     const scene = new Scene_Base(); scene.addChild = c => { scene.child = c; };
     scene.createFadeSprite(true);
-    assert.equal(scene._fadeSprite.color, 'white');
-    assert.equal(scene.child, scene._fadeSprite);
+    assert.equal(scene._fadeWhite, 1, 'the fade sprite tints the colour filter');
+    assert.equal(scene.child, undefined, 'and is never on the display list');
     const win = new Window_Selectable(); Object.assign(win, { padding: 12, width: 100, height: 60 });
     assert.equal(win.isContentsArea(12, 12), true);
     assert.equal(win.isContentsArea(5, 30), false);
@@ -295,6 +295,55 @@ test('the MV APIs the audit found are supplied: video volume, fade sprite, conte
     ctx.global.$dataSystem = { hasEncryptedAudio: true };
     assert.equal(Decrypter.hasEncryptedAudio, true, 'MV flag reads the system data');
     assert.equal(Decrypter.hasEncryptedImages, false);
+});
+
+test("a scene's _fadeSprite is MV's handle on the fade, backed by MZ's colour filter", () => {
+    const start = compat.indexOf('        // ---- MV APIs the plugin-compat-audit found');
+    const end = compat.indexOf('        // ---- end audit gap-fills ----', start);
+    function ScreenSprite() { this.alpha = 0; }
+    ScreenSprite.prototype.setWhite = function() { this.tint = 'white'; };
+    ScreenSprite.prototype.setBlack = function() { this.tint = 'black'; };
+    function Scene_Base() { this._fadeOpacity = 0; this._fadeWhite = 0; this._colorFilter = {}; this.blends = []; }
+    Scene_Base.prototype.updateColorFilter = function() { this.blends.push([this._fadeWhite, this._fadeOpacity]); };
+    Scene_Base.prototype.startFadeIn = function(duration, white) { this._fadeWhite = white ? 1 : 0; this._fadeOpacity = 255; this.updateColorFilter(); };
+    Scene_Base.prototype.startFadeOut = function(duration, white) { this._fadeWhite = white ? 1 : 0; this._fadeOpacity = 0; this.updateColorFilter(); };
+    const mk = () => function() {};
+    const ctx = { global: { Scene_Base, ScreenSprite }, Scene_Base, ScreenSprite, Window_Selectable: mk(), Window_EquipSlot: mk(), Window_BattleLog: mk(), Sprite_Button: mk(), Graphics: {}, Rectangle: mk(), $dataSystem: {}, def: (o, n, f) => { if (!o[n]) o[n] = f; } };
+    vm.runInNewContext(compat.slice(start, end), ctx);
+
+    // SRD_GameOverCore: `this._fadeSprite.opacity === 0` once the fade-in lands.
+    const gameover = new Scene_Base();
+    gameover.startFadeIn(24, false);
+    assert.equal(gameover._fadeSprite.opacity, 255, 'reads the filter fade at its start');
+    gameover._fadeOpacity = 0;
+    assert.equal(gameover._fadeSprite.opacity, 0, 'and its end');
+    assert.equal(gameover._fadeSprite, gameover._fadeSprite, 'one sprite per scene');
+    assert.equal(gameover._fadeSprite.alpha, 0, 'the sprite itself never darkens anything');
+
+    // BraverAutosave: force 255 under a notice, then fadeInForTransfer lifts it.
+    const map = new Scene_Base();
+    map.createFadeSprite(false);
+    map._fadeSprite.opacity = 255;
+    assert.equal(map._fadeOpacity, 255, 'a write lands on the filter');
+    assert.deepEqual(map.blends.at(-1), [0, 255], 'and refreshes it');
+    map.startFadeIn(8, false);
+    map._fadeOpacity = 0;
+    assert.equal(map._fadeSprite.opacity, 0, 'the transfer fade-in brings it back down');
+    map._fadeSprite.opacity = 999;
+    assert.equal(map._fadeOpacity, 255, 'clamped like ScreenSprite');
+    map._fadeSprite.setWhite();
+    assert.equal(map._fadeWhite, 1, 'the tint goes to the filter too');
+
+    // An MV-bodied initialize nulls it; the next fade makes it again.
+    const nulled = new Scene_Base();
+    nulled._fadeSprite = null;
+    assert.equal(nulled._fadeSprite, null, 'an assignment is kept');
+    nulled.startFadeOut(8, true);
+    assert.ok(nulled._fadeSprite, 'startFadeOut recreates it as MV did');
+    assert.equal(nulled._fadeWhite, 1);
+    const own = { opacity: 7 };
+    nulled._fadeSprite = own;
+    assert.equal(nulled._fadeSprite, own, "a plugin's own sprite is kept as assigned");
 });
 
 test('an MV front-view battle still gets its hidden actor sprites, as MV made them', () => {

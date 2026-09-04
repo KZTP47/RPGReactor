@@ -2068,10 +2068,12 @@ Game_Action.prototype.apply = function(target) {
             const value = this.makeDamageValue(target, result.critical);
             this.executeDamage(target, value);
         }
-        for (const effect of this.item().effects) {
-            this.applyItemEffect(target, effect);
+        if (!result.dodged) {
+            for (const effect of this.item().effects) {
+                this.applyItemEffect(target, effect);
+            }
+            this.applyItemUserEffect(target);
         }
-        this.applyItemUserEffect(target);
     }
     this.updateLastTarget(target);
     ReactorEvents.emit("actionApplied", { action: this, subject: this.subject(), target, result });
@@ -2510,6 +2512,9 @@ Game_ActionResult.prototype.clear = function() {
     this.used = false;
     this.missed = false;
     this.evaded = false;
+    // Set by a damage step that turned the hit aside (a ninja's shadow);
+    // the item's effects then do not land. Nothing stock sets it.
+    this.dodged = false;
     this.physical = false;
     this.drain = false;
     this.critical = false;

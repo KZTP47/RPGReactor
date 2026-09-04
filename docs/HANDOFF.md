@@ -1,5 +1,160 @@
 # Handoff - 0.98.5 In Progress
 
+## 2026-09-04 — Light as a 3D model effect type (runtime `20260904.4`)
+
+Queued item (3) from the lighting roadmap, built in two forks on a
+contract I wrote first (`Reactor3D.readEffectLight`, `Reactor3D.effectLight`).
+Runtime: `holder.lights`, `fireEffectLight` (duration>0 timed, 0 toggles),
+state triggers in `updateTriggeredEffects`, `modelEffectLights()` into
+`collectLights`, `wantsLights3D` via `hasLiveEffectLights()`, `groundY` now
+absolute in both pools. Editor: Database3DEditor Light rows + preview body
+(`_playLightPreview`; the DB preview materials are NOT lit, so the model
+itself does not light up there — only the map view does, through
+`Reactor3D._editorEffectLights` collected in `MapEditor3D.updateEffectPlays`
+and appended in `LightingManager.feed3D`). Editor model lights are static
+(no flicker/pulse).
+
+Owner's review found the first cut sloppy: no presets, a "ball of light" on
+every kind, and Always killed the preview. All three fixed (runtime
+`20260904.5`): `RRMapLights.PRESETS` is the single preset table (tray +
+form), the core is a `roundLightTexture` sprite, the preview model is lit
+for real (`litMaterial` on its basics + `Reactor3D.packLightUniforms`, the
+standalone packer; shared uniforms saved/restored around the preview), and
+the triggered-preview simulation counts lights. Note for anyone touching
+`_lightPreviewLit`: the uniforms are GLOBAL — the map view's `syncLights`
+caches its ambient and only rewrites on change, so restore what you found
+or the map behind the database stays at the preview's 0.35.
+Then the owner asked for the rings/arrows on the light in the preview and
+noted the card's tabs did nothing: `_syncLightGizmo` (RRPoseRings3D +
+RRAxisArrows3D at the anchor, sized from `_previewSpan`), `_pickLightGizmo`
+/ `_dragLightGizmo` / `_endLightGizmoDrag` on the preview's pointer path
+(mode 'fxgizmo', before the anchor marker), the card's Rotate/Light tabs
+(`_lightCardSlidersHtml`, `.r3d-fxcard-lslider`) and `_syncLightControls`.
+Mascot pass (runtime `20260904.6`): the preview raycast missed skinned
+meshes (stale cached bounds — `_raycastPointer` now calls
+`computeBoundingBox/Sphere` on skinned meshes before the ray), so Place
+never bound a bone and the light sat on the origin while the walk played;
+bone-bound anchors always followed. Beams got `Reactor3D.beamBodyMaterial`
+(brightness floor 0.45 at any angle) in the pool and the preview. And
+`effectLight` aims in the MODEL frame × the part's pose delta
+(`effectAnchorQuaternion`), not the bone's rest axes — a bone's +Z points
+wherever the rig left it; `model-effects.test.cjs` pins rest-turn = no aim,
+model facing = aim, part swing = aim. Then (runtime `20260904.7`): the
+anchor marker syncs per frame in `_updateEffectPreview`; `_effectAnchorChoices`
+lists `skeleton.bones` of every SkinnedMesh (the mascot's joints are NOT
+`isBone`), the current part is always an option, and `syncWork` only reads
+the select when it offers the previous part (else the form detached a bone
+anchor on Play/Save); beam `width` = full thickness (half into `aim.w` and
+the body scale; 2D bar = width × tw), floor 0.005, default 0.08, laser 0.04.
+`scratchpad/db3d-mascot-harness.cjs` selects the mascot, adds a laser,
+places it on the head through `_placeEffectAnchor`, walks, samples the
+anchor world position per frame, and screenshots edge-on and side views.
+Verified: `scratchpad/db3d-light-harness.cjs` opens Database › 3D Models on
+the Demo copy, switches an effect to Light, applies the Laser preset, aims a
+spot down onto the console, sets Always, screenshots at 2200x1300 (resize
+the NW window over CDP; closing the floating card DESELECTS the effect). Not verified live: a model light in the running game and in
+the map view (the Demo has no light effect authored yet — author one on
+the computer model and playtest next).
+
+## 2026-09-04 — Lighting: panel r10, light commands, laser beam (runtime `20260904.3`)
+
+Owner asks, all landed: a proper Tag dropdown (`_tagControl`: map tags +
+preset tags + *New tag…* → inline field), XYZ position sliders and a
+rotation group, the prop-style rings/arrows on the selected light in 3D
+(`_syncGizmo3D`/`_pickGizmo3D`/`_dragGizmo3D` in LightingManager; picked in
+the tool's own capture-phase `_pointer3DDown` BEFORE `_lightNear`; rings
+yaw/pitch are `-light.yaw`/`-light.pitch` in the scene frame, same flip as
+`feed3D`), cards with the accent-strip header + footer (`.lit-*` classes at
+the end of styles.css — note `flex: 0 0 auto` on `.lit-section`, or the
+fixed-height dock squeezes the ambient/tray cards to lines), an editable
+light **ID** (`RRMapLights.rename`), the themed colour popover
+(`RRColourPopover`, `src/utils/ColourPopover.js`), the **laser beam** type
+(`width` field; runtime shader/body/2D bar by the runtime fork; editor
+2D bar, marker line, laser chip), and three event commands
+(`LightCommandEditor`; runtime `LightSwitch`/`TransformLight`/`AmbientLight`
+with overrides on `$gameMap`). Ambient vs Tint Screen: separate systems —
+the map ambient is a multiply darkness layer (2D) / material uniform (3D)
+fed from the sidecar, Tint Screen is MZ's ColorFilter on the spriteset base
+sprite; the flat lights sit above the base sprite on purpose so a tint does
+not dim them. `AmbientLight` is the event-driven counterpart.
+
+Verification: `scratchpad/editor-lighting-harness.cjs` (repo root) opens the
+editor on a Demo copy in the session scratchpad (`rsync` minus 3d/audio —
+the owner's editor holds the real Demo's lock), turns the tool on, selects
+`door-beam`, aims `mapEditor3D.view` at the gizmo, and drives an arrow and
+a yaw-ring drag through `Input.dispatchMouseEvent`. Pick a ring point at
+45° between axes — on an axis the arrow wins the pick. The three
+commands were then driven live (`scratchpad/light-commands-harness.cjs`:
+boots the Demo copy — symlink `audio/`, `3d/`, `movies/` from the real
+Demo into the copy or the title dies on a missing BGM — and calls
+`PluginManager.callCommand` for each): tag switch-off drops the torch from
+`nativeLights`, transform lands intensity/reach/colour, ambient eases
+0.22→0.9 over 60 frames, reset and toggle restore, `$gameMap` round-trips
+through JsonEx. Not verified live: a placed laser beam in the game.
+The owner reported the commands "did nothing" from the event editor. The
+cause was NOT a stale editor: the picker inserts with
+`reactorEditor.show(null, callback, command.reactor)` and the dialog read
+the name only off `command.parameters`, so a fresh insert returned null
+silently; my synthetic check had opened it with a saved command. Fixed
+(`nameHint`, the QuestCommandEditor pattern) and pinned in
+`light-commands.test.cjs`; `scratchpad/editor-cmd-harness.cjs` now drives
+the real path (event editor open → `commandList._reactorCommandEditor` →
+`show(null, cb, name)` → OK) for all three.
+
+## 2026-09-04 — BraverCoreEdits.js is gone; the compat layer carries it (runtime `20260904.2`)
+
+Owner asked whether the modded-corescript plugin could live in the layer
+proper. It can, as additive shims: `installModdedCorescriptCompatibility`
+in `reactor_mv_compat.js` (tier 2), test
+`editor/tests/mv-modded-corescript-compat.test.cjs`. One real hazard was
+found and closed on the way: `result.target` is a circular reference
+(actor → _result → target → actor when an actor heals itself from the
+menu) that JsonEx cannot encode; Braver's own plugins clear or stash it by
+hand (BraverMiscFixes, YEP_AbsorptionBarrier, YEP_BattleEngineCore), other
+MV games would not, so it is stored non-enumerable and `Object.keys`-based
+JsonEx never sees it. `result.dodged` moved into the stock engine as an
+inert hook (`Game_ActionResult.clear` resets it; Braver never did, so a
+target that dodged once stayed unhittable). The familiar-troop rule is
+gated on `window.Braver` + HIME's counter, list from `Braver.familiarTroops`
+when a game declares one. Project4's `js/plugins/BraverCoreEdits.js` is
+removed from disk and from both plugin lists (a copy sits in the session
+scratchpad only). Earlier notes below that say the plugin must load first
+are historical. Live check: `scratchpad/battle-harness.cjs` (boot → map →
+`BattleManager.setup(1)` → CTB phases → one `Game_Action.apply`).
+
+## 2026-09-04 — Braver: game over, and the black room explained (runtime `20260904.1`)
+
+The owner's next crash was `Scene_Gameover.update` in SRD_GameOverCore reading
+`this._fadeSprite.opacity`. MV scenes own a `ScreenSprite` for fades and
+plugins address it directly; MZ has `_fadeOpacity` on a colour filter and no
+sprite. The 09-03 gap-fill of `createFadeSprite` made a REAL ScreenSprite and
+added it to the scene, which BraverAutosave sets to 255 under its
+"Autosaving..." notice and expects `fadeInForTransfer` to lift — under MZ the
+filter faded and the sprite stayed black. That is the black room after the
+first battle (the post-battle transfer autosaves). Fix in the audit gap-fill
+block of `reactor_mv_compat.js`: `_fadeSprite` is a prototype accessor that
+lazily makes a ScreenSprite whose `opacity`/`setBlack`/`setWhite` route to
+`_fadeOpacity`/`_fadeWhite` + `updateColorFilter`, never on stage; assignments
+are kept; `startFadeIn/Out` recreate a nulled one. Second contract behind it:
+SRD runs `Scene_MenuBase.prototype.update` on the game-over scene, MZ's calls
+`updatePageButtons` — `Scene_Base` now has the guarded body.
+
+Verified with `scratchpad/gameover-harness.cjs` (repo root, gitignored, so it
+survives the session; own `--user-data-dir`, CDP):
+game over settles at phase 6 with fade 0 and the GAME OVER art on screen; a
+`requestMapLoadSave(40)` + `reserveTransfer` + `goto(Scene_Map)` shows the
+notice, fades 244 → 0 and the lit room renders. Harness lessons: connect to
+the `/json` page target whose url is `index.html` (the first target is
+pre-navigation and every evaluate returns a CDP error, not a value); set
+`SceneManager.isGameActive = () => true` for an unfocused window; a message
+on screen blocks `reserveTransfer`, so `$gameMessage.clear()` +
+`$gameMap._interpreter.clear()` or go through `SceneManager.goto(Scene_Map)`;
+`drawImage` from the WebGL canvas reads back black — judge pixels from
+`Page.captureScreenshot`, never from a 2D copy.
+
+Tests: 2,502 pass. Next in Braver: the real post-battle flow (victory →
+transfer → autosave) end to end, then save/load through the storage bridge.
+
 ## 2026-09-03 — Star Shift Legacy as a second MV corpus (runtime `20260903.1`)
 
 `template/Star-Shift Legacy` (untracked, like the other Star Shift copies;

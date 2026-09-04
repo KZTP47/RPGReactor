@@ -5744,6 +5744,36 @@ Reactor3D.coneLightCanvas = function() {
 };
 
 /**
+ * A beam's falloff picture: a bar of constant width with a bright core and
+ * soft shoulders, fading only gently along its length. Painted on a quad
+ * `2 * width` across and `radius` along, source at the middle of the bottom
+ * edge like the cone's.
+ */
+Reactor3D.beamLightCanvas = function() {
+    if (this._beamLightCanvas) return this._beamLightCanvas;
+    const size = 256;
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = size;
+    const context = canvas.getContext("2d");
+    const image = context.createImageData(size, size);
+    for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+            const fromSource = 1 - (y + 0.5) / size;
+            const across = Math.abs((x + 0.5) / size - 0.5) * 2;
+            const rim = 0.5 * (1 + Math.cos(Math.min(across, 1) * Math.PI));
+            const core = Math.min(1, rim * rim + (across < 0.35 ? 0.35 : 0));
+            const reach = Math.sqrt(Math.max(0, 1 - fromSource));
+            const at = (y * size + x) * 4;
+            image.data[at] = image.data[at + 1] = image.data[at + 2] = 255;
+            image.data[at + 3] = Math.round(Math.min(1, core) * reach * 255);
+        }
+    }
+    context.putImageData(image, 0, 0);
+    this._beamLightCanvas = canvas;
+    return canvas;
+};
+
+/**
  * One mesh holding every light of one shape.
  *
  * Buffers are allocated once at their largest and only the used part is drawn,
@@ -5884,7 +5914,8 @@ Reactor3D.MapScene.prototype.syncLights = function(focus) {
     cone.count = 0;
 
     for (const light of declared) {
-        const spot = light.type === Reactor3D.LIGHT_SPOT;
+        const beam = light.type === Reactor3D.LIGHT_BEAM;
+        const spot = light.type === Reactor3D.LIGHT_SPOT || beam;
         const pool = spot ? cone : round;
         if (pool.count >= Reactor3D.MAX_LIGHTS) continue;
         const radius = light.radius > 0 ? light.radius : 0;
@@ -5919,7 +5950,9 @@ Reactor3D.MapScene.prototype.syncLights = function(focus) {
                 Math.round(light.x), Math.round(light.y)));
         // Up the wall along the axis its courses were stacked on, so a glow
         // and the sign it comes from cannot part company.
-        const lift = facade ? facade.lift : 0;
+        // A caller that names the ground names the whole height: a light
+        // riding a model's anchor is already where it is.
+        const lift = facade && light.groundY === undefined ? facade.lift : 0;
         const y = standsOn + lift + 0.02 + at * 0.0005;
         // The middle across, and the southern edge along — the same place a
         // character or a prop on this cell stands. A pool centred half a tile
@@ -5956,7 +5989,10 @@ Reactor3D.MapScene.prototype.syncLights = function(focus) {
             const beamReach = Reactor3D.LIGHT_OCCLUSION
                 ? Reactor3D.clampConeReach(light.x, light.y, standsOn + 0.5, aim.x, aim.z, radius)
                 : radius;
-            const half = Math.tan(Math.min(angle, Math.PI * 0.49) / 2) * beamReach;
+            // A beam is as wide at the source as at the tip.
+            const half = beam
+                ? (light.width === undefined ? Reactor3D.DEFAULT_BEAM_WIDTH : light.width)
+                : Math.tan(Math.min(angle, Math.PI * 0.49) / 2) * beamReach;
             let alongU = aim.dot(right);
             let alongV = aim.dot(up);
             const reach = Math.hypot(alongU, alongV) || 1;
@@ -5970,7 +6006,12 @@ Reactor3D.MapScene.prototype.syncLights = function(focus) {
             // the middle of the beam. Collapsed to a point the lit half is one
             // triangle, which has no seam to show, and the other is degenerate
             // and draws nothing.
-            corners = [
+            corners = beam ? [
+                [tipU - sideU * half, tipV - sideV * half],
+                [tipU + sideU * half, tipV + sideV * half],
+                [sideU * half, sideV * half],
+                [-sideU * half, -sideV * half]
+            ] : [
                 [tipU - sideU * half, tipV - sideV * half],
                 [tipU + sideU * half, tipV + sideV * half],
                 [0, 0],
@@ -5985,7 +6026,7 @@ Reactor3D.MapScene.prototype.syncLights = function(focus) {
 
         // Both apex corners take the middle of the source edge, so the one
         // triangle that draws maps the picture symmetrically about its axis.
-        const uvs = spot
+        const uvs = spot && !beam
             ? [[0, 0], [1, 0], [0.5, 1], [0.5, 1]]
             : [[0, 0], [1, 0], [1, 1], [0, 1]];
         const rgb = light.colour === undefined ? 0xffffff : light.colour;
@@ -6060,13 +6101,15 @@ Reactor3D.MapScene.prototype.syncVolumeLights = function(declared, focus) {
     for (const light of list) {
         const radius = light.radius > 0 ? light.radius : 0;
         if (!(radius > 0) || count >= max) continue;
-        const spot = light.type === Reactor3D.LIGHT_SPOT;
+        const beam = light.type === Reactor3D.LIGHT_BEAM;
+        const spot = light.type === Reactor3D.LIGHT_SPOT || beam;
+        const width = light.width === undefined ? Reactor3D.DEFAULT_BEAM_WIDTH : light.width;
         const facade = Reactor3D.facadeAt(Math.round(light.x), Math.round(light.y));
         const standsOn = light.groundY !== undefined
             ? light.groundY
             : (facade ? facade.height
                 : Reactor3D.surfaceHeightAt(mapData, Math.round(light.x), Math.round(light.y)));
-        const lift = facade ? facade.lift : 0;
+        const lift = facade && light.groundY === undefined ? facade.lift : 0;
         const height = light.height === undefined ? Reactor3D.PLUGIN_LIGHT_HEIGHT : light.height;
         const x = light.x + 0.5;
         const y = standsOn + lift + height;
@@ -6101,14 +6144,17 @@ Reactor3D.MapScene.prototype.syncVolumeLights = function(declared, focus) {
 
         const at = count * 4;
         pos[at] = x; pos[at + 1] = y; pos[at + 2] = z; pos[at + 3] = radius;
-        col[at] = r * gain; col[at + 1] = g * gain; col[at + 2] = b * gain; col[at + 3] = spot ? 1 : 0;
-        aim[at] = ax; aim[at + 1] = ay; aim[at + 2] = az; aim[at + 3] = cosHalf;
+        // The colour's w says the shape: 0 a sphere, 1 a cone, 2 a beam. The
+        // aim's w is what that shape needs — the cone's cosine of its half
+        // angle, the beam's half width in tiles.
+        col[at] = r * gain; col[at + 1] = g * gain; col[at + 2] = b * gain; col[at + 3] = beam ? 2 : spot ? 1 : 0;
+        aim[at] = ax; aim[at + 1] = ay; aim[at + 2] = az; aim[at + 3] = beam ? width * 0.5 : cosHalf;
         // Bodies are counted separately so the pool stays packed when a
         // light asks not to be seen (a carried torch); `trim` below takes
         // the body count, not the light count.
         if (light.body !== false) {
             bodies.place(bodyCount, {
-                x, y, z, radius, spot, r, g, b, angle, ax, ay, az,
+                x, y, z, radius, spot, beam, width, r, g, b, angle, ax, ay, az,
                 intensity: light.intensity === undefined ? 1 : light.intensity
             });
             bodyCount++;
@@ -6154,8 +6200,9 @@ Reactor3D.MapScene.prototype.lightBodies = function() {
     const glows = [];
     const cores = [];
     const cones = [];
+    const beams = [];
     const bodies = {
-        group, glows, cores, cones,
+        group, glows, cores, cones, beams,
         place(index, light) {
             let core = cores[index];
             if (!core) {
@@ -6173,7 +6220,8 @@ Reactor3D.MapScene.prototype.lightBodies = function() {
             }
             core.visible = true;
             core.position.set(light.x, light.y, light.z);
-            const coreSize = Math.min(light.radius, light.spot ? 0.9 : 0.7);
+            // A beam's source is a pinpoint, not a ball around the emitter.
+            const coreSize = light.beam ? Math.max(light.width * 2, 0.06) : Math.min(light.radius, light.spot ? 0.9 : 0.7);
             core.scale.set(coreSize, coreSize, 1);
             core.material.color.setRGB(light.r, light.g, light.b);
             core.material.opacity = Math.min(1, Reactor3D.VOLUME_GLOW * light.intensity);
@@ -6186,7 +6234,25 @@ Reactor3D.MapScene.prototype.lightBodies = function() {
                 glows[index] = glow;
             }
             let cone = cones[index];
-            if (light.spot) {
+            let beamBody = beams[index];
+            if (light.beam) {
+                glow.visible = false;
+                if (cone) cone.visible = false;
+                if (!beamBody) {
+                    beamBody = new THREE.Mesh(Reactor3D.beamBodyGeometry(), Reactor3D.beamBodyMaterial());
+                    beamBody.renderOrder = 12;
+                    group.add(beamBody);
+                    beams[index] = beamBody;
+                }
+                beamBody.visible = true;
+                beamBody.position.set(light.x, light.y, light.z);
+                beamBody.scale.set(light.width * 0.5, light.radius, light.width * 0.5);
+                aimVector.set(light.ax, light.ay, light.az).normalize();
+                beamBody.quaternion.setFromUnitVectors(down, aimVector);
+                beamBody.material.uniforms.colour.value.setRGB(light.r, light.g, light.b);
+                beamBody.material.uniforms.strength.value = Reactor3D.VOLUME_GLOW * 1.2 * light.intensity;
+            } else if (light.spot) {
+                if (beamBody) beamBody.visible = false;
                 glow.visible = false;
                 if (!cone) {
                     cone = new THREE.Mesh(Reactor3D.coneBodyGeometry(), Reactor3D.lightBodyMaterial());
@@ -6204,6 +6270,7 @@ Reactor3D.MapScene.prototype.lightBodies = function() {
                 cone.material.uniforms.strength.value = Reactor3D.VOLUME_GLOW * 0.5 * light.intensity;
             } else {
                 if (cone) cone.visible = false;
+                if (beamBody) beamBody.visible = false;
                 glow.visible = true;
                 glow.position.set(light.x, light.y, light.z);
                 // The haze is smaller than the reach: the reach is where the
@@ -6218,9 +6285,10 @@ Reactor3D.MapScene.prototype.lightBodies = function() {
             for (let i = count; i < cores.length; i++) cores[i].visible = false;
             for (let i = count; i < glows.length; i++) glows[i].visible = false;
             for (let i = count; i < cones.length; i++) if (cones[i]) cones[i].visible = false;
+            for (let i = count; i < beams.length; i++) if (beams[i]) beams[i].visible = false;
         },
         dispose() {
-            for (const list of [cores, glows, cones]) {
+            for (const list of [cores, glows, cones, beams]) {
                 for (const body of list) {
                     if (!body) continue;
                     if (body.parent) body.parent.remove(body);
@@ -6239,6 +6307,16 @@ Reactor3D.MapScene.prototype.lightBodies = function() {
 Reactor3D.sphereBodyGeometry = function() {
     if (!this._sphereBody) this._sphereBody = new THREE.SphereGeometry(1, 24, 16);
     return this._sphereBody;
+};
+
+/** A unit cylinder starting at the origin and running along -Y; scaled to a beam's width and length. */
+Reactor3D.beamBodyGeometry = function() {
+    if (!this._beamBody) {
+        const tube = new THREE.CylinderGeometry(1, 1, 1, 24, 1, true);
+        tube.translate(0, -0.5, 0);
+        this._beamBody = tube;
+    }
+    return this._beamBody;
 };
 
 /** A unit cone with its apex at the origin, opening along -Y; scaled and aimed per light. */
@@ -6297,6 +6375,34 @@ Reactor3D.lightBodyMaterial = function() {
         side: THREE.DoubleSide,
         fog: false
     });
+};
+
+/**
+ * The body of a beam. The sphere and cone material fades to nothing at the
+ * silhouette, which reads as a soft ball or a glow cone — and makes a long
+ * thin cylinder vanish whenever it is seen along its length, since every
+ * side normal is then square to the eye. A laser keeps a floor of
+ * brightness at any angle, softens only mildly at its edge, and fades
+ * linearly along its length like the light it shows.
+ */
+Reactor3D.beamBodyMaterial = function() {
+    const material = this.lightBodyMaterial();
+    material.fragmentShader = [
+        "uniform vec3 colour;",
+        "uniform float strength;",
+        "varying float vAlong;",
+        "varying vec3 vNormalW;",
+        "varying vec3 vToEye;",
+        "void main() {",
+        "\tfloat facing = abs(dot(normalize(vNormalW), normalize(vToEye)));",
+        "\tfloat soft = mix(0.45, 1.0, pow(facing, 0.5));",
+        "\tfloat along = 1.0 - vAlong;",
+        "\tfloat a = strength * soft * along;",
+        "\tgl_FragColor = vec4(colour * a, a);",
+        "}"
+    ].join("\n");
+    material.needsUpdate = true;
+    return material;
 };
 
 Reactor3D.MapScene.prototype.clear = function() {
@@ -6574,6 +6680,17 @@ Reactor3D.screenScaleAt = function(camera, x, y, z) {
 
 Reactor3D.LIGHT_POINT = "point";
 Reactor3D.LIGHT_SPOT = "spot";
+// A laser: a constant-width cylinder of light `radius` tiles long and
+// `width` tiles across, aimed by yaw and pitch exactly as a spot is.
+Reactor3D.LIGHT_BEAM = "beam";
+Reactor3D.DEFAULT_BEAM_LENGTH = 8;
+// A beam's full thickness in tiles: the shader and the body take half.
+Reactor3D.DEFAULT_BEAM_WIDTH = 0.08;
+
+/** Whether a light has a direction to aim: a cone or a beam. */
+Reactor3D.lightIsAimed = function(light) {
+    return !!light && (light.type === this.LIGHT_SPOT || light.type === this.LIGHT_BEAM);
+};
 
 /** The spread of a cone whose plugin does not say, in degrees. */
 Reactor3D.DEFAULT_CONE_ANGLE = 70;
@@ -6774,7 +6891,17 @@ Reactor3D.lightGlsl = function(shadows, taps) {
         "\t\tif (fall <= 0.0) continue;",
         "\t\tfall *= fall;",
         "\t\tvec4 lc = rrLightColor[i];",
-        "\t\tif (lc.w > 0.5) {",
+        "\t\tif (lc.w > 1.5) {",
+        // A beam: how far along the axis the point sits and how far off it.
+        // Inside the width it is lit at full, out to the length, with only a
+        // gentle fade along — a laser stays bright to its end.
+        "\t\t\tvec4 aim = rrLightAim[i];",
+        "\t\t\tfloat t = dot(d, aim.xyz);",
+        "\t\t\tif (t < 0.0 || t > lp.w) continue;",
+        "\t\t\tfloat perp = length(d - aim.xyz * t);",
+        "\t\t\tfall = smoothstep(aim.w, aim.w * 0.35, perp) * sqrt(max(0.0, 1.0 - t / max(lp.w, 0.001)));",
+        "\t\t\tif (fall <= 0.0) continue;",
+        "\t\t} else if (lc.w > 0.5) {",
         "\t\t\tvec4 aim = rrLightAim[i];",
         "\t\t\tfloat c = dot(d / max(dist, 0.0001), aim.xyz);",
         // Soft at the rim rather than a cut-out cone: full inside the inner
@@ -6796,6 +6923,60 @@ Reactor3D.LIGHT_GLSL = Reactor3D.lightGlsl(false);
  * every fragment, and the diffuse colour multiplied by ambient plus every
  * light in reach — before the texel, so `texel * base * (ambient + lights)`.
  */
+/**
+ * Pack compositor lights straight into the shared uniforms: no map, no
+ * facades, no view culling. What a preview outside a MapScene needs — the
+ * 3D database lights a model with the game's own shader this way. Lights
+ * are placed by the scene packer's rule (x + 0.5, ground + height, y + 1),
+ * with `groundY` absolute. Returns how many were packed; the caller keeps
+ * the previous ambient and count if it means to put them back.
+ */
+Reactor3D.packLightUniforms = function(lights, ambient) {
+    const uniforms = this.lightUniforms();
+    const pos = uniforms.rrLightPos.value;
+    const col = uniforms.rrLightColor.value;
+    const aim = uniforms.rrLightAim.value;
+    uniforms.rrLightShadow.value.fill(-1);
+    const level = ambient && ambient.intensity !== undefined ? ambient.intensity : 1;
+    const colour = ambient && ambient.colour !== undefined ? ambient.colour : 0xffffff;
+    const shared = uniforms.rrAmbient.value;
+    shared[0] = (((colour >> 16) & 255) / 255) * level;
+    shared[1] = (((colour >> 8) & 255) / 255) * level;
+    shared[2] = ((colour & 255) / 255) * level;
+    let count = 0;
+    for (const light of Array.isArray(lights) ? lights : []) {
+        if (!light || !(light.radius > 0) || count >= this.SHADER_LIGHTS) continue;
+        const spot = light.type === this.LIGHT_SPOT;
+        const beam = light.type === this.LIGHT_BEAM;
+        const x = light.x + 0.5;
+        const y = (light.groundY || 0) + (light.height || 0);
+        const z = light.y + 1;
+        const rgb = light.colour === undefined ? 0xffffff : light.colour;
+        const gain = (light.intensity === undefined ? 1 : light.intensity) * this.LIGHT_GAIN * this.VOLUME_LIGHT_GAIN;
+        let ax = 0, ay = -1, az = 0, shape = -1;
+        if (spot || beam) {
+            const yaw = ((light.yaw || 0) * Math.PI) / 180;
+            const pitch = ((light.pitch || 0) * Math.PI) / 180;
+            ax = Math.sin(yaw) * Math.cos(pitch);
+            ay = Math.sin(pitch);
+            az = Math.cos(yaw) * Math.cos(pitch);
+            shape = beam
+                ? (light.width === undefined ? this.DEFAULT_BEAM_WIDTH : light.width) * 0.5
+                : Math.cos((Math.min(light.angle === undefined ? this.DEFAULT_CONE_ANGLE : light.angle, 178) * Math.PI) / 360);
+        }
+        const at = count * 4;
+        pos[at] = x; pos[at + 1] = y; pos[at + 2] = z; pos[at + 3] = light.radius;
+        col[at] = (((rgb >> 16) & 255) / 255) * gain;
+        col[at + 1] = (((rgb >> 8) & 255) / 255) * gain;
+        col[at + 2] = ((rgb & 255) / 255) * gain;
+        col[at + 3] = beam ? 2 : spot ? 1 : 0;
+        aim[at] = ax; aim[at + 1] = ay; aim[at + 2] = az; aim[at + 3] = shape;
+        count++;
+    }
+    uniforms.rrLightCount.value = count;
+    return count;
+};
+
 Reactor3D.injectLightShader = function(shader, renderer) {
     const uniforms = this.lightUniforms();
     for (const key of Object.keys(uniforms)) shader.uniforms[key] = uniforms[key];
@@ -8155,20 +8336,37 @@ Reactor3D.wantsLights3D = function(mapData) {
     // Native lights placed on the map are themselves the opt-in: an author
     // who put a lamp somewhere wants to see it lit.
     if (this.readMapLights(mapData).length) return true;
-    return !!(mapData && mapData.meta && mapData.meta["3d lights"]);
+    if (mapData && mapData.meta && mapData.meta["3d lights"]) return true;
+    // So is a placed model whose light effect is burning right now.
+    return this.hasLiveEffectLights();
 };
 
 /** How dark an unlit corner of a lit map is. */
 Reactor3D.ambientFor = function(mapData) {
     const sidecar = mapData && mapData.reactor3d;
     const lighting = (sidecar && sidecar.lighting) || {};
-    return {
+    const authored = {
         intensity: lighting.ambient === undefined ? 0.25 : lighting.ambient,
         // The sidecar stores "#rrggbb"; the compositors bit-shift a number.
         // Passed through raw, the string shifted as NaN and the ambient
         // multiplied the whole world by black.
         colour: this.parseColour(
             lighting.ambientColour === undefined ? 0xffffff : lighting.ambientColour)
+    };
+    // An AmbientLight command eases the map away from what it authored.
+    const override = this.currentLightOverrides() && $gameMap._reactorAmbientOverride;
+    if (!override || override.mapId !== this.currentLightMapId()) return authored;
+    const frame = typeof Graphics !== "undefined" && Graphics.frameCount ? Graphics.frameCount : 0;
+    const t = this.overrideProgress(override, frame);
+    const from = override.from || {};
+    const to = override.to || {};
+    const fromI = from.intensity === undefined ? authored.intensity : from.intensity;
+    const toI = to.intensity === undefined ? fromI : to.intensity;
+    const fromC = from.colour === undefined ? authored.colour : from.colour;
+    const toC = to.colour === undefined ? fromC : to.colour;
+    return {
+        intensity: fromI + (toI - fromI) * t,
+        colour: this.mixColour(fromC, toC, t)
     };
 };
 
@@ -8189,6 +8387,16 @@ Reactor3D.collectLights = function() {
         if (!this._nativeWarned) {
             this._nativeWarned = true;
             console.warn("Reactor3D: the map's native lights failed to resolve.", error);
+        }
+    }
+    // Then the lights placed models carry as effects, at their anchors.
+    try {
+        const carried = this.modelEffectLights();
+        if (carried.length) found.push(...carried);
+    } catch (error) {
+        if (!this._effectLightWarned) {
+            this._effectLightWarned = true;
+            console.warn("Reactor3D: a model's light effects failed to resolve.", error);
         }
     }
     for (const name of Object.keys(this.LightShims)) {
@@ -8246,7 +8454,8 @@ Reactor3D.readMapLights = function(mapData) {
         if (!entry || typeof entry !== "object") continue;
         list.push({
             id: entry.id ? String(entry.id) : "light" + (i + 1),
-            type: entry.type === "spot" ? this.LIGHT_SPOT : this.LIGHT_POINT,
+            type: entry.type === "spot" ? this.LIGHT_SPOT
+                : entry.type === "beam" ? this.LIGHT_BEAM : this.LIGHT_POINT,
             x: number(entry.x, 0, -10000, 10000),
             y: number(entry.y, 0, -10000, 10000),
             height: number(entry.height, 0, 0, 512),
@@ -8254,8 +8463,11 @@ Reactor3D.readMapLights = function(mapData) {
             // Degrees above level: a spot on a ceiling aims down at -90.
             pitch: number(entry.pitch, 0, -90, 90),
             radius: number(entry.radius,
-                entry.type === "spot" ? this.DEFAULT_CONE_LENGTH : 3, 0.1, 200),
+                entry.type === "spot" ? this.DEFAULT_CONE_LENGTH
+                    : entry.type === "beam" ? this.DEFAULT_BEAM_LENGTH : 3, 0.1, 200),
             angle: number(entry.angle, this.DEFAULT_CONE_ANGLE, 1, 179),
+            // A beam's thickness in tiles; a cone and a sphere carry it unused.
+            width: number(entry.width, this.DEFAULT_BEAM_WIDTH, 0.005, 5),
             color: this.parseColour(entry.color !== undefined ? entry.color : entry.colour),
             intensity: number(entry.intensity, 1, 0, 4),
             occlude: entry.occlude !== false,
@@ -8321,6 +8533,188 @@ Reactor3D.setLightOn = function(key, on) {
     $gameMap._reactorLightStates[String(key)] = !!on;
 };
 
+/**
+ * Runtime overrides from the TransformLight and AmbientLight commands: a
+ * light (by id or "#tag") or the map's ambient eased from where it was to
+ * where the command sent it. Carried on Game_Map as plain objects so a save
+ * keeps a half-finished ease; stamped with the map they were made on, so a
+ * block from another map is ignored rather than applied to a light that
+ * happens to share the id.
+ */
+Reactor3D.LIGHT_OVERRIDE_FIELDS = ["x", "y", "height", "yaw", "pitch", "radius", "angle", "width", "intensity", "color"];
+
+Reactor3D.currentLightMapId = function() {
+    return typeof $gameMap !== "undefined" && $gameMap && $gameMap.mapId ? $gameMap.mapId() : 0;
+};
+
+Reactor3D.currentLightOverrides = function() {
+    if (typeof $gameMap === "undefined" || !$gameMap) return null;
+    if (!$gameMap._reactorLightOverrides) $gameMap._reactorLightOverrides = {};
+    return $gameMap._reactorLightOverrides;
+};
+
+Reactor3D.overrideProgress = function(block, frame) {
+    if (!block) return 1;
+    const duration = Number(block.duration) || 0;
+    if (duration <= 0) return 1;
+    return Math.max(0, Math.min(1, (frame - (Number(block.start) || 0)) / duration));
+};
+
+Reactor3D.mixColour = function(a, b, t) {
+    if (t >= 1) return b;
+    if (t <= 0) return a;
+    const ch = shift => {
+        const from = (a >> shift) & 255;
+        const to = (b >> shift) & 255;
+        return Math.round(from + (to - from) * t) & 255;
+    };
+    return (ch(16) << 16) | (ch(8) << 8) | ch(0);
+};
+
+/** The override block a light reads: its own id first, then its tag's. */
+Reactor3D.lightOverrideFor = function(light) {
+    const overrides = this.currentLightOverrides();
+    if (!overrides) return null;
+    const mapId = this.currentLightMapId();
+    const own = overrides[light.id];
+    const tagged = light.tag ? overrides["#" + light.tag] : null;
+    const ownOk = own && own.mapId === mapId ? own : null;
+    const tagOk = tagged && tagged.mapId === mapId ? tagged : null;
+    if (!ownOk && !tagOk) return null;
+    return { own: ownOk, tag: tagOk };
+};
+
+/**
+ * A light's overridden fields at this frame, eased; fields no command has
+ * touched are absent. Colour eases per channel.
+ */
+Reactor3D.liveLightValues = function(light, frame) {
+    const blocks = this.lightOverrideFor(light);
+    if (!blocks) return {};
+    const out = {};
+    // The tag's values first, then the light's own on top: id wins per field.
+    for (const block of [blocks.tag, blocks.own]) {
+        if (!block) continue;
+        const t = this.overrideProgress(block, frame);
+        const from = block.from || {};
+        const to = block.to || {};
+        for (const key of this.LIGHT_OVERRIDE_FIELDS) {
+            if (to[key] === undefined) continue;
+            const start = from[key] === undefined ? light[key] : from[key];
+            out[key] = key === "color"
+                ? this.mixColour(start, to[key], t)
+                : start + (to[key] - start) * t;
+        }
+    }
+    return out;
+};
+
+/** Every authored light a command target names: one id, or all of a tag. */
+Reactor3D.lightsTargeted = function(target) {
+    const key = String(target || "").trim();
+    if (!key) return [];
+    const map = typeof $dataMap !== "undefined" ? $dataMap : null;
+    const authored = this.readMapLights(map);
+    if (key.charAt(0) === "#") {
+        const tag = key.slice(1);
+        return authored.filter(light => light.tag === tag);
+    }
+    return authored.filter(light => light.id === key);
+};
+
+/** Turn a light, or every light of a tag, on, off or over. */
+Reactor3D.switchLight = function(target, state) {
+    const key = String(target || "").trim();
+    if (!key) return;
+    const mode = String(state || "on").toLowerCase();
+    if (mode === "toggle") {
+        const first = this.lightsTargeted(key)[0];
+        this.setLightOn(key, first ? !this.lightIsOn(first) : true);
+        return;
+    }
+    this.setLightOn(key, mode !== "off");
+};
+
+/**
+ * Ease a light, or every light of a tag, to new values over `duration`
+ * frames. `values` holds any of LIGHT_OVERRIDE_FIELDS; a field left out is
+ * left alone. Colour may be "#rrggbb" or a number. `values === null`
+ * clears the target's overrides.
+ */
+Reactor3D.transformLight = function(target, values, duration) {
+    const key = String(target || "").trim();
+    const overrides = this.currentLightOverrides();
+    if (!key || !overrides) return;
+    if (values === null) {
+        delete overrides[key];
+        return;
+    }
+    const frame = typeof Graphics !== "undefined" && Graphics.frameCount ? Graphics.frameCount : 0;
+    const previous = overrides[key] && overrides[key].mapId === this.currentLightMapId() ? overrides[key] : null;
+    const byId = key.charAt(0) !== "#";
+    const sample = byId ? this.lightsTargeted(key)[0] || null : null;
+    const live = sample ? this.liveLightValues(sample, frame) : null;
+    const from = {};
+    const to = {};
+    for (const field of this.LIGHT_OVERRIDE_FIELDS) {
+        if (!values || values[field] === undefined || values[field] === null || values[field] === "") continue;
+        const value = field === "color" ? this.parseColour(values[field]) : Number(values[field]);
+        if (field !== "color" && !Number.isFinite(value)) continue;
+        to[field] = value;
+        // Where the ease starts. One light: exactly what it shows now, its
+        // tag's override included. A tag: wherever this tag's previous ease
+        // had reached, so a re-aimed ease continues rather than snaps; a
+        // field no previous ease touched starts from each light's own
+        // authored value, which `liveLightValues` reads when `from` is absent.
+        if (live && live[field] !== undefined) {
+            from[field] = live[field];
+        } else if (previous && previous.to && previous.to[field] !== undefined) {
+            const t = this.overrideProgress(previous, frame);
+            const start = previous.from && previous.from[field] !== undefined ? previous.from[field] : undefined;
+            if (start !== undefined) {
+                from[field] = field === "color"
+                    ? this.mixColour(start, previous.to[field], t)
+                    : start + (previous.to[field] - start) * t;
+            } else if (t >= 1) {
+                from[field] = previous.to[field];
+            }
+        }
+    }
+    if (!Object.keys(to).length) return;
+    overrides[key] = {
+        mapId: this.currentLightMapId(),
+        from, to, start: frame,
+        duration: Math.max(0, Math.round(Number(duration) || 0))
+    };
+};
+
+/** Ease the map's ambient light to a new level and colour; `values === null` restores the authored ambient. */
+Reactor3D.setMapAmbient = function(values, duration) {
+    if (typeof $gameMap === "undefined" || !$gameMap) return;
+    if (values === null) {
+        delete $gameMap._reactorAmbientOverride;
+        return;
+    }
+    const map = typeof $dataMap !== "undefined" ? $dataMap : null;
+    const current = this.ambientFor(map);
+    const frame = typeof Graphics !== "undefined" && Graphics.frameCount ? Graphics.frameCount : 0;
+    const to = {};
+    if (values && values.intensity !== undefined && values.intensity !== null && values.intensity !== "") {
+        const n = Number(values.intensity);
+        if (Number.isFinite(n)) to.intensity = Math.max(0, Math.min(1, n));
+    }
+    if (values && values.color !== undefined && values.color !== null && values.color !== "") {
+        to.colour = this.parseColour(values.color);
+    }
+    if (!Object.keys(to).length) return;
+    $gameMap._reactorAmbientOverride = {
+        mapId: this.currentLightMapId(),
+        from: { intensity: current.intensity, colour: current.colour },
+        to, start: frame,
+        duration: Math.max(0, Math.round(Number(duration) || 0))
+    };
+};
+
 Reactor3D.lightIsOn = function(light) {
     const states = typeof $gameMap !== "undefined" && $gameMap
         && $gameMap._reactorLightStates;
@@ -8340,6 +8734,31 @@ Reactor3D.lightIsOn = function(light) {
  * on the way out because the scene aims anticlockwise from south while the
  * schema (and the screen) run clockwise — the same flip the shims make.
  */
+/**
+ * A light's pulse and flicker for one frame: arithmetic on the frame
+ * counter, deterministic, so a save replays identically and both the map's
+ * lights and a model's anchored lights breathe the same way. Two
+ * incommensurate sines beat irregularly enough to read as flame without a
+ * random source. Returns the radius and intensity to draw.
+ */
+Reactor3D.animateLight = function(spec, frame, seedIndex, radius, intensity) {
+    const scratch = this._animateLightScratch || (this._animateLightScratch = { radius: 0, intensity: 0 });
+    if (spec.pulse) {
+        const t = (frame % spec.pulse.period) / spec.pulse.period;
+        const breathe = 0.5 - 0.5 * Math.cos(t * Math.PI * 2);
+        radius *= spec.pulse.min + (spec.pulse.max - spec.pulse.min) * breathe;
+    }
+    if (spec.flicker) {
+        const seed = (seedIndex || 0) * 13.7;
+        const jitter = Math.sin(frame * 0.31 + seed) * Math.sin(frame * 0.127 + seed * 1.7);
+        intensity *= 1 - spec.flicker * (0.25 + 0.25 * jitter);
+        radius *= 1 - spec.flicker * 0.06 * jitter;
+    }
+    scratch.radius = radius;
+    scratch.intensity = intensity;
+    return scratch;
+};
+
 Reactor3D.nativeLights = function(mapData) {
     const map = mapData || (typeof $dataMap !== "undefined" ? $dataMap : null);
     const authored = this.readMapLights(map);
@@ -8373,29 +8792,31 @@ Reactor3D.nativeLights = function(mapData) {
             // genuinely wants a fixed bearing while it travels sets
             // `followFacing: false`. Only cones care: a point light has no
             // direction to get wrong.
-            if (light.type === this.LIGHT_SPOT && light.followFacing && carrier.direction) {
+            if (this.lightIsAimed(light) && light.followFacing && carrier.direction) {
                 facing = this.carrierFacingYaw(carrier);
             }
         }
-        let radius = light.radius;
-        let intensity = light.intensity;
-        if (light.pulse) {
-            const t = (frame % light.pulse.period) / light.pulse.period;
-            const breathe = 0.5 - 0.5 * Math.cos(t * Math.PI * 2);
-            radius *= light.pulse.min + (light.pulse.max - light.pulse.min) * breathe;
-        }
-        if (light.flicker) {
-            // Two incommensurate sines beat irregularly enough to read as
-            // flame without a random source, so a save replays identically.
-            const seed = i * 13.7;
-            const jitter = Math.sin(frame * 0.31 + seed) * Math.sin(frame * 0.127 + seed * 1.7);
-            intensity *= 1 - light.flicker * (0.25 + 0.25 * jitter);
-            radius *= 1 - light.flicker * 0.06 * jitter;
-        }
+        // An event command may have moved, turned, resized or recoloured
+        // the light since it was authored; the override eases in over its
+        // duration and the flicker and pulse ride on top of the result.
+        const live = this.liveLightValues(light, frame);
+        if (live.x !== undefined) x = live.x + (x - light.x);
+        if (live.y !== undefined) y = live.y + (y - light.y);
+        const height = live.height !== undefined ? live.height : light.height;
+        const yaw = live.yaw !== undefined ? live.yaw : light.yaw;
+        const pitch = live.pitch !== undefined ? live.pitch : light.pitch;
+        const angle = live.angle !== undefined ? live.angle : light.angle;
+        const width = live.width !== undefined ? live.width : light.width;
+        const colour = live.color !== undefined ? live.color : light.color;
+        let radius = live.radius !== undefined ? live.radius : light.radius;
+        let intensity = live.intensity !== undefined ? live.intensity : light.intensity;
+        const animated = this.animateLight(light, frame, i, radius, intensity);
+        radius = animated.radius;
+        intensity = animated.intensity;
         out.push({
-            id: light.id, type: light.type, x: x, y: y, height: light.height,
-            radius: radius, colour: light.color, intensity: intensity,
-            angle: light.angle, yaw: -(light.yaw + facing), pitch: light.pitch, occlude: light.occlude,
+            id: light.id, type: light.type, x: x, y: y, height: height,
+            radius: radius, colour: colour, intensity: intensity,
+            angle: angle, width: width, yaw: -(yaw + facing), pitch: pitch, occlude: light.occlude,
             shadow: light.shadow, body: light.body
         });
     }
@@ -13085,7 +13506,10 @@ Reactor3D.readModelEffects = function(json) {
         const effect = {
             // What it shows: a database animation, or a video surface on a
             // plane at the anchor — an animated screen on a console.
-            type: raw.type === "video" ? "video" : "animation",
+            type: raw.type === "video" ? "video" : raw.type === "light" ? "light" : "animation",
+            // A light riding the anchor: the map-light schema, in the
+            // model's own frame, switched by the trigger or the command.
+            light: raw.type === "light" ? this.readEffectLight(raw.light) : null,
             // Width and height are fractions of the model's longest side
             // (0.3 = a screen a third as wide as the model), so the same
             // numbers read the same on any model and the screen scales with
@@ -13143,6 +13567,86 @@ Reactor3D.readModelEffects = function(json) {
         effects.push(effect);
     }
     return effects;
+};
+
+/**
+ * The light a light-type effect carries: the map-light fields, bounded the
+ * way `readMapLights` bounds them, plus `duration` — how many frames a
+ * fired light stays on (0: until it is fired again, which switches it off).
+ * Yaw and pitch are in the anchor's frame: yaw 0 aims along the anchor
+ * node's own +Z, so a light on a turret turns with the turret.
+ */
+Reactor3D.readEffectLight = function(raw) {
+    const entry = raw && typeof raw === "object" ? raw : {};
+    const number = (value, fallback, min, max) => {
+        const n = Number(value);
+        if (!Number.isFinite(n)) return fallback;
+        return Math.min(max, Math.max(min, n));
+    };
+    const type = entry.type === "spot" ? this.LIGHT_SPOT : entry.type === "beam" ? this.LIGHT_BEAM : this.LIGHT_POINT;
+    return {
+        type,
+        radius: number(entry.radius, type === this.LIGHT_SPOT ? this.DEFAULT_CONE_LENGTH
+            : type === this.LIGHT_BEAM ? this.DEFAULT_BEAM_LENGTH : 3, 0.1, 200),
+        angle: number(entry.angle, this.DEFAULT_CONE_ANGLE, 1, 179),
+        width: number(entry.width, this.DEFAULT_BEAM_WIDTH, 0.005, 5),
+        yaw: number(entry.yaw, 0, -100000, 100000),
+        pitch: number(entry.pitch, 0, -90, 90),
+        colour: this.parseColour(entry.color !== undefined ? entry.color : (entry.colour !== undefined ? entry.colour : 0xffffff)),
+        intensity: number(entry.intensity, 1, 0, 4),
+        occlude: entry.occlude !== false,
+        shadow: entry.shadow === true,
+        body: entry.body !== false,
+        flicker: number(entry.flicker, 0, 0, 1),
+        pulse: entry.pulse && typeof entry.pulse === "object" ? {
+            min: number(entry.pulse.min, 0.6, 0, 10),
+            max: number(entry.pulse.max, 1, 0, 10),
+            period: number(entry.pulse.period, 90, 2, 100000)
+        } : null,
+        duration: Math.max(0, Math.floor(number(entry.duration, 0, 0, 1000000)))
+    };
+};
+
+/**
+ * A light-type effect resolved into the compositor's shape, at its anchor:
+ * the anchor's world position becomes the light's tile position and an
+ * absolute height (`groundY: 0`), and the authored aim is turned by the
+ * anchor node's world pose, so a light on a part aims where the part does
+ * and a light on the model aims where the model faces. Yaw comes out in
+ * the scene's frame, ready for the packer.
+ */
+Reactor3D.effectLight = function(object, effect, key) {
+    if (!object || !effect || !effect.light || typeof THREE === "undefined") return null;
+    const world = this.effectAnchorWorld(object, effect, this._fxLightScratch || (this._fxLightScratch = new THREE.Vector3()));
+    if (!world) return null;
+    const spec = effect.light;
+    let yaw = 0;
+    let pitch = spec.pitch;
+    if (spec.type !== this.LIGHT_POINT) {
+        // The aim is authored in the MODEL's frame — yaw 0 is the model's
+        // own forward, wherever it faces — and then turned by how far the
+        // anchor part has moved from its rest pose, so a light on a turret
+        // turns with the turret and a light on a head nods with the head. A
+        // bone's own axes never enter it: they point wherever the rig's
+        // author left them, which is nowhere an author can reason about.
+        const turn = object.getWorldQuaternion(this._fxLightQuat || (this._fxLightQuat = new THREE.Quaternion()));
+        const pose = this.effectAnchorQuaternion(object, effect, this._fxLightPose || (this._fxLightPose = new THREE.Quaternion()));
+        const y = (spec.yaw * Math.PI) / 180;
+        const p = (spec.pitch * Math.PI) / 180;
+        const aim = (this._fxLightAim || (this._fxLightAim = new THREE.Vector3()))
+            .set(Math.sin(y) * Math.cos(p), Math.sin(p), Math.cos(y) * Math.cos(p))
+            .applyQuaternion(turn)
+            .applyQuaternion(pose);
+        yaw = (Math.atan2(aim.x, aim.z) * 180) / Math.PI;
+        pitch = (Math.asin(Math.max(-1, Math.min(1, aim.y))) * 180) / Math.PI;
+    }
+    return {
+        id: key || effect.name, type: spec.type,
+        x: world.x - 0.5, y: world.z - 1, height: world.y, groundY: 0,
+        radius: spec.radius, colour: spec.colour, intensity: spec.intensity,
+        angle: spec.angle, width: spec.width, yaw, pitch,
+        occlude: spec.occlude, shadow: spec.shadow, body: spec.body
+    };
 };
 
 Reactor3D.videoEffectFraction = function(value, fallback) {
@@ -13337,7 +13841,111 @@ Reactor3D.fireNamedEffect = function(effect, character, holder) {
         }
     }
     if (effect.type === "video" && effect.video) this.spawnVideoEffect(effect, character, holder);
+    else if (effect.type === "light" && effect.light) this.fireEffectLight(effect, holder);
     else if (effect.animation > 0) this.spawnAnchoredAnimation(effect, character, holder);
+};
+
+//-----------------------------------------------------------------------------
+// Light effects: a light riding a model's anchor. Live ones sit on the
+// holder as `holder.lights[name] = { effect, until }`, `until` the frame
+// it goes out (0: until something switches it off), and every frame's
+// `collectLights` reads them through `effectLight` at the anchor's current
+// place and turn.
+
+Reactor3D.currentFrame = function() {
+    return typeof Graphics !== "undefined" && Graphics.frameCount ? Graphics.frameCount : 0;
+};
+
+/** Switch a light effect on (for `until` frames, or open-ended) or off. */
+Reactor3D.setEffectLight = function(holder, effect, on, until) {
+    if (!holder || !effect || !effect.light) return;
+    if (!holder.lights) holder.lights = {};
+    if (on) holder.lights[effect.name] = { effect, until: until || 0 };
+    else delete holder.lights[effect.name];
+};
+
+/**
+ * Firing a light effect: with a duration it burns that long and a refire
+ * restarts the clock; without one it is a switch, and firing again turns
+ * it off.
+ */
+Reactor3D.fireEffectLight = function(effect, holder) {
+    if (!holder || !effect || !effect.light) return;
+    const duration = effect.light.duration;
+    if (duration > 0) {
+        this.setEffectLight(holder, effect, true, this.currentFrame() + duration);
+        return;
+    }
+    const live = holder.lights && holder.lights[effect.name];
+    this.setEffectLight(holder, effect, !live, 0);
+};
+
+/** Drop the timed lights whose frame has come. */
+Reactor3D.expireEffectLights = function(holder, frame) {
+    const lights = holder && holder.lights;
+    if (!lights) return;
+    for (const name in lights) {
+        const entry = lights[name];
+        if (entry && entry.until > 0 && frame >= entry.until) delete lights[name];
+    }
+};
+
+/** Script access: a named light effect on a character's model, on or off. */
+Reactor3D.setModelEffectLight = function(character, name, on) {
+    const holder = this.modelHolderFor ? this.modelHolderFor(character) : null;
+    const effect = holder ? this.modelEffectByName(holder.effects, name) : null;
+    if (!effect || effect.type !== "light") return false;
+    this.setEffectLight(holder, effect, !!on, 0);
+    return true;
+};
+
+/** The scene's model instances, when a 3D map is up. */
+Reactor3D.modelInstances = function() {
+    const spriteset = typeof SceneManager !== "undefined" && SceneManager._scene
+        ? SceneManager._scene._spriteset : null;
+    const scene = spriteset && spriteset._reactor3d && spriteset._reactor3d.scene;
+    return scene && scene._modelInstances ? scene._modelInstances : null;
+};
+
+/** Whether any placed model has a light effect burning right now. Allocation-free. */
+Reactor3D.hasLiveEffectLights = function() {
+    const instances = this.modelInstances();
+    if (!instances) return false;
+    for (const holder of instances.values()) {
+        const lights = holder && holder.lights;
+        if (!lights) continue;
+        for (const name in lights) if (lights[name]) return true;
+    }
+    return false;
+};
+
+/**
+ * This frame's lights from every placed model's live light effects, in
+ * the compositor's shape, at their anchors, breathing like the map's own.
+ */
+Reactor3D.modelEffectLights = function() {
+    const instances = this.modelInstances();
+    if (!instances) return [];
+    const out = [];
+    const frame = this.currentFrame();
+    let seed = 1000;
+    for (const [key, holder] of instances) {
+        const lights = holder && holder.lights;
+        if (!lights || !holder.object) continue;
+        for (const name in lights) {
+            const entry = lights[name];
+            seed++;
+            if (!entry || !entry.effect || !entry.effect.light) continue;
+            if (entry.until > 0 && frame >= entry.until) continue;
+            const light = this.effectLight(holder.object, entry.effect, key + ":" + name);
+            if (!light) continue;
+            const animated = this.animateLight(entry.effect.light, frame, seed, light.radius, light.intensity);
+            light.radius = animated.radius;
+            light.intensity = animated.intensity;
+            out.push(light);
+        }
+    }
+    return out;
 };
 
 /** The 3D scene's instance for a character, when the map draws one. */
@@ -14196,9 +14804,11 @@ Reactor3D.stopAnchoredAnimation = function(entry) {
  */
 Reactor3D.updateTriggeredEffects = function(holder, character, state) {
     if (!holder || !holder.effects) return;
+    if (holder.lights) this.expireEffectLights(holder, this.currentFrame());
     for (const effect of holder.effects) {
         const isVideo = effect.type === "video" && effect.video;
-        if (effect.trigger === "action" || (!isVideo && !(effect.animation > 0))) continue;
+        const isLight = effect.type === "light" && effect.light;
+        if (effect.trigger === "action" || (!isVideo && !isLight && !(effect.animation > 0))) continue;
         const active = effect.trigger === "always"
             || (effect.trigger === "moving" && state.moving)
             || (effect.trigger === "walking" && state.moving && !state.dashing)
@@ -14208,6 +14818,11 @@ Reactor3D.updateTriggeredEffects = function(holder, character, state) {
             const playing = !!(holder.videos && holder.videos[effect.name]);
             if (active && !playing) this.spawnVideoEffect(effect, character, holder);
             else if (!active && playing) this.stopVideoEffect(effect, character, holder);
+            continue;
+        }
+        if (isLight) {
+            const burning = !!(holder.lights && holder.lights[effect.name]);
+            if (active !== burning) this.setEffectLight(holder, effect, active, 0);
             continue;
         }
         const live = (holder.anchored || []).find(entry => entry.triggered === effect.name);
@@ -14391,6 +15006,28 @@ Reactor3D.registerPluginCommands = function() {
             rotate: [n("yaw"), n("pitch"), n("roll")],
             scale: [s("scaleX"), s("scaleY"), s("scaleZ")]
         }, duration);
+        if (args && String(args.wait) === "true" && duration > 0 && this.wait) this.wait(duration);
+    });
+    // Lights: on/off, an eased transform, and the map's ambient.
+    PluginManager.registerCommand("RPGReactor", "LightSwitch", function(args) {
+        Reactor3D.switchLight(args && args.target, args && args.state);
+    });
+    PluginManager.registerCommand("RPGReactor", "TransformLight", function(args) {
+        const duration = Math.max(0, Math.round(Number(args && args.duration) || 0));
+        if (args && String(args.reset) === "true") {
+            Reactor3D.transformLight(args.target, null);
+            return;
+        }
+        Reactor3D.transformLight(args && args.target, args || {}, duration);
+        if (args && String(args.wait) === "true" && duration > 0 && this.wait) this.wait(duration);
+    });
+    PluginManager.registerCommand("RPGReactor", "AmbientLight", function(args) {
+        const duration = Math.max(0, Math.round(Number(args && args.duration) || 0));
+        if (args && String(args.reset) === "true") {
+            Reactor3D.setMapAmbient(null);
+            return;
+        }
+        Reactor3D.setMapAmbient(args || {}, duration);
         if (args && String(args.wait) === "true" && duration > 0 && this.wait) this.wait(duration);
     });
     PluginManager.registerCommand("RPGReactor", "PlayModelAnimation", function(args) {

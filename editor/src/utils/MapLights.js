@@ -15,9 +15,54 @@
     'use strict';
 
     const VERSION = 1;
-    const TYPES = ['point', 'spot'];
+    const TYPES = ['point', 'spot', 'beam'];
     const DEFAULT_CONE_ANGLE = 70;
     const DEFAULT_CONE_LENGTH = 6;
+    // A beam is a laser: a constant-width cylinder of light `radius` tiles
+    // long and `width` tiles across, aimed like a spot.
+    const DEFAULT_BEAM_LENGTH = 8;
+    const DEFAULT_BEAM_WIDTH = 0.08;
+    const ID_PATTERN = /^[A-Za-z0-9_-]{1,40}$/;
+
+    /**
+     * The light presets: the Lighting panel's tray and the model effect
+     * form's preset list read the same table, so a candle is the same
+     * candle everywhere. `labelKey` is the locale key of the chip's name;
+     * `height` is a map placement default (a model light rides its anchor
+     * instead); a `compound` places several lights at once and is a map
+     * preset only.
+     */
+    const PRESETS = [
+        { key: 'point', labelKey: 'lit.point',
+          template: { key: 'point', type: 'point', color: '#ffcf7d', radius: 3, intensity: 1, height: 1.5 } },
+        { key: 'spot', labelKey: 'lit.spot',
+          template: { key: 'spot', type: 'spot', color: '#fff2cc', radius: 6, intensity: 1, height: 3, pitch: -60 } },
+        { key: 'candle', labelKey: 'lit.preset.candle',
+          template: { key: 'candle', type: 'point', color: '#ffb45e', radius: 2.5, intensity: 1.1, height: 0.6, flicker: 0.6 } },
+        { key: 'lamp', labelKey: 'lit.preset.lamp',
+          template: { key: 'lamp', type: 'point', color: '#ffd9a0', radius: 4, intensity: 1.2, height: 2 } },
+        { key: 'neon', labelKey: 'lit.preset.neon',
+          template: { key: 'neon', type: 'point', color: '#ff2d95', radius: 5, intensity: 1.4, height: 2.5, tag: 'neon' } },
+        { key: 'alarm', labelKey: 'lit.preset.alarm',
+          template: { key: 'alarm', type: 'point', color: '#ff1720', radius: 6, intensity: 1.4, height: 3,
+              pulse: { min: 0.3, max: 1, period: 150 }, tag: 'alarm' } },
+        { key: 'screen', labelKey: 'lit.preset.screen',
+          template: { key: 'screen', type: 'point', color: '#7f9bff', radius: 3, intensity: 1, height: 1, flicker: 0.4 } },
+        { key: 'torch', labelKey: 'lit.preset.torch',
+          template: { key: 'torch', type: 'spot', color: '#eaf6ff', radius: 7, angle: 30, intensity: 0.9, height: 1.2, pitch: -20, flicker: 0.08 } },
+        { key: 'laser', labelKey: 'lit.preset.laser',
+          template: { key: 'laser', type: 'beam', color: '#ff2a2a', radius: 8, width: 0.04, intensity: 1.6, height: 1, pitch: 0 } },
+        { key: 'streetlamp', labelKey: 'lit.preset.streetlamp',
+          template: { key: 'streetlamp', color: '#ffd9a0', type: 'point', compound: [
+              { type: 'point', color: '#ffd9a0', radius: 5.5, intensity: 1.2, height: 3 },
+              { type: 'point', color: '#fff3d6', radius: 1.2, intensity: 1.6, height: 3.2, flicker: 0.06 }
+          ] } }
+    ];
+    /** A preset's template as a fresh copy, so a caller can write into it. */
+    const presetTemplate = key => {
+        const preset = PRESETS.find(entry => entry.key === key);
+        return preset ? JSON.parse(JSON.stringify(preset.template)) : null;
+    };
 
     const number = (value, fallback, min, max) => {
         const n = Number(value);
@@ -56,8 +101,9 @@
             height: number(raw.height, 0, 0, 512),
             yaw: number(raw.yaw, 0, -100000, 100000),
             pitch: number(raw.pitch, 0, -90, 90),
-            radius: number(raw.radius, type === 'spot' ? DEFAULT_CONE_LENGTH : 3, 0.1, 200),
+            radius: number(raw.radius, type === 'spot' ? DEFAULT_CONE_LENGTH : type === 'beam' ? DEFAULT_BEAM_LENGTH : 3, 0.1, 200),
             angle: number(raw.angle, DEFAULT_CONE_ANGLE, 1, 179),
+            width: number(raw.width, DEFAULT_BEAM_WIDTH, 0.005, 5),
             color: colour(raw.color !== undefined ? raw.color : raw.colour),
             intensity: number(raw.intensity, 1, 0, 4),
             occlude: raw.occlude !== false,
@@ -112,6 +158,30 @@
         const light = normalize(Object.assign({}, lights[at], patch, { id }), id);
         lights[at] = light;
         return light;
+    };
+
+    /**
+     * Give a light a new id — the name event commands address it by. Ids
+     * are short, ASCII, and unique on the map; a clash or a bad name leaves
+     * the light as it was and returns null.
+     */
+    const rename = (mapData, id, nextId) => {
+        const next = String(nextId || '').trim();
+        if (!ID_PATTERN.test(next)) return null;
+        const lights = list(mapData);
+        const at = lights.findIndex(light => light && light.id === id);
+        if (at < 0) return null;
+        if (next === id) return lights[at];
+        if (lights.some(light => light && light.id === next)) return null;
+        lights[at] = normalize(Object.assign({}, lights[at], { id: next }), next);
+        return lights[at];
+    };
+
+    /** Every tag in use on the map, each once, sorted. */
+    const tags = mapData => {
+        const found = new Set();
+        for (const light of list(mapData)) if (light && light.tag) found.add(String(light.tag));
+        return Array.from(found).sort();
     };
 
     const remove = (mapData, id) => {
@@ -193,13 +263,21 @@
 
     const api = {
         VERSION,
+        TYPES,
         DEFAULT_CONE_ANGLE,
         DEFAULT_CONE_LENGTH,
+        DEFAULT_BEAM_LENGTH,
+        DEFAULT_BEAM_WIDTH,
+        ID_PATTERN,
+        PRESETS,
+        presetTemplate,
         normalize,
         list,
         get,
         add,
         update,
+        rename,
+        tags,
         remove,
         duplicate,
         ambient,

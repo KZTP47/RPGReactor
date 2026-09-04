@@ -1418,7 +1418,7 @@ class Database3DEditor {
                         // A movie on a surface, or an effect overlay, is
                         // motion too: throttled to the idle rate it played
                         // as a slideshow and read as "not playing".
-                        || !!this._fxVideo || !!(this._fxPreview && this._fxPreview.active);
+                        || !!this._fxVideo || !!this._fxLight || !!(this._fxPreview && this._fxPreview.active);
                     const active = animating || easing || this._dragging || this._loadingPreview
                         || this._selectMode || this._rigMode || this._editingRule >= 0 || this.selectedPartName !== null
                         || (Number.isFinite(this._lastInputAt) && now - this._lastInputAt < 1000)
@@ -3236,7 +3236,8 @@ class Database3DEditor {
         this.rawEffects.forEach((raw, index) => {
             const row = document.createElement('div');
             const animations = this.databaseManager?.data?.animations || [];
-            const record = raw.type === 'video' ? (raw.video && raw.video.file ? { name: raw.video.file } : null) : animations[Number(raw.animation)];
+            const record = raw.type === 'video' ? (raw.video && raw.video.file ? { name: raw.video.file } : null)
+                : raw.type === 'light' ? { name: this._lightSummary(raw.light) } : animations[Number(raw.animation)];
             const when = { moving: this._t('While moving'), walking: this._t('While walking'), dashing: this._t('While dashing'), idle: this._t('While idle'), always: this._t('Always') }[raw.trigger];
             row.textContent = `\u2726 ${raw.name || '?'}` + (record && record.name ? ` \u2014 ${record.name}` : '') + (when ? ` \u00b7 ${when}` : '');
             row.style.cssText = 'padding:4px 10px;cursor:pointer;font-size:12px;color:var(--color-text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;'
@@ -3270,11 +3271,49 @@ class Database3DEditor {
         // while the sliders move it — not only after a press of Play.
         if (this._effectWork && this._effectWork.type === 'video'
             && this._effectWork.video && this._effectWork.video.file) {
+            this._stopLightPreview();
             this._fxPreviewDef = this._effectWork;
             this._playVideoPreview(this._effectWork);
+        } else if (this._effectWork && this._effectWork.type === 'light') {
+            // A light previews the moment it is selected, like a movie: its
+            // glow at the anchor is the thing the sliders are placing.
+            this._stopVideoPreview();
+            this._fxPreviewDef = this._effectWork;
+            this._playLightPreview(this._effectWork);
         } else {
             this._stopVideoPreview();
+            this._stopLightPreview();
         }
+    }
+
+    /** "Spot · #ff8800": what a light effect is, for the list. */
+    _lightSummary(light) {
+        const spec = light && typeof light === 'object' ? light : {};
+        const kind = this._k(spec.type === 'spot' ? 'lit.spot' : spec.type === 'beam' ? 'lit.beam' : 'lit.point');
+        const colour = typeof spec.color === 'string' && spec.color ? spec.color : '#ffffff';
+        return `${this._k('r3dfx.typeLight')} \u00b7 ${kind} \u00b7 ${colour}`;
+    }
+
+    /** A light effect's fields with the runtime's defaults filled in, on the work object. */
+    _ensureLightWork(work) {
+        if (!work.light || typeof work.light !== 'object') work.light = {};
+        const light = work.light;
+        const kind = light.type === 'spot' ? 'spot' : light.type === 'beam' ? 'beam' : 'point';
+        light.type = kind;
+        const number = (key, fallback) => { const n = Number(light[key]); light[key] = Number.isFinite(n) ? n : fallback; };
+        if (typeof light.color !== 'string' || !/^#[0-9a-f]{6}$/i.test(light.color)) light.color = '#ffd9a0';
+        number('radius', kind === 'spot' ? 6 : kind === 'beam' ? 8 : 3);
+        number('intensity', 1);
+        number('angle', 70);
+        number('width', 0.08);
+        number('yaw', 0);
+        number('pitch', 0);
+        number('flicker', 0);
+        number('duration', 0);
+        light.occlude = light.occlude !== false;
+        light.shadow = light.shadow === true;
+        light.body = light.body !== false;
+        return light;
     }
 
     _leaveEffectMode() {
@@ -3419,10 +3458,16 @@ class Database3DEditor {
             offset: { min: -span, max: span, step: span / 500, value: i => offset[i] || 0, show: v => Number(v).toFixed(span >= 10 ? 1 : 3) },
             rotate: { min: -180, max: 180, step: 1, value: i => work.rotate[i] || 0, show: v => Math.round(v) + '°' }
         }[this._fxTab === 'scale' ? 'offset' : this._fxTab];
-        const tabs = [{ id: 'offset', label: this._t('Offset') }, { id: 'rotate', label: this._t('Rotate') }, { id: 'scale', label: this._t('Scale') }];
-        const body = this._fxTab === 'scale'
-            ? this._scaleSlidersHtml('r3d-fxcard', work.scale)
-            : this._axisSlidersHtml('r3d-fxcard-slider', spec);
+        const isLight = work.type === 'light';
+        const tabs = [{ id: 'offset', label: this._t('Offset') }, { id: 'rotate', label: this._t('Rotate') },
+            { id: 'scale', label: isLight ? this._k('lit.section.light') : this._t('Scale') }];
+        // A light has no scale and turns by its own aim: the Rotate tab is
+        // its direction and tilt, the third tab its reach and strength.
+        const body = isLight && this._fxTab !== 'offset'
+            ? this._lightCardSlidersHtml(work, this._fxTab)
+            : this._fxTab === 'scale'
+                ? this._scaleSlidersHtml('r3d-fxcard', work.scale)
+                : this._axisSlidersHtml('r3d-fxcard-slider', spec);
         const trigger = work.trigger || 'action';
         const triggerOptions = [['action', this._t('On demand')], ['moving', this._t('While moving')], ['walking', this._t('While walking')],
             ['dashing', this._t('While dashing')], ['idle', this._t('While idle')], ['always', this._t('Always')]];
@@ -3476,7 +3521,21 @@ class Database3DEditor {
             slider.addEventListener('input', apply);
             slider.addEventListener('dblclick', () => { slider.value = this._fxTab === 'rotate' ? 0 : 0; apply(); });
         });
-        this._bindScaleSliders(card, 'r3d-fxcard', work, live);
+        if (work.type === 'light') {
+            const light = this._ensureLightWork(work);
+            card.querySelectorAll('.r3d-fxcard-lslider').forEach(slider => {
+                const key = slider.dataset.key;
+                const apply = () => {
+                    light[key] = Number(slider.value);
+                    this._afterLightEdit(false);
+                };
+                slider.addEventListener('input', apply);
+                slider.addEventListener('change', () => this._afterLightEdit(true));
+                slider.addEventListener('dblclick', () => { slider.value = key === 'intensity' ? '1' : '0'; apply(); this._afterLightEdit(true); });
+            });
+        } else {
+            this._bindScaleSliders(card, 'r3d-fxcard', work, live);
+        }
         card.querySelector('.r3d-fxcard-loop')?.addEventListener('change', event => { work.loop = event.target.checked; });
         card.querySelector('.r3d-fxcard-trigger').addEventListener('change', event => {
             work.trigger = event.target.value;
@@ -3619,6 +3678,15 @@ class Database3DEditor {
         if (this._object) {
             this._object.traverse(node => {
                 if (node.isBone && node.name && names.indexOf(node.name) < 0) names.push(node.name);
+                // A rig's joints are not always Bone objects — a reduced or
+                // re-imported model can carry plain nodes in its skeleton —
+                // but Place binds to them all the same, so the list must
+                // offer them or the form reads the binding as "origin".
+                if (node.isSkinnedMesh && node.skeleton) {
+                    for (const bone of node.skeleton.bones) {
+                        if (bone && bone.name && names.indexOf(bone.name) < 0) names.push(bone.name);
+                    }
+                }
             });
         }
         return names;
@@ -3642,7 +3710,10 @@ class Database3DEditor {
         const record = animations[Number(work.animation)];
         const anchor = work.anchor && typeof work.anchor === 'object' ? work.anchor : { part: '', offset: [0, 0, 0] };
         const choices = this._effectAnchorChoices();
+        if (anchor.part && choices.indexOf(anchor.part) < 0) choices.unshift(anchor.part);
         const isVideo = work.type === 'video';
+        const isLight = work.type === 'light';
+        const light = isLight ? this._ensureLightWork(work) : null;
         if (!work.video) work.video = { file: '', width: 0.3, height: 0.2, loop: true, audio: false, volume: 100 };
         // Fractions of the model's size; pixel-era numbers convert on sight.
         if (typeof Reactor3D !== 'undefined' && Reactor3D.videoEffectFraction) {
@@ -3659,10 +3730,12 @@ class Database3DEditor {
         form.innerHTML = `
             ${row(this._k('r3dfx.effectName'), `<input type="text" class="r3d-fx-name" value="${safeName}" style="${control}">`)}
             ${row(this._k('r3dfx.type'), `<select class="r3d-fx-type" style="${control}">
-                <option value="animation"${isVideo ? '' : ' selected'}>${escape(this._k('r3dfx.typeAnimation'))}</option>
+                <option value="animation"${isVideo || isLight ? '' : ' selected'}>${escape(this._k('r3dfx.typeAnimation'))}</option>
                 <option value="video"${isVideo ? ' selected' : ''}>${escape(this._k('r3dfx.typeVideo'))}</option>
+                <option value="light"${isLight ? ' selected' : ''}>${escape(this._k('r3dfx.typeLight'))}</option>
             </select>`)}
-            ${isVideo ? row(this._k('r3dfx.video'), `<button type="button" class="rr-btn-secondary r3d-fx-video" style="${buttonStyle}">${safeVideo}</button>`)
+            ${isLight ? this._lightRowsHtml(light, work, row, control, escape)
+              : isVideo ? row(this._k('r3dfx.video'), `<button type="button" class="rr-btn-secondary r3d-fx-video" style="${buttonStyle}">${safeVideo}</button>`)
                 + row(this._k('r3dfx.width'), `<input type="number" class="r3d-fx-vw" min="0.01" max="4" step="0.05" value="${escape(work.video.width)}" style="${control}">
                     <span style="font-size:11px;color:var(--color-text-muted);">${escape(this._k('r3dfx.height'))}</span>
                     <input type="number" class="r3d-fx-vh" min="0.01" max="4" step="0.05" value="${escape(work.video.height)}" style="${control}">`)
@@ -3684,7 +3757,10 @@ class Database3DEditor {
         const syncWork = () => {
             work.name = q('.r3d-fx-name').value.trim() || work.name;
             const previous = work.anchor && typeof work.anchor === 'object' ? work.anchor : { part: '', offset: [0, 0, 0] };
-            const part = q('.r3d-fx-part').value;
+            const select = q('.r3d-fx-part');
+            const offered = [...select.options].some(option => option.value === (previous.part || ''));
+            // A part the list cannot show is not a change of part.
+            const part = offered ? select.value : (previous.part || '');
             let offset = previous.offset || [0, 0, 0];
             // A different frame, the same place: the dot must not jump when
             // the anchor part changes, so the offset converts between the
@@ -3707,11 +3783,18 @@ class Database3DEditor {
             q(selector).addEventListener('input', syncWork);
         }
         q('.r3d-fx-type').addEventListener('change', event => {
-            work.type = event.target.value === 'video' ? 'video' : 'animation';
+            const value = event.target.value;
+            work.type = value === 'video' ? 'video' : value === 'light' ? 'light' : 'animation';
             this._stopEffectPreview();
+            if (work.type === 'light') {
+                this._ensureLightWork(work);
+                this._fxPreviewDef = work;
+                this._playLightPreview(work);
+            }
             this.renderEffectForm();
             this.renderEditCard();
         });
+        if (light) this._bindLightRows(form, work, light);
         q('.r3d-fx-video')?.addEventListener('click', () => this._pickEffectVideo());
         const videoField = (selector, apply) => q(selector)?.addEventListener('change', event => { apply(event.target); this._syncEffectAnchorMarker(); });
         videoField('.r3d-fx-vw', el => { work.video.width = Math.min(4, Math.max(0.01, Number(el.value) || work.video.width)); if (this._fxVideo) this._updateVideoPreview(); });
@@ -3736,6 +3819,463 @@ class Database3DEditor {
         q('.r3d-fx-place').addEventListener('click', () => this.setTool(this._tool === 'fxanchor' ? 'orbit' : 'fxanchor'));
         q('.r3d-fx-play').addEventListener('click', () => { syncWork(); this._playEffectPreview(work); });
         q('.r3d-fx-save').addEventListener('click', () => { syncWork(); this._saveEffectWork(); });
+    }
+
+    /**
+     * The rows a light effect edits: kind, colour, reach and shape, aim,
+     * flicker, how long a fired light stays, and its switches. Labels are
+     * the Lighting panel's own, so the two read the same.
+     */
+    _lightRowsHtml(light, work, row, control, escape) {
+        const slider = (key, label, min, max, step) => row(label,
+            `<input type="range" class="r3d-fx-lrange" data-key="${key}" min="${min}" max="${max}" step="${step}" value="${escape(light[key])}" style="flex:1;min-width:0;">
+             <input type="number" class="r3d-fx-lnum" data-key="${key}" data-no-stepper min="${min}" max="${max}" step="${step}" value="${escape(light[key])}" style="flex:0 0 58px;padding:3px 4px;font-size:11px;background:var(--color-bg-surface);color:var(--color-text);border:1px solid var(--color-border-input);border-radius:3px;">`);
+        const aimed = light.type !== 'point';
+        const kinds = [['point', 'lit.point'], ['spot', 'lit.spot'], ['beam', 'lit.beam']];
+        // The Lighting panel's tray, as a list: a candle here is the candle there.
+        const presets = (typeof RRMapLights !== 'undefined' && RRMapLights.PRESETS ? RRMapLights.PRESETS : [])
+            .filter(preset => !preset.template.compound);
+        return row(this._k('r3dfx.lightPreset'), `<select class="r3d-fx-lpreset" style="${control}">
+                <option value="">${escape(this._k('r3dfx.lightPresetNone'))}</option>
+                ${presets.map(preset => `<option value="${escape(preset.key)}">${escape(this._k(preset.labelKey))}</option>`).join('')}
+            </select>`)
+            + row(this._k('lit.type'), `<select class="r3d-fx-lkind" style="${control}">
+                ${kinds.map(([value, key]) => `<option value="${value}"${value === light.type ? ' selected' : ''}>${escape(this._k(key))}</option>`).join('')}
+            </select>`)
+            + row(this._k('lit.color'), `<span class="r3d-fx-lcolor" style="flex:1;min-width:0;display:flex;"></span>`)
+            + slider('intensity', this._k('lit.intensity'), 0, 4, 0.05)
+            + slider('radius', this._k('lit.radius'), 0.1, 60, 0.1)
+            + (light.type === 'spot' ? slider('angle', this._k('lit.angle'), 1, 179, 1) : '')
+            + (light.type === 'beam' ? slider('width', this._k('lit.width'), 0.005, 1, 0.005) : '')
+            + (aimed ? slider('yaw', this._k('lit.yaw'), -180, 180, 1) + slider('pitch', this._k('lit.pitch'), -90, 90, 1) : '')
+            + slider('flicker', this._k('lit.flicker'), 0, 1, 0.05)
+            + ((work.trigger || 'action') === 'action'
+                ? row(this._k('r3dfx.lightDuration'), `<input type="number" class="r3d-fx-ldur" data-no-stepper min="0" max="1000000" step="1" value="${escape(light.duration)}" style="${control}">`)
+                : '')
+            + row('', `<label style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--color-text);"><input type="checkbox" class="r3d-fx-lflag" data-key="occlude"${light.occlude ? ' checked' : ''}> ${escape(this._k('lit.occlude'))}</label>
+                <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--color-text);margin-left:8px;"><input type="checkbox" class="r3d-fx-lflag" data-key="shadow"${light.shadow ? ' checked' : ''}> ${escape(this._k('lit.shadow'))}</label>`)
+            + row('', `<label style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--color-text);"><input type="checkbox" class="r3d-fx-lflag" data-key="body"${light.body ? ' checked' : ''}> ${escape(this._k('r3dfx.lightBody'))}</label>`);
+    }
+
+    _bindLightRows(form, work, light) {
+        const q = selector => form.querySelector(selector);
+        const live = () => {
+            if (!this._fxLight) { this._fxPreviewDef = work; this._playLightPreview(work); }
+            this._updateLightPreview();
+            this._lastInputAt = performance.now();
+        };
+        q('.r3d-fx-lpreset')?.addEventListener('change', event => {
+            const template = typeof RRMapLights !== 'undefined' && RRMapLights.presetTemplate
+                ? RRMapLights.presetTemplate(event.target.value) : null;
+            if (!template) return;
+            // Everything a preset says about the light itself; a map
+            // placement height and a group tag are not a model light's.
+            for (const key of ['type', 'color', 'radius', 'intensity', 'angle', 'width', 'pitch', 'flicker']) {
+                if (template[key] !== undefined) light[key] = template[key];
+            }
+            light.pulse = template.pulse ? Object.assign({}, template.pulse) : null;
+            if (template.flicker === undefined) light.flicker = 0;
+            this._ensureLightWork(work);
+            this.renderEffectForm();
+            live();
+            this.renderEffectList();
+        });
+        q('.r3d-fx-lkind')?.addEventListener('change', event => {
+            light.type = event.target.value === 'spot' ? 'spot' : event.target.value === 'beam' ? 'beam' : 'point';
+            this._ensureLightWork(work);
+            this.renderEffectForm();
+            live();
+        });
+        const colourHost = q('.r3d-fx-lcolor');
+        if (colourHost) {
+            if (typeof RRColourPopover !== 'undefined') {
+                colourHost.appendChild(RRColourPopover.swatch(light.color,
+                    hex => { light.color = hex; live(); },
+                    hex => { light.color = hex; live(); this.renderEffectList(); }));
+            } else {
+                const field = document.createElement('input');
+                field.type = 'text';
+                field.value = light.color;
+                field.style.cssText = 'flex:1;min-width:0;';
+                field.addEventListener('change', () => { if (/^#[0-9a-f]{6}$/i.test(field.value)) { light.color = field.value.toLowerCase(); live(); } });
+                colourHost.appendChild(field);
+            }
+        }
+        form.querySelectorAll('.r3d-fx-lrange').forEach(range => {
+            const number = form.querySelector(`.r3d-fx-lnum[data-key="${range.dataset.key}"]`);
+            range.addEventListener('input', () => {
+                light[range.dataset.key] = Number(range.value);
+                if (number) number.value = range.value;
+                live();
+                this._syncLightControls();
+            });
+        });
+        form.querySelectorAll('.r3d-fx-lnum').forEach(number => number.addEventListener('change', () => {
+            const value = Number(number.value);
+            if (!Number.isFinite(value)) return;
+            light[number.dataset.key] = Math.min(Number(number.max), Math.max(Number(number.min), value));
+            const range = form.querySelector(`.r3d-fx-lrange[data-key="${number.dataset.key}"]`);
+            if (range) range.value = String(light[number.dataset.key]);
+            number.value = String(light[number.dataset.key]);
+            live();
+        }));
+        q('.r3d-fx-ldur')?.addEventListener('change', event => {
+            light.duration = Math.max(0, Math.floor(Number(event.target.value) || 0));
+            event.target.value = String(light.duration);
+        });
+        form.querySelectorAll('.r3d-fx-lflag').forEach(box => box.addEventListener('change', () => {
+            light[box.dataset.key] = box.checked;
+            live();
+        }));
+    }
+
+    /**
+     * The light's body in the preview scene at its anchor: the sphere, cone
+     * or beam the game draws, in the effect's colour. The preview's
+     * materials are not the game's lit materials, so the body is what shows
+     * — the pool on the model is the game's to draw.
+     */
+    _playLightPreview(raw) {
+        if (typeof THREE === 'undefined' || !this._scene || !raw || raw.type !== 'light') return;
+        if (this._fxLight && this._fxLight.raw !== raw) this._stopLightPreview();
+        if (!this._fxLight) {
+            const group = new THREE.Group();
+            group.name = 'effect-light-preview';
+            const material = typeof Reactor3D !== 'undefined' && Reactor3D.lightBodyMaterial
+                ? Reactor3D.lightBodyMaterial()
+                : new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.35, blending: THREE.AdditiveBlending, depthWrite: false });
+            const geometryFor = kind => {
+                if (typeof Reactor3D !== 'undefined') {
+                    if (kind === 'spot' && Reactor3D.coneBodyGeometry) return Reactor3D.coneBodyGeometry();
+                    if (kind === 'beam' && Reactor3D.beamBodyGeometry) return Reactor3D.beamBodyGeometry();
+                    if (kind === 'point' && Reactor3D.sphereBodyGeometry) return Reactor3D.sphereBodyGeometry();
+                }
+                if (kind === 'spot') { const cone = new THREE.ConeGeometry(1, 1, 24, 1, true); cone.translate(0, -0.5, 0); return cone; }
+                if (kind === 'beam') { const tube = new THREE.CylinderGeometry(1, 1, 1, 12, 1, true); tube.translate(0, -0.5, 0); return tube; }
+                return new THREE.SphereGeometry(1, 20, 14);
+            };
+            const bodies = {};
+            const beamMaterial = typeof Reactor3D !== 'undefined' && Reactor3D.beamBodyMaterial ? Reactor3D.beamBodyMaterial() : material;
+            for (const kind of ['point', 'spot', 'beam']) {
+                const mesh = new THREE.Mesh(geometryFor(kind), kind === 'beam' ? beamMaterial : material);
+                mesh.visible = false;
+                mesh.renderOrder = 12;
+                mesh.userData.__reactorOverlay = true;
+                group.add(mesh);
+                bodies[kind] = mesh;
+            }
+            // The source's bright core is the runtime's: a soft additive dot,
+            // not a solid ball.
+            const core = new THREE.Sprite(new THREE.SpriteMaterial({
+                map: typeof Reactor3D !== 'undefined' && Reactor3D.roundLightTexture ? Reactor3D.roundLightTexture() : null,
+                color: 0xffffff, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: true
+            }));
+            core.renderOrder = 13;
+            core.userData.__reactorOverlay = true;
+            group.add(core);
+            this._scene.add(group);
+            this._fxLight = { raw, group, bodies, core, material, beamMaterial, shared: !!(typeof Reactor3D !== 'undefined' && Reactor3D.sphereBodyGeometry) };
+            this._lightPreviewLit(true);
+        }
+        this._fxLight.raw = raw;
+        this._updateLightPreview();
+        this._lastInputAt = performance.now();
+    }
+
+    _updateLightPreview() {
+        const live = this._fxLight;
+        if (!live || !this._object || typeof Reactor3D === 'undefined' || !Reactor3D.effectLight) return;
+        const def = this._effectDef(live.raw) || live.raw;
+        const light = def && def.light ? Reactor3D.effectLight(this._object, def, 'preview') : null;
+        if (!light) { live.group.visible = false; this._hideLightGizmo(); return; }
+        live.group.visible = true;
+        const x = light.x + 0.5, y = light.height, z = light.y + 1;
+        const colour = new THREE.Color(light.colour);
+        const strength = Math.min(1, 0.6 * light.intensity);
+        for (const material of [live.material, live.beamMaterial]) {
+            if (!material) continue;
+            if (material.uniforms) {
+                material.uniforms.colour.value.copy(colour);
+                material.uniforms.strength.value = strength;
+            } else {
+                material.color.copy(colour);
+            }
+        }
+        for (const kind of Object.keys(live.bodies)) live.bodies[kind].visible = kind === light.type;
+        const body = live.bodies[light.type];
+        body.position.set(x, y, z);
+        if (light.type === 'point') {
+            const haze = light.radius * 0.45;
+            body.scale.set(haze, haze, haze);
+            body.quaternion.identity();
+        } else {
+            const yaw = (light.yaw * Math.PI) / 180;
+            const pitch = (light.pitch * Math.PI) / 180;
+            const aim = new THREE.Vector3(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch)).normalize();
+            body.quaternion.setFromUnitVectors(new THREE.Vector3(0, -1, 0), aim);
+            if (light.type === 'spot') {
+                const spread = Math.tan((Math.min(light.angle, 178) * Math.PI) / 360) * light.radius;
+                body.scale.set(spread, light.radius, spread);
+            } else {
+                body.scale.set(light.width * 0.5, light.radius, light.width * 0.5);
+            }
+        }
+        live.core.position.set(x, y, z);
+        const coreSize = light.type === 'beam' ? Math.max(light.width * 2, 0.06) * 0.5 : Math.min(light.radius, 0.7) * 0.5;
+        live.core.scale.set(coreSize, coreSize, 1);
+        live.core.material.color.copy(colour);
+        live.core.material.opacity = Math.min(1, Reactor3D.VOLUME_GLOW * light.intensity);
+        live.core.visible = light.body !== false;
+        for (const kind of Object.keys(live.bodies)) if (light.body === false) live.bodies[kind].visible = false;
+        // The model itself takes the light through the game's own shader.
+        if (Reactor3D.packLightUniforms) {
+            Reactor3D.packLightUniforms([light], { intensity: this.LIGHT_PREVIEW_AMBIENT, colour: 0xffffff });
+        }
+        this._syncLightGizmo(light);
+    }
+
+    /** The placed model's span in the preview's own units, for gizmo sizes. */
+    _previewSpan() {
+        if (!this._object || typeof THREE === 'undefined') return 1.8;
+        if (this._previewSpanFor === this._object && this._previewSpanValue) return this._previewSpanValue;
+        const size = new THREE.Box3().setFromObject(this._object).getSize(new THREE.Vector3());
+        this._previewSpanFor = this._object;
+        this._previewSpanValue = Math.max(size.x, size.y, size.z, 0.2);
+        return this._previewSpanValue;
+    }
+
+    /**
+     * The gizmo a prop wears, on the light: arrows slide the anchor along
+     * X, Y and Z, the green ring turns the aim and the red ring tilts it.
+     * A point light has no aim and wears the arrows alone; nothing rolls.
+     * The rings show the aim as it is in the world — the anchor's own turn
+     * included — and a drag applies its change to the light's own yaw and
+     * pitch, so a light on a turned part turns from where it points.
+     */
+    _syncLightGizmo(light) {
+        if (typeof RRPoseRings3D === 'undefined' || typeof RRAxisArrows3D === 'undefined' || typeof THREE === 'undefined' || !this._scene) return;
+        const work = this._effectWork;
+        if (!light || this._cardMode !== 'effect' || !work || work.type !== 'light') {
+            this._hideLightGizmo();
+            return;
+        }
+        if (!this._fxGizmo) {
+            const span = this._previewSpan();
+            const rings = RRPoseRings3D.create(THREE, Math.max(0.12, span * 0.2), 'fx-light-rings');
+            rings.roll.group.visible = false;
+            const arrows = RRAxisArrows3D.create(THREE, Math.max(0.16, span * 0.28), 'fx-light-arrows');
+            for (const root of [rings.root, arrows.root]) root.traverse(node => { node.userData.__reactorOverlay = true; });
+            this._scene.add(rings.root);
+            this._scene.add(arrows.root);
+            this._fxGizmo = { rings, arrows };
+        }
+        const gizmo = this._fxGizmo;
+        gizmo.light = light;
+        const at = { x: light.x + 0.5, y: light.height, z: light.y + 1 };
+        RRPoseRings3D.sync(gizmo.rings, at, light.yaw, -light.pitch, light.type !== 'point');
+        RRAxisArrows3D.sync(gizmo.arrows, at, true);
+    }
+
+    _hideLightGizmo() {
+        if (!this._fxGizmo) return;
+        this._fxGizmo.rings.root.visible = false;
+        this._fxGizmo.arrows.root.visible = false;
+        this._fxGizmo.light = null;
+    }
+
+    _disposeLightGizmo() {
+        if (!this._fxGizmo) return;
+        if (typeof RRPoseRings3D !== 'undefined') RRPoseRings3D.dispose(this._fxGizmo.rings);
+        if (typeof RRAxisArrows3D !== 'undefined') RRAxisArrows3D.dispose(this._fxGizmo.arrows);
+        this._fxGizmo = null;
+        this._fxGizmoHold = null;
+    }
+
+    /** An arrow or ring of the light under the pointer, as a hold, or null. */
+    _pickLightGizmo(clientX, clientY) {
+        const gizmo = this._fxGizmo;
+        const work = this._effectWork;
+        if (!gizmo || !gizmo.light || !work || !this._camera || !this._object) return null;
+        const rect = this._detail.querySelector('.r3d-db-canvas').getBoundingClientRect();
+        if (gizmo.arrows.root.visible) {
+            const arrow = RRAxisArrows3D.pick(THREE, gizmo.arrows, this._camera, rect, clientX, clientY);
+            if (arrow) {
+                RRAxisArrows3D.emphasize(gizmo.arrows, arrow.axis, true);
+                const start = Reactor3D.effectAnchorWorld(this._object, this._effectDef(work) || work, new THREE.Vector3());
+                return { kind: 'arrow', grab: arrow, start };
+            }
+        }
+        if (gizmo.rings.root.visible) {
+            const ring = RRPoseRings3D.pick(THREE, gizmo.rings, this._camera, rect, clientX, clientY,
+                { yaw: gizmo.light.yaw, pitch: -gizmo.light.pitch, roll: 0 });
+            if (ring) {
+                RRPoseRings3D.emphasize(gizmo.rings, ring.axis, true);
+                const light = this._ensureLightWork(work);
+                return { kind: 'ring', grab: ring, startYaw: light.yaw, startPitch: light.pitch };
+            }
+        }
+        return null;
+    }
+
+    _dragLightGizmo(hold, clientX, clientY) {
+        const work = this._effectWork;
+        if (!hold || !work || !this._object || !this._camera) return;
+        if (hold.kind === 'arrow') {
+            const travel = hold.grab.travel(clientX, clientY);
+            const dir = { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] }[hold.grab.axis];
+            const world = hold.start.clone().add(new THREE.Vector3(dir[0], dir[1], dir[2]).multiplyScalar(travel));
+            // The offset lives in the anchor's own frame, as Place writes it.
+            if (!work.anchor) work.anchor = { part: '', offset: [0, 0, 0] };
+            const frame = (work.anchor.part && this._anchorNode(work.anchor.part)) || this._object;
+            frame.updateWorldMatrix(true, false);
+            const local = frame.worldToLocal(world);
+            work.anchor.offset = [local.x, local.y, local.z].map(value => Math.round(value * 1000) / 1000);
+        } else {
+            const rect = this._detail.querySelector('.r3d-db-canvas').getBoundingClientRect();
+            const value = RRPoseRings3D.drag(THREE, hold.grab, this._camera, rect, clientX, clientY);
+            if (value === null) return;
+            const light = this._ensureLightWork(work);
+            const delta = value - hold.grab.startValue;
+            if (hold.grab.axis === 'yaw') {
+                let yaw = hold.startYaw + delta;
+                while (yaw > 180) yaw -= 360;
+                while (yaw < -180) yaw += 360;
+                light.yaw = Math.round(yaw);
+            } else {
+                light.pitch = Math.max(-90, Math.min(90, Math.round(hold.startPitch - delta)));
+            }
+        }
+        this._afterLightEdit(false);
+    }
+
+    _endLightGizmoDrag() {
+        if (this._fxGizmo) {
+            RRPoseRings3D.emphasize(this._fxGizmo.rings, null, false);
+            RRAxisArrows3D.emphasize(this._fxGizmo.arrows, null, false);
+        }
+        this._fxGizmoHold = null;
+        this._afterLightEdit(true);
+    }
+
+    /**
+     * After any edit of the light — gizmo, card or form: the marker, the
+     * preview and the gizmo follow at once, and the other controls show the
+     * new numbers without being rebuilt under a drag. A final edit rebuilds
+     * everything so the ranges and the list catch up.
+     */
+    _afterLightEdit(final) {
+        this._syncEffectAnchorMarker();
+        this._updateEffectPreview();
+        this._syncLightControls();
+        this._lastInputAt = performance.now();
+        if (final) {
+            this.renderEditCard();
+            this.renderEffectForm();
+            this.renderEffectList();
+        }
+    }
+
+    /** The work light's numbers into every slider and field that shows them. */
+    _syncLightControls() {
+        const work = this._effectWork;
+        const root = this._detail;
+        if (!work || !root) return;
+        const light = work.light || {};
+        const set = (element, value) => { if (element && document.activeElement !== element) element.value = String(value); };
+        const shown = (key, value) => (key === 'yaw' || key === 'pitch' || key === 'angle') ? Math.round(value) + '°' : Number(value).toFixed(2);
+        root.querySelectorAll('.r3d-fx-lrange, .r3d-fx-lnum').forEach(element => {
+            if (light[element.dataset.key] !== undefined) set(element, light[element.dataset.key]);
+        });
+        root.querySelectorAll('.r3d-fxcard-lslider').forEach(slider => {
+            const key = slider.dataset.key;
+            if (light[key] === undefined) return;
+            set(slider, light[key]);
+            const readout = root.querySelector(`.r3d-fxcard-lslider-val[data-key="${key}"]`);
+            if (readout) readout.textContent = shown(key, light[key]);
+        });
+        const offset = work.anchor && Array.isArray(work.anchor.offset) ? work.anchor.offset : [0, 0, 0];
+        const span = this._modelSpan();
+        root.querySelectorAll('.r3d-fxcard-slider').forEach(slider => {
+            if (this._fxTab !== 'offset') return;
+            const i = Number(slider.dataset.i);
+            set(slider, offset[i] || 0);
+            const readout = root.querySelector(`.r3d-fxcard-slider-val[data-i="${i}"]`);
+            if (readout) readout.textContent = Number(offset[i] || 0).toFixed(span >= 10 ? 1 : 3);
+        });
+    }
+
+    /** The card's Rotate and Light tabs for a light effect: its aim, then its reach. */
+    _lightCardSlidersHtml(work, tab) {
+        const light = this._ensureLightWork(work);
+        const aimed = light.type !== 'point';
+        const rows = tab === 'rotate'
+            ? [{ key: 'yaw', label: this._k('lit.yaw'), min: -180, max: 180, step: 1, enabled: aimed },
+               { key: 'pitch', label: this._k('lit.pitch'), min: -90, max: 90, step: 1, enabled: aimed }]
+            : [{ key: 'radius', label: this._k('lit.radius'), min: 0.1, max: 30, step: 0.1, enabled: true },
+               { key: 'intensity', label: this._k('lit.intensity'), min: 0, max: 4, step: 0.05, enabled: true }]
+                .concat(light.type === 'spot' ? [{ key: 'angle', label: this._k('lit.angle'), min: 1, max: 179, step: 1, enabled: true }]
+                    : light.type === 'beam' ? [{ key: 'width', label: this._k('lit.width'), min: 0.005, max: 1, step: 0.005, enabled: true }] : []);
+        const escape = value => String(value == null ? '' : value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+        const shown = (key, value) => (key === 'yaw' || key === 'pitch' || key === 'angle') ? Math.round(value) + '°' : Number(value).toFixed(2);
+        return rows.map(row => `
+            <div style="display:flex;align-items:center;gap:8px;margin:6px 0;${row.enabled ? '' : 'opacity:0.45;'}">
+                <span style="flex:0 0 74px;font-size:11px;color:var(--color-text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escape(row.label)}</span>
+                <input type="range" class="r3d-fxcard-lslider" data-key="${row.key}" min="${row.min}" max="${row.max}" step="${row.step}"
+                    value="${escape(light[row.key])}"${row.enabled ? '' : ' disabled'} style="flex:1;min-width:0;accent-color:var(--color-accent);" title="${this._t('Double-click to reset')}">
+                <span class="r3d-fxcard-lslider-val" data-key="${row.key}" style="flex:0 0 48px;text-align:right;font-size:11px;color:var(--color-text);">${shown(row.key, light[row.key])}</span>
+            </div>`).join('')
+            + (tab === 'rotate' && !aimed ? `<div style="font-size:11px;color:var(--color-text-muted);margin:2px 0 4px;">${escape(this._k('lit.point'))}</div>` : '');
+    }
+
+    /** How dark the rest of the model goes while a light previews on it. */
+    get LIGHT_PREVIEW_AMBIENT() { return 0.35; }
+
+    /**
+     * Make the preview model take the lights, the way the map does: the
+     * runtime's lit-shader injection on its own unlit materials. On the way
+     * out the shared uniforms go back to what they held, so the map view
+     * behind the database keeps its own ambient.
+     */
+    _lightPreviewLit(on) {
+        if (typeof Reactor3D === 'undefined' || !Reactor3D.lightUniforms) return;
+        const uniforms = Reactor3D.lightUniforms();
+        if (on) {
+            if (!this._litPreviewSaved) {
+                this._litPreviewSaved = { ambient: Array.from(uniforms.rrAmbient.value), count: uniforms.rrLightCount.value };
+            }
+            if (this._object && Reactor3D.litMaterial) {
+                this._object.traverse(node => {
+                    if (!node.isMesh || node.userData.__reactorOverlay) return;
+                    for (const material of Array.isArray(node.material) ? node.material : [node.material]) {
+                        if (!material || material.__reactorLit) continue;
+                        Reactor3D.litMaterial(material);
+                        material.needsUpdate = true;
+                    }
+                });
+            }
+            return;
+        }
+        const saved = this._litPreviewSaved;
+        this._litPreviewSaved = null;
+        if (!saved) return;
+        uniforms.rrAmbient.value.set(saved.ambient);
+        uniforms.rrLightCount.value = saved.count;
+    }
+
+    _stopLightPreview() {
+        const live = this._fxLight;
+        if (!live) return;
+        live.group.parent?.remove(live.group);
+        for (const kind of Object.keys(live.bodies)) {
+            // Shared runtime geometry stays; only the fallback shapes are ours.
+            if (!live.shared) live.bodies[kind].geometry.dispose();
+        }
+        live.core.material.dispose();
+        live.material.dispose();
+        if (live.beamMaterial && live.beamMaterial !== live.material) live.beamMaterial.dispose();
+        this._fxLight = null;
+        this._disposeLightGizmo();
+        this._lightPreviewLit(false);
     }
 
     /** Choose the video from the project's movies folder. */
@@ -4037,6 +4577,13 @@ class Database3DEditor {
 
     /** Play an effect's database animation (and sound) over the viewport at its anchor. */
     _playEffectPreview(raw) {
+        if (raw && raw.type === 'light') {
+            if (raw.se && raw.se.name) this._fireEffectPreview({ se: raw.se });
+            this._stopVideoPreview();
+            this._fxPreviewDef = raw;
+            this._playLightPreview(raw);
+            return;
+        }
         if (raw && raw.type === 'video') {
             if (raw.se && raw.se.name) this._fireEffectPreview({ se: raw.se });
             this._fxPreviewDef = raw;
@@ -4044,6 +4591,7 @@ class Database3DEditor {
             return;
         }
         this._stopVideoPreview();
+        this._stopLightPreview();
         const layer = this._effectPreviewLayer();
         const animations = this.databaseManager?.data?.animations || [];
         const record = animations[Number(raw && raw.animation)];
@@ -4154,6 +4702,7 @@ class Database3DEditor {
         if (this._fxPreview) this._fxPreview.stop();
         if (this._fxQuad) this._fxQuad.mesh.visible = false;
         this._stopVideoPreview();
+        this._stopLightPreview();
         this._fxPreviewDef = null;
         this._fxPreviewRecord = null;
         this._fxTriggered = null;
@@ -4175,7 +4724,8 @@ class Database3DEditor {
         list.forEach((raw, index) => {
             if (wanted) return;
             const trigger = raw && raw.trigger;
-            const playable = raw && (raw.type === 'video' ? !!(raw.video && raw.video.file) : Number(raw.animation) > 0);
+            const playable = raw && (raw.type === 'video' ? !!(raw.video && raw.video.file)
+                : raw.type === 'light' ? true : Number(raw.animation) > 0);
             if (!raw || !trigger || trigger === 'action' || !playable) return;
             const active = trigger === 'always'
                 || (trigger === 'moving' && moving)
@@ -4188,7 +4738,8 @@ class Database3DEditor {
         if (wanted) {
             // Keyed by its place in the list, not its name: typing a new
             // name must not read as a new effect and restart the video.
-            const playing = wanted.type === 'video' ? !!this._fxVideo : !!(layer && layer.active);
+            const playing = wanted.type === 'video' ? !!this._fxVideo
+                : wanted.type === 'light' ? !!this._fxLight : !!(layer && layer.active);
             if (this._fxTriggered !== wantedIndex || !playing) {
                 this._playEffectPreview(wanted);
                 this._fxTriggered = wantedIndex;
@@ -4206,7 +4757,11 @@ class Database3DEditor {
 
     /** Each frame: keep the overlay on the anchor's projected position, sized to the model. */
     _updateEffectPreview() {
+        // The anchor marker rides its part: on a walking character the
+        // pink dot must move with the head it was placed on.
+        if (this._effectWork && this._effectWork.anchor && this._effectWork.anchor.part) this._syncEffectAnchorMarker();
         if (this._fxVideo) this._updateVideoPreview();
+        if (this._fxLight) this._updateLightPreview();
         const layer = this._fxPreview;
         if (!layer || !layer.active || !this._fxPreviewDef || !this._object || !this._camera) return;
         const canvas = this._detail.querySelector('.r3d-db-canvas');
@@ -4430,6 +4985,17 @@ class Database3DEditor {
                 event.preventDefault();
                 return;
             }
+            // A light's rings and arrows come first: they sit on the anchor.
+            if (event.button === 0 && !event.ctrlKey && this._cardMode === 'effect' && this._fxGizmo) {
+                const hold = this._pickLightGizmo(event.clientX, event.clientY);
+                if (hold) {
+                    mode = 'fxgizmo';
+                    this._fxGizmoHold = hold;
+                    canvas.style.cursor = 'grabbing';
+                    event.preventDefault();
+                    return;
+                }
+            }
             // The effect anchor drags in the camera plane, like the pivot.
             if (event.button === 0 && !event.ctrlKey && this._cardMode === 'effect'
                 && this._pointerNearMarker(this._fxMarker, event.clientX, event.clientY)) {
@@ -4499,6 +5065,8 @@ class Database3DEditor {
                 const point = this._cameraPlanePoint(event.clientX, event.clientY, this._fxMarker.position);
                 if (point) this._fxMarker.position.copy(point);
                 this._lastInputAt = performance.now();
+            } else if (mode === 'fxgizmo' && this._fxGizmoHold) {
+                this._dragLightGizmo(this._fxGizmoHold, event.clientX, event.clientY);
             }
             lastX = event.clientX;
             lastY = event.clientY;
@@ -4526,6 +5094,8 @@ class Database3DEditor {
                 this._rigDragKey = null;
             } else if (mode === 'fxdrag') {
                 this._commitAnchorFromMarker();
+            } else if (mode === 'fxgizmo') {
+                this._endLightGizmoDrag();
             } else if (mode === 'pivot' && stationary) {
                 this._placePivot(event);
             } else if (mode === 'fxanchor' && stationary) {
@@ -4553,6 +5123,16 @@ class Database3DEditor {
             -((clientY - rect.top) / rect.height) * 2 + 1);
         const raycaster = new THREE.Raycaster();
         raycaster.setFromCamera(pointer, this._camera);
+        // A skinned mesh is ray-tested against its own cached bounds, which
+        // three computes once from the geometry as loaded — for a rigged
+        // character that box can be a few centimetres at the origin, and
+        // every click on the mascot missed it. Refresh the bounds from the
+        // posed skeleton first; a click is rare enough to afford it.
+        this._object.traverse(node => {
+            if (!node.isSkinnedMesh || typeof node.computeBoundingBox !== 'function') return;
+            node.computeBoundingBox();
+            node.computeBoundingSphere();
+        });
         return raycaster.intersectObject(this._object, true);
     }
 

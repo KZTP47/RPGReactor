@@ -14,5 +14,51 @@
       "clip": "Running",
       "part": ""
     }
+  ],
+  "effects": [
+    {
+      "name": "effect",
+      "animation": 0,
+      "anchor": {
+        "part": "Head",
+        "offset": [
+          14.148,
+          9.158,
+          -8.989
+        ]
+      },
+      "scale": 1,
+      "loop": false,
+      "rotate": [
+        0,
+        0,
+        0
+      ],
+      "video": {
+        "file": "",
+        "width": 0.3,
+        "height": 0.2,
+        "loop": true,
+        "audio": false,
+        "volume": 100
+      },
+      "type": "light",
+      "light": {
+        "type": "beam",
+        "color": "#ff000a",
+        "radius": 36.9,
+        "intensity": 1,
+        "angle": 70,
+        "width": 0.02,
+        "yaw": 0,
+        "pitch": 1,
+        "flicker": 0,
+        "duration": 0,
+        "occlude": true,
+        "shadow": false,
+        "body": true
+      },
+      "trigger": "always"
+    }
   ]
 }

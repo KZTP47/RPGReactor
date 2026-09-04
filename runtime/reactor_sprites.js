@@ -4659,7 +4659,18 @@ Spriteset_Map.prototype.updateReactor3DLights = function(state) {
     const wants = Reactor3D.wantsLights3D($dataMap);
     if (wants !== this._reactor3dLit) {
         this._reactor3dLit = wants;
+        this._reactor3dAmbientKey = null;
         Reactor3D.setAmbient(wants ? Reactor3D.ambientFor($dataMap) : null);
+    } else if (wants) {
+        // An AmbientLight command eases the map's ambient over time; only a
+        // changed value reaches the compositor, so a steady frame allocates
+        // nothing.
+        const ambient = Reactor3D.ambientFor($dataMap);
+        const key = ambient.intensity * 16777216 + ambient.colour;
+        if (key !== this._reactor3dAmbientKey) {
+            this._reactor3dAmbientKey = key;
+            Reactor3D.setAmbient(ambient);
+        }
     }
     // The plugin's flat lightmap goes away while its lights are being drawn for
     // real, and comes straight back otherwise. Applied every frame rather than
@@ -4716,10 +4727,10 @@ Spriteset_Map.prototype.updateReactor3DLights = function(state) {
 
 /** The falloff pictures as PIXI textures, shared across every spriteset. */
 function reactorFlatLightTexture(kind) {
-    const key = kind === "cone" ? "_coneLightPixi" : "_roundLightPixi";
+    const key = kind === "cone" ? "_coneLightPixi" : kind === "beam" ? "_beamLightPixi" : "_roundLightPixi";
     if (!Reactor3D[key]) {
-        const canvas = kind === "cone"
-            ? Reactor3D.coneLightCanvas() : Reactor3D.roundLightCanvas();
+        const canvas = kind === "beam" ? Reactor3D.beamLightCanvas()
+            : kind === "cone" ? Reactor3D.coneLightCanvas() : Reactor3D.roundLightCanvas();
         Reactor3D[key] = PIXI.Texture.from(canvas);
     }
     return Reactor3D[key];
@@ -4806,16 +4817,19 @@ Spriteset_Map.prototype.syncReactorFlatLights = function(state, lights) {
             state.glow.addChild(sprite);
             state.sprites.push(sprite);
         }
-        const spot = light.type === Reactor3D.LIGHT_SPOT;
-        sprite.texture = reactorFlatLightTexture(spot ? "cone" : "round");
+        const beam = light.type === Reactor3D.LIGHT_BEAM;
+        const spot = light.type === Reactor3D.LIGHT_SPOT || beam;
+        sprite.texture = reactorFlatLightTexture(beam ? "beam" : spot ? "cone" : "round");
         sprite.visible = true;
         if (spot) {
             // Source at the anchor, beam extending up the texture; yaw
             // arrives in the scene's anticlockwise convention, so the screen
             // rotation is its negation past the flip that points south.
+            // A beam is as wide at the far end as at the source.
             sprite.anchor.set(0.5, 1);
             const spread = ((light.angle || 45) * Math.PI) / 360;
-            sprite.width = Math.max(2, 2 * Math.tan(spread) * reach);
+            const width = light.width === undefined ? Reactor3D.DEFAULT_BEAM_WIDTH : light.width;
+            sprite.width = Math.max(2, beam ? width * tw : 2 * Math.tan(spread) * reach);
             sprite.height = Math.max(2, reach);
             sprite.rotation = Math.PI - ((light.yaw || 0) * Math.PI) / 180;
         } else {

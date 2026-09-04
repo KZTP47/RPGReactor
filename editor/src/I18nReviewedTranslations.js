@@ -2211,7 +2211,7 @@ globalThis.RR_REVIEWED_TRANSLATIONS = {
       "Battle Log": "Log pertempuran",
       "Turn Order": "Urutan giliran",
       "Turn-based": "Berbasis giliran",
-      "Please select at least one party member for the battle test.": "Pilih setidaknya satu anggota party untuk uji pertempuran.",
+      "Please select at least one party member for the battle test.": "Pilih setidaknya satu anggota kelompok untuk uji pertempuran.",
       "Height (tiles):": "Ketinggian (petak):",
       "Set Height...": "Atur ketinggian...",
       "Set Height": "Atur ketinggian",
@@ -3258,6 +3258,9 @@ globalThis.RR_REVIEWED_TRANSLATIONS = {
   },
   "commands": {
     "ja": {
+      "Switch Light": "照明の切替",
+      "Transform Light": "照明の変形",
+      "Change Ambient Light": "環境光の変更",
       "Scoped Wait": "範囲ウェイト",
       "Wait for 3D": "3Dの完了を待つ",
       "Transform 3D Model": "3Dモデルの変形",
@@ -3271,6 +3274,9 @@ globalThis.RR_REVIEWED_TRANSLATIONS = {
       "Change Transparency": "透明状態の変更"
     },
     "zh-Hant": {
+      "Switch Light": "切換燈光",
+      "Transform Light": "變換燈光",
+      "Change Ambient Light": "變更環境光",
       "Scoped Wait": "範圍等待",
       "Wait for 3D": "等待 3D",
       "Transform 3D Model": "變換 3D 模型",
@@ -3284,6 +3290,9 @@ globalThis.RR_REVIEWED_TRANSLATIONS = {
       "Change Transparency": "變更透明度"
     },
     "zh-Hans": {
+      "Switch Light": "切换灯光",
+      "Transform Light": "变换灯光",
+      "Change Ambient Light": "更改环境光",
       "Scoped Wait": "范围等待",
       "Wait for 3D": "等待 3D",
       "Transform 3D Model": "变换 3D 模型",
@@ -3297,6 +3306,9 @@ globalThis.RR_REVIEWED_TRANSLATIONS = {
       "Change Transparency": "更改透明度"
     },
     "ko": {
+      "Switch Light": "조명 전환",
+      "Transform Light": "조명 변형",
+      "Change Ambient Light": "주변광 변경",
       "Scoped Wait": "범위 대기",
       "Wait for 3D": "3D 대기",
       "Transform 3D Model": "3D 모델 변형",
@@ -3310,6 +3322,9 @@ globalThis.RR_REVIEWED_TRANSLATIONS = {
       "Change Transparency": "투명 상태 변경"
     },
     "es": {
+      "Switch Light": "Encender/apagar luz",
+      "Transform Light": "Transformar luz",
+      "Change Ambient Light": "Cambiar luz ambiental",
       "Scoped Wait": "Espera dirigida",
       "Wait for 3D": "Esperar 3D",
       "Transform 3D Model": "Transformar modelo 3D",
@@ -3325,6 +3340,9 @@ globalThis.RR_REVIEWED_TRANSLATIONS = {
       "Change Actor Images": "Cambiar imágenes del personaje"
     },
     "pt": {
+      "Switch Light": "Ligar/desligar luz",
+      "Transform Light": "Transformar luz",
+      "Change Ambient Light": "Alterar luz ambiente",
       "Scoped Wait": "Espera direcionada",
       "Wait for 3D": "Aguardar 3D",
       "Transform 3D Model": "Transformar modelo 3D",
@@ -3334,6 +3352,9 @@ globalThis.RR_REVIEWED_TRANSLATIONS = {
       "Change Actor Images": "Alterar imagens do personagem"
     },
     "fr": {
+      "Switch Light": "Allumer/éteindre la lumière",
+      "Transform Light": "Transformer la lumière",
+      "Change Ambient Light": "Changer la lumière ambiante",
       "Scoped Wait": "Attente ciblée",
       "Wait for 3D": "Attendre la 3D",
       "Transform 3D Model": "Transformer le modèle 3D",
@@ -3362,6 +3383,9 @@ globalThis.RR_REVIEWED_TRANSLATIONS = {
       "Game Over": "Fin de partie"
     },
     "it": {
+      "Switch Light": "Accendi/spegni luce",
+      "Transform Light": "Trasforma luce",
+      "Change Ambient Light": "Cambia luce ambientale",
       "Scoped Wait": "Attesa mirata",
       "Wait for 3D": "Attendi 3D",
       "Transform 3D Model": "Trasforma modello 3D",
@@ -3378,6 +3402,9 @@ globalThis.RR_REVIEWED_TRANSLATIONS = {
       "Script": "Script"
     },
     "de": {
+      "Switch Light": "Licht schalten",
+      "Transform Light": "Licht transformieren",
+      "Change Ambient Light": "Umgebungslicht ändern",
       "Scoped Wait": "Gezieltes Warten",
       "Wait for 3D": "Auf 3D warten",
       "Transform 3D Model": "3D-Modell transformieren",
@@ -3414,6 +3441,9 @@ globalThis.RR_REVIEWED_TRANSLATIONS = {
       "Tint Picture": "Bild einfärben"
     },
     "ru": {
+      "Switch Light": "Переключить свет",
+      "Transform Light": "Преобразовать свет",
+      "Change Ambient Light": "Изменить окружающий свет",
       "Scoped Wait": "Целевое ожидание",
       "Wait for 3D": "Ждать 3D",
       "Transform 3D Model": "Преобразовать 3D-модель",
@@ -3444,6 +3474,9 @@ globalThis.RR_REVIEWED_TRANSLATIONS = {
       "Tint Picture": "Тонировать изображение"
     },
     "pl": {
+      "Switch Light": "Przełącz światło",
+      "Transform Light": "Przekształć światło",
+      "Change Ambient Light": "Zmień światło otoczenia",
       "Scoped Wait": "Oczekiwanie celowane",
       "Wait for 3D": "Czekaj na 3D",
       "Transform 3D Model": "Przekształć model 3D",
@@ -3573,6 +3606,9 @@ globalThis.RR_REVIEWED_TRANSLATIONS = {
       "Play 3D Effect": "Odtwórz efekt 3D"
     },
     "el": {
+      "Switch Light": "Εναλλαγή φωτός",
+      "Transform Light": "Μετασχηματισμός φωτός",
+      "Change Ambient Light": "Αλλαγή φωτός περιβάλλοντος",
       "Scoped Wait": "Στοχευμένη αναμονή",
       "Wait for 3D": "Αναμονή 3D",
       "Transform 3D Model": "Μετασχηματισμός μοντέλου 3D",
@@ -3598,6 +3634,9 @@ globalThis.RR_REVIEWED_TRANSLATIONS = {
       "Tint Picture": "Χρωματισμός εικόνας"
     },
     "ar": {
+      "Switch Light": "تبديل الضوء",
+      "Transform Light": "تحويل الضوء",
+      "Change Ambient Light": "تغيير الضوء المحيط",
       "Scoped Wait": "انتظار محدد النطاق",
       "Wait for 3D": "انتظار ثلاثي الأبعاد",
       "Transform 3D Model": "تحويل النموذج ثلاثي الأبعاد",
@@ -3642,6 +3681,9 @@ globalThis.RR_REVIEWED_TRANSLATIONS = {
       "Name Input Processing": "فتح إدخال الاسم"
     },
     "tr": {
+      "Switch Light": "Işığı aç/kapat",
+      "Transform Light": "Işığı dönüştür",
+      "Change Ambient Light": "Ortam ışığını değiştir",
       "Scoped Wait": "Kapsamlı bekleme",
       "Wait for 3D": "3B bekle",
       "Transform 3D Model": "3B modeli dönüştür",
@@ -3688,6 +3730,9 @@ globalThis.RR_REVIEWED_TRANSLATIONS = {
       "Name Input Processing": "Ad girişi işlemleri"
     },
     "id": {
+      "Switch Light": "Nyalakan/matikan cahaya",
+      "Transform Light": "Transformasi cahaya",
+      "Change Ambient Light": "Ubah cahaya sekitar",
       "Scoped Wait": "Tunggu tertarget",
       "Wait for 3D": "Tunggu 3D",
       "Transform 3D Model": "Transformasi model 3D",
@@ -3705,6 +3750,9 @@ globalThis.RR_REVIEWED_TRANSLATIONS = {
       "Replay BGM": "Lanjutkan BGM"
     },
     "vi": {
+      "Switch Light": "Bật/tắt đèn",
+      "Transform Light": "Biến đổi đèn",
+      "Change Ambient Light": "Đổi ánh sáng môi trường",
       "Scoped Wait": "Chờ theo phạm vi",
       "Wait for 3D": "Chờ 3D",
       "Transform 3D Model": "Biến đổi mô hình 3D",
@@ -3722,6 +3770,9 @@ globalThis.RR_REVIEWED_TRANSLATIONS = {
       "Replay BGM": "Tiếp tục BGM đã lưu"
     },
     "th": {
+      "Switch Light": "เปิด/ปิดแสงไฟ",
+      "Transform Light": "แปลงแสงไฟ",
+      "Change Ambient Light": "เปลี่ยนแสงโดยรอบ",
       "Scoped Wait": "รอตามขอบเขต",
       "Wait for 3D": "รอ 3D",
       "Transform 3D Model": "แปลงโมเดล 3D",
@@ -3741,34 +3792,40 @@ globalThis.RR_REVIEWED_TRANSLATIONS = {
   },
   "sections": {
     "ja": {
+      "Lighting": "照明",
       "Game Flow": "ゲームフロー",
       "Actor": "アクター",
       "Party": "パーティ",
       "Advanced": "上級"
     },
     "zh-Hant": {
+      "Lighting": "照明",
       "Game Flow": "遊戲流程",
       "Actor": "角色",
       "Party": "隊伍",
       "Advanced": "進階"
     },
     "zh-Hans": {
+      "Lighting": "照明",
       "Game Flow": "游戏流程",
       "Actor": "角色",
       "Party": "队伍",
       "Advanced": "高级"
     },
     "ko": {
+      "Lighting": "조명",
       "Game Flow": "게임 흐름",
       "Actor": "액터",
       "Party": "파티",
       "Advanced": "고급"
     },
     "es": {
+      "Lighting": "Iluminación",
       "Game Flow": "Flujo de juego",
       "Actor": "Personaje"
     },
     "pt": {
+      "Lighting": "Iluminação",
       "Game Flow": "Fluxo de jogo",
       "Message & Flow": "Mensagem e fluxo",
       "Map & Screen": "Mapa e tela",
@@ -3791,20 +3848,25 @@ globalThis.RR_REVIEWED_TRANSLATIONS = {
       "Advanced": "Avançado"
     },
     "fr": {
+      "Lighting": "Éclairage",
       "Game Flow": "Flux de jeu",
       "Actor": "Personnage"
     },
     "it": {
+      "Lighting": "Illuminazione",
       "Game Flow": "Flusso di gioco",
       "Actor": "Personaggio"
     },
     "de": {
+      "Lighting": "Beleuchtung",
       "Game Flow": "Spielfluss"
     },
     "ru": {
+      "Lighting": "Освещение",
       "Game Flow": "Ход игры"
     },
     "pl": {
+      "Lighting": "Oświetlenie",
       "Game Flow": "Przepływ gry",
       "Message & Flow": "Wiadomości i przepływ",
       "Map & Screen": "Mapa i ekran",
@@ -3830,10 +3892,12 @@ globalThis.RR_REVIEWED_TRANSLATIONS = {
       "User Interfaces": "Interfejsy użytkownika"
     },
     "el": {
+      "Lighting": "Φωτισμός",
       "Game Flow": "Ροή παιχνιδιού",
       "Actor": "Ήρωας"
     },
     "ar": {
+      "Lighting": "الإضاءة",
       "Game Flow": "تدفق اللعبة",
       "Message & Flow": "الرسائل والتدفق",
       "Map & Screen": "الخريطة والشاشة",
@@ -3859,6 +3923,7 @@ globalThis.RR_REVIEWED_TRANSLATIONS = {
       "User Interfaces": "واجهات المستخدم"
     },
     "tr": {
+      "Lighting": "Aydınlatma",
       "Game Flow": "Oyun akışı",
       "Message & Flow": "Mesaj ve akış",
       "Map & Screen": "Harita ve ekran",
@@ -3884,15 +3949,18 @@ globalThis.RR_REVIEWED_TRANSLATIONS = {
       "User Interfaces": "Kullanıcı arayüzleri"
     },
     "id": {
+      "Lighting": "Pencahayaan",
       "Game Flow": "Alur permainan",
       "Party": "Kelompok",
       "Timing": "Waktu"
     },
     "vi": {
+      "Lighting": "Ánh sáng",
       "Game Flow": "Luồng trò chơi",
       "Timing": "Thời điểm"
     },
     "th": {
+      "Lighting": "แสงไฟ",
       "Game Flow": "โฟลว์เกม",
       "Flow Control": "การควบคุมลำดับ",
       "Character": "ตัวละครบนแผนที่",

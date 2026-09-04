@@ -248,6 +248,14 @@ class EventCommandPicker {
                                 ]
                             },
                             {
+                                title: 'Lighting',
+                                commands: [
+                                    { name: 'Switch Light', code: 357, reactor: 'LightSwitch' },
+                                    { name: 'Transform Light', code: 357, reactor: 'TransformLight' },
+                                    { name: 'Change Ambient Light', code: 357, reactor: 'AmbientLight' }
+                                ]
+                            },
+                            {
                                 // Not 3D-specific: waits, and later the quest
                                 // system's commands, live under Game Flow.
                                 title: 'Game Flow',

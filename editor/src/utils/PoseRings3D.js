@@ -91,6 +91,8 @@
         const centre = rings.root.getWorldPosition(new THREE.Vector3());
         const nearest = {};
         for (const key of AXES) {
+            // A ring hidden by its owner (a light has no roll) is not there to grab.
+            if (!rings[key].group.visible) continue;
             const q = rings[key].group.getWorldQuaternion(new THREE.Quaternion());
             let best = null;
             for (let i = 0; i < 72; i++) {

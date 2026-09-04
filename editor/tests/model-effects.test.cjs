@@ -46,7 +46,7 @@ test('the runtime plays anchored animations through a stand-in target and regist
     assert.match(runtime, /current\.effects = sidecar \? Reactor3D\.readModelEffects\(sidecar\) : \[\];/);
     assert.match(runtime, /for \(const name of Reactor3D\.takeModelEffects\(character\)\)/);
     assert.match(runtime, /Reactor3D\.updateAnchoredAnimations\(holder\);/);
-    assert.match(read('runtime/reactor_main.js'), /runtime revision: 20260903.18/);
+    assert.match(read('runtime/reactor_main.js'), /runtime revision: 20260904.7/);
 });
 
 test('the editor wires the Play 3D Effect command and the Effects section', () => {
@@ -99,7 +99,7 @@ test('a model base transform wraps every instance and effects carry a turn', () 
     assert.equal((runtime.match(/applyModelTransform\(object, (?:this|Reactor3D)\.readModelTransform\(sidecar\)\)/g) || []).length, 5, 'every instance site applies the base transform');
     assert.match(runtime, /sprite\._animation = Object\.assign\(\{\}, animation, \{/, 'effect turn and size ride on a copy of the record');
     assert.match(runtime, /holder\.action = rule && \(rule\.repeat \|\| holder\.action\.repeat\)/, 'a repeating action starts over');
-    assert.match(read('runtime/reactor_main.js'), /runtime revision: 20260903.18/);
+    assert.match(read('runtime/reactor_main.js'), /runtime revision: 20260904.7/);
 });
 
 test('the 3D editor card chooses model, parts, bones and effects, and edits each with sliders', () => {
@@ -154,7 +154,7 @@ test('effects play on their own by state, and scale proportionally or per axis',
     const runtime = read('runtime/reactor_3d.js');
     assert.match(runtime, /Reactor3D\.updateTriggeredEffects\(holder, character, \{/);
     assert.match(runtime, /this\._handle\.setScale\(uniform \* axes\[0\], uniform \* axes\[1\], uniform \* axes\[2\]\);/);
-    assert.match(read('runtime/reactor_main.js'), /runtime revision: 20260903.18/);
+    assert.match(read('runtime/reactor_main.js'), /runtime revision: 20260904.7/);
     const db3d = read('editor/src/database/Database3DEditor.js');
     assert.match(db3d, /this\._fxPreviewDef = raw;/, 'the preview follows the live effect');
     assert.match(db3d, /_scaleSlidersHtml\(prefix, scale\)/);
@@ -195,7 +195,7 @@ test('video effects, mesh collision, repeat and player-relative controls are wir
     assert.match(runtime, /Reactor3D\.spawnVideoEffect = function\(effect, character, holder\)/);
     assert.match(read('runtime/reactor_media_surfaces.js'), /anchor: anchor,/);
     assert.match(read('runtime/reactor_media_surfaces.js'), /Reactor3D\.effectAnchorWorld\(holder\.object, \{ anchor: descriptor\.anchor \}/);
-    assert.match(read('runtime/reactor_main.js'), /runtime revision: 20260903.18/);
+    assert.match(read('runtime/reactor_main.js'), /runtime revision: 20260904.7/);
     const db3d = read('editor/src/database/Database3DEditor.js');
     assert.match(db3d, /class="r3d-fx-type"/);
     assert.match(db3d, /_playVideoPreview\(raw\) \{/);
@@ -437,4 +437,175 @@ test('a prop lists the tiles it blocks by the same rule, turned to its facing', 
     // The editor draws these tiles for the selected prop, in 3D and on the flat map.
     assert.match(fs.readFileSync(path.join(repoRoot, 'editor', 'src', 'MapEditor3D.js'), 'utf8'), /Reactor3D\.blockedTilesFor\(template, template\.userData\.reactorSidecar, spec, prop\.direction, prop\.x, prop\.y\)/);
     assert.match(fs.readFileSync(path.join(repoRoot, 'editor', 'src', 'ModelPropsManager.js'), 'utf8'), /Reactor3D\.blockedTilesFor\(template, template\.userData\.reactorSidecar, spec, prop\.direction, prop\.x, prop\.y\)/);
+});
+
+test('a model effect can be a light: read with bounds, placed at its anchor, aimed by the node', () => {
+    require(path.join(repoRoot, 'runtime', 'libs', 'three.js'));
+    const THREE = global.THREE;
+    const effects = Reactor3D.readModelEffects({ effects: [
+        { name: 'headlamp', type: 'light', light: { type: 'spot', color: '#ff8800', radius: 999, angle: 45, yaw: 10, pitch: -20, intensity: 9, duration: 30, flicker: 2 } },
+        { name: 'glow', type: 'light' },
+        { name: 'laser', type: 'light', light: { type: 'beam', width: 0.5 } }
+    ] });
+    assert.equal(effects[0].type, 'light');
+    assert.equal(effects[0].light.type, Reactor3D.LIGHT_SPOT);
+    assert.equal(effects[0].light.colour, 0xff8800);
+    assert.equal(effects[0].light.radius, 200, 'reach is bounded');
+    assert.equal(effects[0].light.intensity, 4, 'intensity is bounded');
+    assert.equal(effects[0].light.flicker, 1, 'flicker is bounded');
+    assert.equal(effects[0].light.duration, 30);
+    assert.equal(effects[0].light.pitch, -20);
+    assert.equal(effects[1].light.type, Reactor3D.LIGHT_POINT, 'no spec is a plain point');
+    assert.equal(effects[1].light.radius, 3);
+    assert.equal(effects[1].light.duration, 0);
+    assert.equal(effects[1].light.body, true);
+    assert.equal(effects[1].light.shadow, false, 'a carried light does not cast by default');
+    assert.equal(effects[2].light.type, Reactor3D.LIGHT_BEAM);
+    assert.equal(effects[2].light.radius, Reactor3D.DEFAULT_BEAM_LENGTH);
+    assert.equal(effects[2].light.width, 0.5);
+
+    // A point light sits where the anchor is: tile x/y from the world
+    // position, the height absolute.
+    const object = new THREE.Group();
+    object.position.set(10.5, 0, 21);
+    const socket = new THREE.Group();
+    socket.name = 'Socket';
+    socket.position.set(0, 2, 0);
+    object.add(socket);
+    const point = Reactor3D.effectLight(object, { name: 'glow', anchor: { part: 'Socket', offset: [0, 0.5, 0] }, light: effects[1].light }, 'e1:glow');
+    assert.equal(point.id, 'e1:glow');
+    assert.ok(Math.abs(point.x - 10) < 1e-9 && Math.abs(point.y - 20) < 1e-9, 'tile position from the world point');
+    assert.ok(Math.abs(point.height - 2.5) < 1e-9);
+    assert.equal(point.groundY, 0, 'the height is absolute');
+    assert.equal(point.yaw, 0, 'a point light has no aim');
+
+    // A spot's aim is authored in the MODEL's frame: a node's own rest
+    // axes (a bone's point wherever the rig left them) never turn it, so
+    // yaw 0 on a socket turned a quarter at rest still aims model-forward.
+    socket.rotation.y = Math.PI / 2;
+    const headlamp = light => ({ name: 'headlamp', anchor: { part: 'Socket', offset: [0, 0, 0] }, light: Object.assign({}, effects[0].light, light) });
+    const rest = Reactor3D.effectLight(object, headlamp({ yaw: 0, pitch: 0 }), 'e1:headlamp');
+    assert.ok(Math.abs(rest.yaw) < 1e-6, 'a rest turn of the node is not an aim (' + rest.yaw + ')');
+    // The model's own facing turns it: faced a quarter about Y, yaw 0 aims +X, scene yaw 90.
+    object.rotation.y = Math.PI / 2;
+    const faced = Reactor3D.effectLight(object, headlamp({ yaw: 0, pitch: 0 }), 'e1:headlamp');
+    assert.ok(Math.abs(faced.yaw - 90) < 1e-6, 'yaw follows the model (' + faced.yaw + ')');
+    object.rotation.y = 0;
+    // And so does how far the part has MOVED from its rest pose: a socket
+    // that rests at a quarter turn and swings another quarter aims +X.
+    socket.userData.__restQuaternion = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2);
+    socket.rotation.y = Math.PI;
+    const swung = Reactor3D.effectLight(object, headlamp({ yaw: 0, pitch: 0 }), 'e1:headlamp');
+    assert.ok(Math.abs(swung.yaw - 90) < 1e-6, 'yaw follows the part\'s swing (' + swung.yaw + ')');
+    assert.ok(Math.abs(swung.pitch) < 1e-6);
+    const spot = swung;
+    const tilted = Reactor3D.effectLight(object, headlamp({ yaw: 0, pitch: 30 }), 'e1:headlamp');
+    assert.ok(Math.abs(tilted.pitch - 30) < 1e-6, 'pitch survives the turn');
+    assert.equal(spot.type, Reactor3D.LIGHT_SPOT);
+    assert.equal(spot.angle, 45);
+});
+
+test('light effects switch, time out, follow a state, and reach the compositor', () => {
+    const frame = { now: 100 };
+    const savedGraphics = global.Graphics;
+    global.Graphics = { get frameCount() { return frame.now; } };
+    try {
+        const [toggle, timed, always, idle] = Reactor3D.readModelEffects({ effects: [
+            { name: 'toggle', type: 'light', trigger: 'action' },
+            { name: 'timed', type: 'light', trigger: 'action', light: { duration: 30 } },
+            { name: 'always', type: 'light', trigger: 'always' },
+            { name: 'idle', type: 'light', trigger: 'idle' }
+        ] });
+        const holder = { effects: [toggle, timed, always, idle], object: null };
+        // A duration-0 light is a switch.
+        Reactor3D.fireNamedEffect(toggle, null, holder);
+        assert.ok(holder.lights.toggle, 'first fire: on');
+        assert.equal(holder.lights.toggle.until, 0, 'open-ended');
+        Reactor3D.fireNamedEffect(toggle, null, holder);
+        assert.equal(holder.lights.toggle, undefined, 'second fire: off');
+        // A timed light burns its duration, and a refire restarts the clock.
+        Reactor3D.fireNamedEffect(timed, null, holder);
+        assert.equal(holder.lights.timed.until, 130);
+        frame.now = 120;
+        Reactor3D.fireNamedEffect(timed, null, holder);
+        assert.equal(holder.lights.timed.until, 150, 'restarted');
+        Reactor3D.expireEffectLights(holder, 149);
+        assert.ok(holder.lights.timed, 'still burning at 149');
+        Reactor3D.expireEffectLights(holder, 150);
+        assert.equal(holder.lights.timed, undefined, 'out at 150');
+        // State triggers: on while the state holds, off otherwise.
+        Reactor3D.updateTriggeredEffects(holder, null, { moving: true, dashing: false });
+        assert.ok(holder.lights.always, 'always is on');
+        assert.equal(holder.lights.idle, undefined, 'idle is off while moving');
+        Reactor3D.updateTriggeredEffects(holder, null, { moving: false, dashing: false });
+        assert.ok(holder.lights.idle, 'idle comes on at rest');
+        assert.ok(holder.lights.always);
+        // Script access by name, through the holder lookup.
+        const savedHolderFor = Reactor3D.modelHolderFor;
+        Reactor3D.modelHolderFor = () => holder;
+        try {
+            assert.equal(Reactor3D.setModelEffectLight({}, 'toggle', true), true);
+            assert.ok(holder.lights.toggle);
+            assert.equal(Reactor3D.setModelEffectLight({}, 'nope', true), false);
+        } finally {
+            Reactor3D.modelHolderFor = savedHolderFor;
+        }
+
+        // The compositor reads the live ones, at their anchors, and drops an
+        // expired one; a burning light is the map's opt-in.
+        require(path.join(repoRoot, 'runtime', 'libs', 'three.js'));
+        const THREE = global.THREE;
+        holder.object = new THREE.Group();
+        holder.object.position.set(3.5, 1, 6);
+        holder.lights.timed = { effect: timed, until: 10 };
+        const savedInstances = Reactor3D.modelInstances;
+        Reactor3D.modelInstances = () => new Map([['e7', holder]]);
+        try {
+            assert.equal(Reactor3D.hasLiveEffectLights(), true);
+            const lights = Reactor3D.modelEffectLights();
+            const ids = lights.map(light => light.id).sort();
+            assert.deepEqual(ids, ['e7:always', 'e7:idle', 'e7:toggle'], 'the expired one is not drawn');
+            assert.ok(Math.abs(lights[0].x - 3) < 1e-9 && Math.abs(lights[0].y - 5) < 1e-9 && Math.abs(lights[0].height - 1) < 1e-9);
+            assert.equal(lights[0].groundY, 0);
+            const collected = Reactor3D.collectLights();
+            assert.ok(collected.some(light => light.id === 'e7:always'), 'collectLights carries them');
+            const savedIsMap3D = Reactor3D.isMap3D;
+            Reactor3D.isMap3D = () => true;
+            try {
+                assert.equal(Reactor3D.wantsLights3D({ reactor3d: {} }), true, 'a burning effect light lights the map');
+            } finally {
+                Reactor3D.isMap3D = savedIsMap3D;
+            }
+            holder.lights = {};
+            assert.equal(Reactor3D.hasLiveEffectLights(), false);
+        } finally {
+            Reactor3D.modelInstances = savedInstances;
+        }
+    } finally {
+        if (savedGraphics === undefined) delete global.Graphics; else global.Graphics = savedGraphics;
+    }
+});
+
+test('a light that names its ground stands at an absolute height, with no facade lift on top', () => {
+    const scene = Object.create(Reactor3D.MapScene.prototype);
+    const placed = [];
+    scene.lightBodies = () => ({ place: (i, l) => placed.push(l), trim: () => {} });
+    const saved = { facadeAt: Reactor3D.facadeAt, surfaceHeightAt: Reactor3D.surfaceHeightAt };
+    Reactor3D.facadeAt = () => ({ height: 5, lift: 2, z: 9 });
+    Reactor3D.surfaceHeightAt = () => 5;
+    try {
+        scene.syncVolumeLights([
+            { type: 'point', x: 1, y: 1, height: 1, radius: 4, colour: 0xffffff, intensity: 1 },
+            { type: 'point', x: 1, y: 1, height: 1.5, groundY: 0, radius: 4, colour: 0xffffff, intensity: 1 }
+        ], { x: 1, y: 1 });
+        const pos = Reactor3D.lightUniforms().rrLightPos.value;
+        assert.equal(pos[1], 8, 'a map light stands on the facade, lifted');
+        assert.equal(pos[5], 1.5, 'an anchored light is exactly where it says');
+        scene.syncVolumeLights([], null);
+    } finally {
+        Reactor3D.facadeAt = saved.facadeAt;
+        Reactor3D.surfaceHeightAt = saved.surfaceHeightAt;
+    }
+    const three = read('runtime/reactor_3d.js');
+    assert.equal((three.match(/facade && light\.groundY === undefined \? facade\.lift : 0/g) || []).length, 2, 'both pools agree');
 });

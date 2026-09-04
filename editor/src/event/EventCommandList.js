@@ -116,6 +116,7 @@ class EventCommandList {
             ? new QuestCommandEditor(eventEditor.databaseManager) : null;
         this.camera3DEditor = typeof Camera3DEditor !== 'undefined' ? new Camera3DEditor() : null;
         this.transformModel3DEditor = typeof TransformModel3DEditor !== 'undefined' ? new TransformModel3DEditor() : null;
+        this.lightCommandEditor = typeof LightCommandEditor !== 'undefined' ? new LightCommandEditor() : null;
         this.waitForModel3DEditor = typeof WaitForModel3DEditor !== 'undefined' ? new WaitForModel3DEditor() : null;
         this.playModelEffectEditor = typeof PlayModelEffectEditor !== 'undefined' ? new PlayModelEffectEditor() : null;
         this.videoSurfaceEditor = typeof VideoSurfaceEditor !== 'undefined'
@@ -480,6 +481,7 @@ class EventCommandList {
         if (name === 'PlayModelAnimation') return this.playModelAnimationEditor;
         if (name === 'ChangeCamera3D') return this.camera3DEditor;
         if (name === 'TransformModel3D') return this.transformModel3DEditor;
+        if (typeof LightCommandEditor !== 'undefined' && LightCommandEditor.supports(name)) return this.lightCommandEditor;
         if (name === 'WaitForModelAnimation' || name === 'ScopedWait') return this.waitForModel3DEditor;
         if (name === 'PlayModelEffect') return this.playModelEffectEditor;
         if (name === 'CallUserInterface') return this.callUserInterfaceEditor;
@@ -2040,6 +2042,12 @@ class EventCommandList {
                         ? VideoSurfaceEditor.OPERATIONS?.[params[1]] : null;
                     info.name = this._commandName(canonical || commandName);
                     description = '';
+                    // The lighting commands say what they do in one line
+                    // ("#alarm → off"), instead of the raw argument dump.
+                    if (typeof LightCommandEditor !== 'undefined' && LightCommandEditor.supports(params[1])) {
+                        description = LightCommandEditor.summary(params[1], params[3]);
+                        break;
+                    }
                 } else if (pluginName && commandName) {
                     description = `${pluginName}: ${commandName}`;
                 } else if (pluginName) {

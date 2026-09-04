@@ -2521,13 +2521,72 @@
             });
         }
         if (global.Scene_Base && global.ScreenSprite) {
-            // MV faded through a ScreenSprite the scene owned; MZ fades through
-            // a colour filter. Plugins that borrow the sprite for their own
-            // overlay (BraverAutosave's notice) get MV's.
+            // MV faded a scene through a ScreenSprite it owned, and plugins
+            // read and write `_fadeSprite.opacity` directly: SRD_GameOverCore
+            // waits for it to reach 0, BraverAutosave forces it to 255 under
+            // its notice and lets fadeInForTransfer bring it back,
+            // MOG_BattleTransitions zeroes it. MZ fades through the scene's
+            // colour filter (`_fadeOpacity`), so a real ScreenSprite added
+            // beside that filter is a black screen nothing ever lifts. The
+            // scene's `_fadeSprite` is a ScreenSprite whose opacity IS the
+            // filter's fade opacity; it is never on the display list.
+            var fadeSpriteFor = function(scene) {
+                var sprite = new ScreenSprite();
+                var refresh = function() {
+                    if (scene._colorFilter && typeof scene.updateColorFilter === "function") scene.updateColorFilter();
+                };
+                Object.defineProperty(sprite, "opacity", {
+                    get: function() { return Number(scene._fadeOpacity) || 0; },
+                    set: function(value) {
+                        scene._fadeOpacity = Math.max(0, Math.min(255, Number(value) || 0));
+                        refresh();
+                    },
+                    configurable: true
+                });
+                sprite.setWhite = function() { scene._fadeWhite = 1; refresh(); };
+                sprite.setBlack = function() { scene._fadeWhite = 0; refresh(); };
+                return sprite;
+            };
+            var own = function(scene, value) {
+                Object.defineProperty(scene, "_fadeSprite", { value: value, writable: true, configurable: true, enumerable: true });
+                return value;
+            };
+            if (!Object.getOwnPropertyDescriptor(Scene_Base.prototype, "_fadeSprite")) {
+                Object.defineProperty(Scene_Base.prototype, "_fadeSprite", {
+                    get: function() { return own(this, fadeSpriteFor(this)); },
+                    // A plugin that assigns its own (GALV_MenuFade's snapshot
+                    // sprite) or nulls it from an MV-bodied initialize keeps
+                    // what it assigned, as MV would.
+                    set: function(value) { own(this, value); },
+                    configurable: true
+                });
+            }
             def(Scene_Base.prototype, "createFadeSprite", function(white) {
-                this._fadeSprite = new ScreenSprite();
+                if (!this._fadeSprite) this._fadeSprite = fadeSpriteFor(this);
                 if (white) this._fadeSprite.setWhite(); else this._fadeSprite.setBlack();
-                this.addChild(this._fadeSprite);
+            });
+            // MV had no Scene_MenuBase.update of its own, so a plugin could run
+            // it on any scene (SRD_GameOverCore runs it on Scene_Gameover, a
+            // Scene_Base). MZ's calls updatePageButtons, which only a menu
+            // scene defines; the base scene gets the same guarded body.
+            def(Scene_Base.prototype, "updatePageButtons", function() {
+                if (this._pageupButton && this._pagedownButton && typeof this.arePageButtonsEnabled === "function") {
+                    var enabled = this.arePageButtonsEnabled();
+                    this._pageupButton.visible = enabled;
+                    this._pagedownButton.visible = enabled;
+                }
+            });
+            // MV's startFadeIn/Out began with createFadeSprite, which is what
+            // brought a nulled sprite back before the fade touched it.
+            ["startFadeIn", "startFadeOut"].forEach(function(name) {
+                var base = Scene_Base.prototype[name];
+                if (typeof base !== "function" || base.__mvFadeSprite) return;
+                var wrapped = function(duration, white) {
+                    if (!this._fadeSprite) this.createFadeSprite(white);
+                    return base.apply(this, arguments);
+                };
+                wrapped.__mvFadeSprite = true;
+                Scene_Base.prototype[name] = wrapped;
             });
         }
         if (global.Window_Selectable) {
@@ -5341,6 +5400,130 @@
     // video parallax whose source fails to load). MZ's core treats them as
     // fatal — printError + stop() froze the whole game on a rejected
     // video.play(). Log and keep running, like MV did.
+    // TIER 2 — the hand-edited MV corescript some released games ship
+    // (Braver 1.6.5's rpg_scenes.js and rpg_objects.js, whose plugins assume
+    // the edits). Every piece is additive: stock data and stock plugins see
+    // the stock behaviour, and each is marked so a second install is a no-op.
+    var BRAVER_FAMILIAR_TROOPS = [202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214];
+    function installModdedCorescriptCompatibility() {
+        var mark = function(fn) { fn.__mvModdedCore = true; return fn; };
+        var marked = function(proto, name) { return proto && proto[name] && proto[name].__mvModdedCore; };
+
+        // Scene_BattlePrep: a Scene_MenuBase shell that BraverBattlePrep,
+        // BraverCommunityChallenges and BraverDraftMode extend.
+        if (global.Scene_MenuBase && typeof global.Scene_BattlePrep !== "function") {
+            var Scene_BattlePrep = function Scene_BattlePrep() { this.initialize.apply(this, arguments); };
+            Scene_BattlePrep.prototype = Object.create(Scene_MenuBase.prototype);
+            Scene_BattlePrep.prototype.constructor = Scene_BattlePrep;
+            global.Scene_BattlePrep = Scene_BattlePrep;
+        }
+
+        // The action result remembers its target (BraverCascade, YEP
+        // AbsorptionBarrier and BattleEngineCore read it). The reference is
+        // non-enumerable so JsonEx never follows it: an actor's result
+        // targeting itself is a cycle a save cannot encode, which the modded
+        // corescript left for BraverMiscFixes to clear by hand.
+        if (global.Game_Action && !marked(Game_Action.prototype, "apply")) {
+            var baseApply = Game_Action.prototype.apply;
+            Game_Action.prototype.apply = mark(function(target) {
+                var result = target && typeof target.result === "function" ? target.result() : null;
+                if (result) Object.defineProperty(result, "target", { value: target, writable: true, configurable: true, enumerable: false });
+                return baseApply.apply(this, arguments);
+            });
+        }
+
+        // A skill with the "Skilltype Seal Immunity" note tag is usable
+        // while its skill type is sealed.
+        if (global.Game_BattlerBase && !marked(Game_BattlerBase.prototype, "meetsSkillConditions")) {
+            Game_BattlerBase.prototype.meetsSkillConditions = mark(function(skill) {
+                return (
+                    this.meetsUsableItemConditions(skill) &&
+                    this.isSkillWtypeOk(skill) &&
+                    this.canPaySkillCost(skill) &&
+                    !this.isSkillSealed(skill.id) &&
+                    (!this.isSkillTypeSealed(skill.stypeId) || !!(skill.meta && skill.meta["Skilltype Seal Immunity"]))
+                );
+            });
+        }
+
+        // Enemy drops go through one overridable reducer (BraverLootPity
+        // replaces it), and a drop may carry a `rate` instead of the
+        // editor's denominator. A stock drop rolls exactly as before.
+        if (global.Game_Enemy && !marked(Game_Enemy.prototype, "makeDropItems")) {
+            if (typeof Game_Enemy.prototype.dropItemsReducer !== "function") {
+                Game_Enemy.prototype.dropItemsReducer = mark(function(r, di) {
+                    var denominator;
+                    if (di.rate != null) denominator = 1 / di.rate;
+                    else if (di.denominator != null) denominator = di.denominator;
+                    else return r;
+                    if (di.kind > 0 && Math.random() * denominator < this.dropItemRate()) {
+                        return r.concat(this.itemObject(di.kind, di.dataId));
+                    }
+                    return r;
+                });
+            }
+            Game_Enemy.prototype.makeDropItems = mark(function() {
+                var self = this;
+                return this.enemy().dropItems.reduce(function(r, di) { return self.dropItemsReducer(r, di); }, []);
+            });
+        }
+
+        // Familiar and pet troops summoned as reinforcements do not keep a
+        // battle going. Which troops those are is the game's data, read from
+        // `Braver.familiarTroops` when the game declares it and Braver 1.6.5's
+        // list otherwise; a game without the Braver namespace and HIME's
+        // reinforcement counter is untouched.
+        if (global.Game_Unit && !marked(Game_Unit.prototype, "isAllDead")) {
+            var baseAllDead = Game_Unit.prototype.isAllDead;
+            Game_Unit.prototype.isAllDead = mark(function() {
+                var braver = global.Braver, troop = global.$gameTroop;
+                if (this === global.$gameParty || !braver || !troop || typeof troop.numTroopEnemiesAlive !== "function") {
+                    return baseAllDead.call(this);
+                }
+                var troops = Array.isArray(braver.familiarTroops) ? braver.familiarTroops : BRAVER_FAMILIAR_TROOPS;
+                var familiars = 0;
+                for (var i = 0; i < troops.length; i++) familiars += troop.numTroopEnemiesAlive(troops[i], true) || 0;
+                return this.aliveMembers().length === familiars;
+            });
+        }
+
+        // An event whose data is gone, or whose pages all fail their
+        // conditions, reads as an empty page rather than throwing.
+        if (global.Game_Event && !marked(Game_Event.prototype, "page")) {
+            Game_Event.prototype.page = mark(function() {
+                var event = this.event();
+                return (event && event.pages[this._pageIndex]) || {};
+            });
+            Game_Event.prototype.list = mark(function() {
+                return this.page().list || [];
+            });
+            Game_Event.prototype.findProperPageIndex = mark(function() {
+                var event = this.event();
+                if (!event) return -1;
+                var pages = event.pages;
+                for (var i = pages.length - 1; i >= 0; i--) {
+                    if (this.meetsConditions(pages[i])) return i;
+                }
+                return -1;
+            });
+        }
+
+        // Battle Processing accepts a troop id in place of its parameter
+        // list: BraverBattlePrep pre-calculates the troop and passes the
+        // number, with escape and defeat flags read from the command itself.
+        if (global.Game_Interpreter && !marked(Game_Interpreter.prototype, "command301")) {
+            var base301 = Game_Interpreter.prototype.command301;
+            Game_Interpreter.prototype.command301 = mark(function(params) {
+                if (typeof params === "number") {
+                    var command = typeof this.currentCommand === "function" ? this.currentCommand() : null;
+                    var list = this._params || (command && command.parameters) || [];
+                    params = [0, params, list[2], list[3]];
+                }
+                return base301.call(this, params);
+            });
+        }
+    }
+
     function installPromiseRejectionCompatibility() {
         if (!global.SceneManager) return;
         SceneManager.onReject = function(event) {
@@ -5368,6 +5551,7 @@
         installBattleFieldOffsetCompatibility();
         installAnimationMirrorCompatibility();
         installBattleInputGateCompatibility();
+        installModdedCorescriptCompatibility();
         installPromiseRejectionCompatibility();
     }
 

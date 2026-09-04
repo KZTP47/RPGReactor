@@ -14,7 +14,7 @@
  */
 class LightingManager {
     /** Bumped with every Lighting change; shown at the panel's foot. */
-    static BUILD = 'r9 · 2026-08-31';
+    static BUILD = 'r10 · 2026-09-04';
 
     constructor(projectController) {
         this.projectController = projectController;
@@ -215,32 +215,14 @@ class LightingManager {
      * streak along it, while a lamp a tile or two up lights a room the way
      * a lamp does and throws what stands in it onto the floor.
      */
+    /** The shared preset table, each chip named in the current locale. */
     _presets() {
-        return [
-            { key: 'point', label: this._k('lit.point'),
-              template: { key: 'point', type: 'point', color: '#ffcf7d', radius: 3, intensity: 1, height: 1.5 } },
-            { key: 'spot', label: this._k('lit.spot'),
-              template: { key: 'spot', type: 'spot', color: '#fff2cc', radius: 6, intensity: 1, height: 3, pitch: -60 } },
-            { key: 'candle', label: this._k('lit.preset.candle'),
-              template: { key: 'candle', type: 'point', color: '#ffb45e', radius: 2.5, intensity: 1.1, height: 0.6, flicker: 0.6 } },
-            { key: 'lamp', label: this._k('lit.preset.lamp'),
-              template: { key: 'lamp', type: 'point', color: '#ffd9a0', radius: 4, intensity: 1.2, height: 2 } },
-            { key: 'neon', label: this._k('lit.preset.neon'),
-              template: { key: 'neon', type: 'point', color: '#ff2d95', radius: 5, intensity: 1.4, height: 2.5, tag: 'neon' } },
-            { key: 'alarm', label: this._k('lit.preset.alarm'),
-              template: { key: 'alarm', type: 'point', color: '#ff1720', radius: 6, intensity: 1.4, height: 3,
-                  pulse: { min: 0.3, max: 1, period: 150 }, tag: 'alarm' } },
-            { key: 'screen', label: this._k('lit.preset.screen'),
-              template: { key: 'screen', type: 'point', color: '#7f9bff', radius: 3, intensity: 1, height: 1, flicker: 0.4 } },
-            { key: 'torch', label: this._k('lit.preset.torch'),
-              template: { key: 'torch', type: 'spot', color: '#eaf6ff', radius: 7, angle: 30, intensity: 0.9, height: 1.2, pitch: -20, flicker: 0.08 } },
-            // A compound: one drop places the whole fixture, tagged together.
-            { key: 'streetlamp', label: this._k('lit.preset.streetlamp'),
-              template: { key: 'streetlamp', color: '#ffd9a0', type: 'point', compound: [
-                  { type: 'point', color: '#ffd9a0', radius: 5.5, intensity: 1.2, height: 3 },
-                  { type: 'point', color: '#fff3d6', radius: 1.2, intensity: 1.6, height: 3.2, flicker: 0.06 }
-              ] } }
-        ];
+        const table = typeof RRMapLights !== 'undefined' && RRMapLights.PRESETS ? RRMapLights.PRESETS : [];
+        return table.map(preset => ({
+            key: preset.key,
+            label: this._k(preset.labelKey),
+            template: RRMapLights.presetTemplate(preset.key)
+        }));
     }
 
     armPlacement(preset) {
@@ -249,11 +231,11 @@ class LightingManager {
             this._placingTemplate = null;
             this._armedKey = null;
         } else if (typeof preset === 'string') {
-            this.placing = preset === 'spot' ? 'spot' : 'point';
+            this.placing = preset === 'spot' ? 'spot' : preset === 'beam' ? 'beam' : 'point';
             this._placingTemplate = null;
             this._armedKey = this.placing;
         } else {
-            this.placing = preset.type === 'spot' ? 'spot' : 'point';
+            this.placing = preset.type === 'spot' ? 'spot' : preset.type === 'beam' ? 'beam' : 'point';
             this._placingTemplate = preset;
             this._armedKey = preset.key || this.placing;
         }
@@ -264,7 +246,7 @@ class LightingManager {
         const map = this.map();
         if (!map || typeof RRMapLights === 'undefined') return null;
         const template = typeof preset === 'string'
-            ? { type: preset, color: preset === 'spot' ? '#fff2cc' : '#ffcf7d' }
+            ? { type: preset, color: preset === 'spot' ? '#fff2cc' : preset === 'beam' ? '#ff2a2a' : '#ffcf7d' }
             : Object.assign({}, preset);
         this.pushUndo();
         const at = {
@@ -403,7 +385,7 @@ class LightingManager {
             }
             out.push({
                 id: light.id, type: light.type, x, y, height: light.height,
-                radius, intensity, angle: light.angle, yaw: light.yaw, pitch: light.pitch,
+                radius, intensity, angle: light.angle, width: light.width, yaw: light.yaw, pitch: light.pitch,
                 colour: this._colourNumber(light.color), occlude: light.occlude,
                 shadow: light.shadow,
                 animated: !!(light.pulse || light.flicker),
@@ -431,10 +413,12 @@ class LightingManager {
 
     _lightTexture(kind) {
         if (typeof Reactor3D === 'undefined' || typeof PIXI === 'undefined') return null;
-        const key = kind === 'cone' ? '_editorConeLightPixi' : '_editorRoundLightPixi';
+        const key = kind === 'cone' ? '_editorConeLightPixi'
+            : kind === 'beam' ? '_editorBeamLightPixi' : '_editorRoundLightPixi';
         if (!Reactor3D[key]) {
-            const canvas = kind === 'cone'
-                ? Reactor3D.coneLightCanvas() : Reactor3D.roundLightCanvas();
+            const canvas = kind === 'cone' ? Reactor3D.coneLightCanvas()
+                : kind === 'beam' ? (Reactor3D.beamLightCanvas ? Reactor3D.beamLightCanvas() : Reactor3D.coneLightCanvas())
+                    : Reactor3D.roundLightCanvas();
             Reactor3D[key] = PIXI.Texture.from(canvas);
         }
         return Reactor3D[key];
@@ -495,13 +479,16 @@ class LightingManager {
                 this._glowSprites.push(sprite);
             }
             const spot = light.type === 'spot';
-            sprite.texture = this._lightTexture(spot ? 'cone' : 'round');
+            const beam = light.type === 'beam';
+            sprite.texture = this._lightTexture(beam ? 'beam' : spot ? 'cone' : 'round');
             sprite.visible = true;
             const reach = Math.max(1, light.radius * tw);
-            if (spot) {
+            if (spot || beam) {
                 sprite.anchor.set(0.5, 1);
                 const spread = (light.angle * Math.PI) / 360;
-                sprite.width = Math.max(2, 2 * Math.tan(spread) * reach);
+                sprite.width = beam
+                    ? Math.max(2, (light.width || 0.08) * tw)
+                    : Math.max(2, 2 * Math.tan(spread) * reach);
                 sprite.height = Math.max(2, reach);
                 // Schema yaw is clockwise from south on screen; the texture
                 // points up, so south is a half turn.
@@ -540,7 +527,7 @@ class LightingManager {
                 .fill({ color: light.on ? colour : 0x555555, alpha: 0.95 })
                 .stroke({ width: 2, color: selected ? 0xffffff : 0x000000, alpha: 0.9 });
             if (!selected) continue;
-            if (light.type === 'spot') {
+            if (light.type === 'spot' || light.type === 'beam') {
                 const aim = this._aimPoint(light, at);
                 const spread = (light.angle * Math.PI) / 360;
                 const yaw = (light.yaw * Math.PI) / 180;
@@ -548,10 +535,15 @@ class LightingManager {
                     x: x + Math.sin(yaw + side * spread) * light.radius * tw,
                     y: y + Math.cos(yaw + side * spread) * light.radius * tw
                 });
-                const left = dir(-1), right = dir(1);
-                g.moveTo(x, y).lineTo(left.x, left.y)
-                    .moveTo(x, y).lineTo(right.x, right.y)
-                    .stroke({ width: 1.5 / zoom, color: 0xffffff, alpha: 0.55 });
+                if (light.type === 'beam') {
+                    g.moveTo(x, y).lineTo(aim.x * tw, aim.y * tw)
+                        .stroke({ width: 3 / zoom, color: colour, alpha: 0.85 });
+                } else {
+                    const left = dir(-1), right = dir(1);
+                    g.moveTo(x, y).lineTo(left.x, left.y)
+                        .moveTo(x, y).lineTo(right.x, right.y)
+                        .stroke({ width: 1.5 / zoom, color: 0xffffff, alpha: 0.55 });
+                }
                 g.circle(aim.x * tw, aim.y * tw, 8 / zoom)
                     .fill({ color: 0xffffff, alpha: 0.9 })
                     .stroke({ width: 2 / zoom, color: 0x000000, alpha: 0.9 });
@@ -656,6 +648,18 @@ class LightingManager {
         if (!this.active || event.button !== 0) return;
         const m3d = this.mapEditor3D();
         if (!m3d || !m3d.groundPointAt) return;
+        // A ring or an arrow on the selected light outranks whatever is
+        // under it: the gizmo is what the cursor is on.
+        if (!this.placing) {
+            const hold = this._pickGizmo3D(event.clientX, event.clientY);
+            if (hold) {
+                this.pushUndo();
+                this._start3DDrag({ gizmo: hold });
+                event.preventDefault();
+                event.stopImmediatePropagation();
+                return;
+            }
+        }
         const at = m3d.groundPointAt(event.clientX, event.clientY);
         if (!at) return;
         if (this.placing) {
@@ -676,13 +680,17 @@ class LightingManager {
         if (hit.id !== this.selectedId) this.select(hit.id);
         this.pushUndo();
         const anchor = this._lightAnchor(hit) || at;
-        this._drag3d = { id: hit.id, offsetX: at.x - anchor.x, offsetY: at.y - anchor.y };
+        this._start3DDrag({ id: hit.id, offsetX: at.x - anchor.x, offsetY: at.y - anchor.y });
+        event.preventDefault();
+        event.stopImmediatePropagation();
+    }
+
+    _start3DDrag(state) {
+        this._drag3d = state;
         this._on3DMove = e => this._pointer3DMove(e);
         this._on3DUp = () => this._end3DDrag();
         window.addEventListener('pointermove', this._on3DMove, true);
         window.addEventListener('pointerup', this._on3DUp, true);
-        event.preventDefault();
-        event.stopImmediatePropagation();
     }
 
     _pointer3DMove(event) {
@@ -690,6 +698,10 @@ class LightingManager {
         const map = this.map();
         const m3d = this.mapEditor3D();
         if (!drag || !map || !m3d || typeof RRMapLights === 'undefined') return;
+        if (drag.gizmo) {
+            this._dragGizmo3D(drag.gizmo, event.clientX, event.clientY);
+            return;
+        }
         const at = m3d.groundPointAt(event.clientX, event.clientY);
         if (!at) return;
         const light = RRMapLights.get(map, drag.id);
@@ -708,10 +720,115 @@ class LightingManager {
         if (this._on3DUp) window.removeEventListener('pointerup', this._on3DUp, true);
         this._on3DMove = null;
         this._on3DUp = null;
+        if (this._rings3d && typeof RRPoseRings3D !== 'undefined') RRPoseRings3D.emphasize(this._rings3d, null, false);
+        if (this._arrows3d && typeof RRAxisArrows3D !== 'undefined') RRAxisArrows3D.emphasize(this._arrows3d, null, false);
         if (this._drag3d) {
             this._drag3d = null;
             this._syncPanel();
         }
+    }
+
+    /**
+     * The world position of a light's source: its anchor tile's centre, the
+     * ground there, and its height — the runtime's own placing rule.
+     */
+    _lightWorld(anchor, height) {
+        const m3d = this.mapEditor3D();
+        const ground = typeof Reactor3D !== 'undefined' && Reactor3D.elevationAt && m3d?.currentMap
+            ? Reactor3D.elevationAt(m3d.currentMap(), Math.round(anchor.x), Math.round(anchor.y))
+            : 0;
+        return { x: anchor.x + 0.5, y: ground + (Number(height) || 0), z: anchor.y + 1 };
+    }
+
+    /**
+     * The gizmo the props wear, on the selected light: axis arrows slide the
+     * source along X, Z and up; the green ring turns the aim and the red ring
+     * tilts it. Nothing has a roll, and a point light has nothing to aim, so
+     * it wears the arrows alone. Yaw and pitch flip sign into the scene's
+     * frame the way the compositor feed does.
+     */
+    _syncGizmo3D(scene, light, anchor) {
+        if (typeof RRPoseRings3D === 'undefined' || typeof RRAxisArrows3D === 'undefined') return;
+        const root = scene.scene();
+        if (!root) return;
+        if (!this._rings3d) {
+            this._rings3d = RRPoseRings3D.create(THREE, 0.75, 'light-rings');
+            this._rings3d.roll.group.visible = false;
+        }
+        if (!this._arrows3d) this._arrows3d = RRAxisArrows3D.create(THREE, 0.9, 'light-arrows');
+        if (this._rings3d.root.parent !== root) root.add(this._rings3d.root);
+        if (this._arrows3d.root.parent !== root) root.add(this._arrows3d.root);
+        const world = this._lightWorld(anchor, light.height);
+        RRPoseRings3D.sync(this._rings3d, world, -light.yaw, -light.pitch, light.type !== 'point');
+        RRAxisArrows3D.sync(this._arrows3d, world, true);
+    }
+
+    _hideGizmo3D() {
+        if (this._rings3d) this._rings3d.root.visible = false;
+        if (this._arrows3d) this._arrows3d.root.visible = false;
+    }
+
+    _disposeGizmo3D() {
+        if (this._rings3d && typeof RRPoseRings3D !== 'undefined') RRPoseRings3D.dispose(this._rings3d);
+        if (this._arrows3d && typeof RRAxisArrows3D !== 'undefined') RRAxisArrows3D.dispose(this._arrows3d);
+        this._rings3d = null;
+        this._arrows3d = null;
+    }
+
+    _gizmoRect() {
+        const m3d = this.mapEditor3D();
+        if (!m3d) return null;
+        const surface = m3d.inputSurface || m3d.canvas;
+        const rect = surface?.getBoundingClientRect?.();
+        return rect?.width && rect?.height ? rect : null;
+    }
+
+    /** An arrow or ring of the selected light under the pointer, as a hold, or null. */
+    _pickGizmo3D(clientX, clientY) {
+        const m3d = this.mapEditor3D();
+        const selected = this.selected();
+        const rect = this._gizmoRect();
+        if (!selected || !m3d?.camera || !rect || typeof RRMapLights === 'undefined' || typeof THREE === 'undefined') return null;
+        const light = RRMapLights.normalize(selected, selected.id);
+        if (this._arrows3d && this._arrows3d.root.visible && typeof RRAxisArrows3D !== 'undefined') {
+            const arrow = RRAxisArrows3D.pick(THREE, this._arrows3d, m3d.camera, rect, clientX, clientY);
+            if (arrow) {
+                RRAxisArrows3D.emphasize(this._arrows3d, arrow.axis, true);
+                return { kind: 'arrow', grab: arrow, id: light.id, startX: light.x, startY: light.y, startZ: light.height };
+            }
+        }
+        if (this._rings3d && this._rings3d.root.visible && typeof RRPoseRings3D !== 'undefined') {
+            const ring = RRPoseRings3D.pick(THREE, this._rings3d, m3d.camera, rect, clientX, clientY,
+                { yaw: -light.yaw, pitch: -light.pitch, roll: 0 });
+            if (ring) {
+                RRPoseRings3D.emphasize(this._rings3d, ring.axis, true);
+                return { kind: 'ring', grab: ring, id: light.id };
+            }
+        }
+        return null;
+    }
+
+    _dragGizmo3D(hold, clientX, clientY) {
+        const m3d = this.mapEditor3D();
+        const map = this.map();
+        const rect = this._gizmoRect();
+        if (!m3d?.camera || !map || !rect || typeof RRMapLights === 'undefined') return;
+        const round = n => Math.round(n * 100) / 100;
+        let patch = null;
+        if (hold.kind === 'arrow') {
+            const travel = hold.grab.travel(clientX, clientY);
+            patch = hold.grab.axis === 'x' ? { x: round(hold.startX + travel) }
+                : hold.grab.axis === 'z' ? { y: round(hold.startY + travel) }
+                    : { height: Math.max(0, round(hold.startZ + travel)) };
+        } else {
+            const value = RRPoseRings3D.drag(THREE, hold.grab, m3d.camera, rect, clientX, clientY);
+            if (value === null) return;
+            patch = hold.grab.axis === 'yaw'
+                ? { yaw: Math.round(-value) }
+                : { pitch: Math.max(-90, Math.min(90, Math.round(-value))) };
+        }
+        RRMapLights.update(map, hold.id, patch);
+        this._changed();
     }
 
     /**
@@ -790,7 +907,7 @@ class LightingManager {
             const light = RRMapLights.normalize(selected, selected.id);
             const anchor = this._lightAnchor(light);
             if (anchor) {
-                const handle = light.type === 'spot'
+                const handle = light.type === 'spot' || light.type === 'beam'
                     ? { point: this._aimPoint(light, anchor), mode: 'aim' }
                     : { point: this._reachPoint(light, anchor), mode: 'reach' };
                 if (Math.hypot(at.x - handle.point.x, at.y - handle.point.y) <= grip) {
@@ -865,13 +982,16 @@ class LightingManager {
         }
         const template = this._placingTemplate || {};
         const spot = this.placing === 'spot';
-        this._ghost.texture = this._lightTexture(spot ? 'cone' : 'round');
+        const beam = this.placing === 'beam';
+        this._ghost.texture = this._lightTexture(beam ? 'beam' : spot ? 'cone' : 'round');
         const reach = (template.radius
-            || (spot ? RRMapLights.DEFAULT_CONE_LENGTH : 3)) * tw;
-        if (spot) {
+            || (spot ? RRMapLights.DEFAULT_CONE_LENGTH : beam ? RRMapLights.DEFAULT_BEAM_LENGTH : 3)) * tw;
+        if (spot || beam) {
             this._ghost.anchor.set(0.5, 1);
             const spread = ((template.angle || RRMapLights.DEFAULT_CONE_ANGLE) * Math.PI) / 360;
-            this._ghost.width = Math.max(2, 2 * Math.tan(spread) * reach);
+            this._ghost.width = beam
+                ? Math.max(2, (template.width || RRMapLights.DEFAULT_BEAM_WIDTH) * tw)
+                : Math.max(2, 2 * Math.tan(spread) * reach);
             this._ghost.height = Math.max(2, reach);
             this._ghost.rotation = Math.PI;
         } else {
@@ -879,7 +999,7 @@ class LightingManager {
             this._ghost.rotation = 0;
             this._ghost.width = this._ghost.height = Math.max(2, reach * 2);
         }
-        this._ghost.tint = this._colourNumber(template.color || (spot ? '#fff2cc' : '#ffcf7d'));
+        this._ghost.tint = this._colourNumber(template.color || (spot ? '#fff2cc' : beam ? '#ff2a2a' : '#ffcf7d'));
         this._ghost.alpha = 0.55;
         this._ghost.position.set(at.x * tw, at.y * tw);
         this._ghost.visible = true;
@@ -974,7 +1094,9 @@ class LightingManager {
         const scene = map3d?.mapScene;
         if (!map3d?.isEnabled?.() || !scene || typeof Reactor3D === 'undefined') return;
         const ambient = this.ambient();
-        if (!this.lights().length && ambient.ambient === undefined) {
+        // Lights that placed models carry (a light-type model effect), resolved by the 3D view each frame.
+        const modelLights = Array.isArray(Reactor3D._editorEffectLights) ? Reactor3D._editorEffectLights : [];
+        if (!this.lights().length && !modelLights.length && ambient.ambient === undefined) {
             // Nothing placed and no ambient block: leave the compositor
             // untouched so an unlit map never even builds the light pools.
             Reactor3D.setLights([]);
@@ -989,9 +1111,9 @@ class LightingManager {
         Reactor3D.setLights(this.resolvedLights(this._frame).map(light => ({
             id: light.id, type: light.type, x: light.x, y: light.y, height: light.height,
             radius: light.radius, colour: light.colour, intensity: light.intensity,
-            angle: light.angle, yaw: -light.yaw, pitch: light.pitch, occlude: light.occlude,
+            angle: light.angle, width: light.width, yaw: -light.yaw, pitch: light.pitch, occlude: light.occlude,
             shadow: light.shadow
-        })));
+        })).concat(modelLights));
         const map = this.map();
         const focus = map ? { x: map.width / 2, y: map.height / 2 } : null;
         scene.syncLights?.(focus);
@@ -1004,6 +1126,7 @@ class LightingManager {
      */
     wants3DFrames() {
         if (this.active) return true;
+        if (typeof Reactor3D !== 'undefined' && Array.isArray(Reactor3D._editorEffectLights) && Reactor3D._editorEffectLights.length) return true;
         if (!this.map()?.reactor3d?.lights?.length) return false;
         return this.resolvedLights(this._frame).some(light => light.animated);
     }
@@ -1030,6 +1153,7 @@ class LightingManager {
             return;
         }
         this._showRingAt(scene, anchor);
+        this._syncGizmo3D(scene, light, anchor);
     }
 
     _showRingAt(scene, anchor) {
@@ -1054,9 +1178,11 @@ class LightingManager {
 
     _hide3DRing() {
         if (this._ring3d) this._ring3d.visible = false;
+        this._hideGizmo3D();
     }
 
     _dispose3DRing() {
+        this._disposeGizmo3D();
         if (!this._ring3d) return;
         if (this._ring3d.parent) this._ring3d.parent.remove(this._ring3d);
         this._ring3d.geometry.dispose();
@@ -1100,9 +1226,7 @@ class LightingManager {
         panel.style.cssText = (workspace
             ? 'position:absolute;top:' + top + 'px;right:8px;bottom:8px;z-index:900;'
             : 'position:fixed;top:84px;right:12px;bottom:12px;z-index:9000;')
-            + 'width:288px;display:flex;flex-direction:column;gap:10px;padding:12px;overflow-y:auto;'
-            + 'background:var(--color-bg-panel);border:1px solid var(--color-border);'
-            + 'border-radius:6px;box-shadow:0 6px 24px rgba(0,0,0,.45);font-size:12px;color:var(--color-text);';
+            + 'width:300px;';
         if (workspace && !workspace.style.position) workspace.style.position = 'relative';
 
         const header = this._el('div');
@@ -1120,20 +1244,21 @@ class LightingManager {
 
         panel.appendChild(this._buildAmbientSection());
         panel.appendChild(this._buildAddRow());
-        this._statusHost = this._el('div');
-        this._statusHost.style.cssText = 'display:none;padding:6px 8px;border-radius:4px;'
-            + 'background:var(--color-accent);color:var(--color-bg-deep);'
-            + 'font-size:11px;font-weight:700;text-align:center;';
+        this._statusHost = this._el('div', 'lit-status');
+        this._statusHost.style.display = 'none';
         panel.appendChild(this._statusHost);
-        this._noticeHost = this._el('div');
-        this._noticeHost.style.cssText = 'display:none;flex-direction:column;gap:6px;'
-            + 'padding:8px;border:1px solid var(--color-accent);border-radius:4px;'
-            + 'background:var(--color-bg-input);';
+        this._noticeHost = this._el('div', 'lit-notice');
+        this._noticeHost.style.display = 'none';
         panel.appendChild(this._noticeHost);
-        this._listHost = this._el('div');
-        this._listHost.style.cssText = 'display:flex;flex-direction:column;gap:2px;';
-        panel.appendChild(this._listHost);
+
+        const list = this._section(this._k('lit.list'));
+        this._listMeta = list.meta;
+        this._listHost = this._el('div', 'lit-list');
+        list.body.appendChild(this._listHost);
+        panel.appendChild(list.section);
+
         this._propsHost = this._el('div');
+        this._propsHost.style.cssText = 'display:flex;flex-direction:column;gap:8px;';
         panel.appendChild(this._propsHost);
 
         // The build stamp turns "is my editor running this code?" from a
@@ -1149,45 +1274,159 @@ class LightingManager {
     }
 
     _destroyPanel() {
+        if (typeof RRColourPopover !== 'undefined') RRColourPopover.close();
         if (this._panel?.parentElement) this._panel.parentElement.removeChild(this._panel);
         this._panel = null;
         this._listHost = null;
+        this._listMeta = null;
         this._propsHost = null;
+        this._gesture = false;
     }
 
-    _section(title) {
-        const box = this._el('div');
-        box.style.cssText = 'display:flex;flex-direction:column;gap:6px;padding:8px;'
-            + 'border:1px solid var(--color-border);border-radius:4px;';
-        const heading = this._el('div', '', title);
-        heading.style.cssText = 'font-weight:700;font-size:11px;letter-spacing:.03em;color:var(--color-text-muted);';
-        box.appendChild(heading);
-        return box;
+    /**
+     * A card: the accent-strip header every section in the app wears, a
+     * body, and (on request) a toolbar-tone footer for the card's actions.
+     */
+    _section(title, meta) {
+        const section = this._el('div', 'lit-section');
+        const header = this._el('div', 'lit-section-header');
+        header.appendChild(this._el('span', '', title));
+        const metaHost = this._el('span', 'lit-section-meta', meta || '');
+        header.appendChild(metaHost);
+        const body = this._el('div', 'lit-section-body');
+        section.append(header, body);
+        return { section, header, meta: metaHost, body };
+    }
+
+    _footer(section) {
+        const footer = this._el('div', 'lit-section-footer');
+        section.appendChild(footer);
+        return footer;
+    }
+
+    /** A titled group inside a card body. */
+    _group(parent, title) {
+        const group = this._el('div', 'lit-group');
+        group.appendChild(this._el('div', 'lit-group-title', title));
+        parent.appendChild(group);
+        return group;
     }
 
     _row(label, control) {
-        const row = this._el('label');
-        row.style.cssText = 'display:grid;grid-template-columns:88px 1fr;gap:6px;align-items:center;color:var(--color-text-muted);font-size:11px;';
+        const row = this._el('label', 'lit-row');
         row.appendChild(this._el('span', '', label));
         row.appendChild(control);
         return row;
     }
 
     _input(type, value, onCommit) {
-        const input = this._el('input');
+        const input = this._el('input', 'lit-input');
         input.type = type;
         input.value = value;
-        input.style.cssText = 'width:100%;box-sizing:border-box;padding:3px 5px;'
-            + 'background:var(--color-bg-input);color:var(--color-text);'
-            + 'border:1px solid var(--color-border-input);border-radius:3px;';
-        if (type === 'color') input.style.padding = '0';
-        if (type === 'checkbox') input.style.width = 'auto';
         input.addEventListener('change', () => onCommit(input));
         return input;
     }
 
+    _select(options, value, onChange) {
+        const select = this._el('select', 'lit-select');
+        for (const [optionValue, label] of options) {
+            const option = this._el('option', '', label);
+            option.value = optionValue;
+            select.appendChild(option);
+        }
+        select.value = value;
+        select.addEventListener('change', () => onChange(select.value, select));
+        return select;
+    }
+
+    /**
+     * A slider with its number beside it. Dragging edits live without
+     * rebuilding the panel; letting go commits and rebuilds, so the number
+     * shows what the store actually kept.
+     */
+    _slider(key, value, min, max, step, options) {
+        const settings = options || {};
+        const wrap = this._el('div', 'lit-slider');
+        const range = this._el('input');
+        range.type = 'range';
+        range.min = String(min);
+        range.max = String(max);
+        range.step = String(step);
+        range.value = String(value);
+        const number = this._el('input', 'lit-input');
+        number.type = 'number';
+        number.setAttribute('data-no-stepper', '');
+        number.min = String(settings.numberMin !== undefined ? settings.numberMin : min);
+        number.max = String(settings.numberMax !== undefined ? settings.numberMax : max);
+        number.step = String(step);
+        number.value = String(value);
+        const read = field => {
+            const n = Number(field.value);
+            return Number.isFinite(n) ? n : Number(value) || 0;
+        };
+        range.addEventListener('input', () => {
+            number.value = range.value;
+            this._liveUpdate({ [key]: read(range) });
+        });
+        range.addEventListener('change', () => this._endGesture({ [key]: read(range) }));
+        number.addEventListener('change', () => this._endGesture({ [key]: read(number) }));
+        wrap.append(range, number);
+        return wrap;
+    }
+
+    /** A colour swatch that opens the editor's own picker, editing live. */
+    _colour(value, onLive, onDone) {
+        if (typeof RRColourPopover !== 'undefined') {
+            return RRColourPopover.swatch(value, onLive, onDone);
+        }
+        return this._input('color', value, input => onDone(input.value));
+    }
+
+    /**
+     * Mid-gesture edit of the selected light: one undo entry for the whole
+     * drag, the views follow, the panel is left alone so the control being
+     * dragged keeps its focus.
+     */
+    _liveUpdate(patch) {
+        const map = this.map();
+        if (!map || !this.selectedId || typeof RRMapLights === 'undefined') return;
+        if (!this._gesture) {
+            this.pushUndo();
+            this._gesture = true;
+        }
+        RRMapLights.update(map, this.selectedId, patch);
+        this.render();
+        this._sync3D();
+    }
+
+    /** The end of a gesture, or a one-shot edit: the store's value wins and the panel rebuilds. */
+    _endGesture(patch) {
+        if (!this._gesture) this.pushUndo();
+        this._gesture = false;
+        this.updateSelected(patch);
+    }
+
+    /** Give the selected light the id typed for it, if the map can take it. */
+    _renameSelected(field) {
+        const map = this.map();
+        const next = String(field.value || '').trim();
+        if (!map || !this.selectedId || typeof RRMapLights === 'undefined') return;
+        if (next === this.selectedId) return;
+        const ok = RRMapLights.ID_PATTERN.test(next) && !RRMapLights.get(map, next);
+        if (!ok) {
+            field.classList.add('lit-bad');
+            field.value = this.selectedId;
+            this._flashStatus(this._k('lit.idBad'));
+            return;
+        }
+        this.pushUndo();
+        if (RRMapLights.rename(map, this.selectedId, next)) this.selectedId = next;
+        this._changed();
+    }
+
     _buildAmbientSection() {
-        const box = this._section(this._k('lit.ambient'));
+        const card = this._section(this._k('lit.ambient'));
+        const box = card.body;
         const ambient = this.ambient();
 
         const level = this._input('range', String(Math.round(ambient.ambient * 100)), () => {});
@@ -1205,9 +1444,9 @@ class LightingManager {
         level.addEventListener('input', applyLevel);
         box.appendChild(this._row(this._k('lit.brightness'), levelWrap));
 
-        const colour = this._input('color', ambient.ambientColour, input => {
-            this._setAmbient({ ambientColour: input.value });
-        });
+        const colour = this._colour(ambient.ambientColour,
+            hex => this._setAmbient({ ambientColour: hex }),
+            hex => this._setAmbient({ ambientColour: hex }));
         box.appendChild(this._row(this._k('lit.color'), colour));
 
         const presets = this._el('div');
@@ -1224,14 +1463,14 @@ class LightingManager {
             button.addEventListener('click', () => {
                 level.value = String(Math.round(values.ambient * 100));
                 readout.textContent = level.value + '%';
-                colour.value = values.ambientColour;
+                if (colour.setValue) colour.setValue(values.ambientColour); else colour.value = values.ambientColour;
                 this._setAmbient(values);
             });
             presets.appendChild(button);
         }
         box.appendChild(presets);
         this._ambientControls = { level, readout, colour };
-        return box;
+        return card.section;
     }
 
     _setAmbient(values) {
@@ -1249,24 +1488,21 @@ class LightingManager {
      * its own colour, so the tray reads like a box of lights, not buttons.
      */
     _buildAddRow() {
-        const tray = this._el('div');
-        tray.style.cssText = 'display:grid;grid-template-columns:repeat(4,1fr);gap:6px;';
+        const card = this._section(this._k('lit.tray'));
+        const tray = this._el('div', 'lit-tray');
+        card.body.appendChild(tray);
         this._addButtons = {};
         for (const preset of this._presets()) {
-            const chip = this._el('button');
+            const chip = this._el('button', 'lit-chip');
             chip.type = 'button';
             chip.title = this._k('lit.empty');
-            chip.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:3px;'
-                + 'padding:5px 2px;border:1px solid var(--color-border);border-radius:5px;'
-                + 'background:var(--color-bg-input);color:var(--color-text);cursor:grab;'
-                + 'font-size:10px;touch-action:none;';
             chip.appendChild(this._presetIcon(preset));
             chip.appendChild(this._el('span', '', preset.label));
             chip.addEventListener('pointerdown', event => this._chipDown(event, preset));
             this._addButtons[preset.key] = chip;
             tray.appendChild(chip);
         }
-        return tray;
+        return card.section;
     }
 
     /** A hex colour pushed toward white (positive) or black (negative). */
@@ -1352,6 +1588,13 @@ class LightingManager {
                 + `<path d="M32 2 C43.5 11 42.5 21 32 28 C21.5 21 20.5 11 32 2 Z" fill="${INK}"/>`
                 + `<path d="M32 5.5 C41 13 40.2 20 32 25 C23.8 20 23 13 32 5.5 Z" fill="${fill}"/>`
                 + '<path d="M32 11.5 C36.8 15.6 36.4 19 32 22 C27.6 19 27.2 15.6 32 11.5 Z" fill="#fff2a0"/>';
+            case 'laser': return `<path d="M8 50 L50 12" stroke="${INK}" stroke-width="12" stroke-linecap="round"/>`
+                + `<path d="M8 50 L50 12" stroke="${colour}" stroke-width="6" stroke-linecap="round"/>`
+                + '<path d="M8 50 L50 12" stroke="#ffffff" stroke-width="1.8" stroke-linecap="round" opacity="0.85"/>'
+                + `<rect x="4" y="43" width="16" height="16" rx="4" fill="${INK}"/>`
+                + '<rect x="6.5" y="45.5" width="11" height="11" rx="2.5" fill="#9aa0ad"/>'
+                + `<circle cx="52" cy="10" r="7" fill="${INK}"/>`
+                + `<circle cx="52" cy="10" r="4.5" fill="${fill}"/>`;
             case 'streetlamp': return `<rect x="14.5" y="13" width="10" height="47" rx="4" fill="${INK}"/>`
                 + '<rect x="17.5" y="16" width="4" height="42" fill="#9aa0ad"/>'
                 + `<rect x="7" y="54.5" width="25" height="7" rx="3" fill="${INK}"/>`
@@ -1447,14 +1690,20 @@ class LightingManager {
         if (this._titleHost) {
             this._titleHost.textContent = this._k('lit.title') + ' · ' + this.lights().length;
         }
+        if (this._listMeta) this._listMeta.textContent = String(this.lights().length);
         this._syncList();
         this._syncProps();
         const ambient = this.ambient();
         if (this._ambientControls && document.activeElement !== this._ambientControls.level) {
             this._ambientControls.level.value = String(Math.round(ambient.ambient * 100));
             this._ambientControls.readout.textContent = Math.round(ambient.ambient * 100) + '%';
-            this._ambientControls.colour.value = ambient.ambientColour;
+            const colour = this._ambientControls.colour;
+            if (colour.setValue) colour.setValue(ambient.ambientColour); else colour.value = ambient.ambientColour;
         }
+    }
+
+    _typeLabel(type) {
+        return this._k(type === 'spot' ? 'lit.spot' : type === 'beam' ? 'lit.beam' : 'lit.point');
     }
 
     _syncList() {
@@ -1464,35 +1713,67 @@ class LightingManager {
         const lights = this.lights();
         if (!lights.length) {
             // The empty state is the manual: make it read like one.
-            const empty = this._el('div', '', this._k('lit.empty'));
-            empty.style.cssText = 'color:var(--color-text);font-size:12px;line-height:1.5;'
-                + 'padding:10px;border:1px dashed var(--color-accent);border-radius:4px;';
-            host.appendChild(empty);
+            host.appendChild(this._el('div', 'lit-empty', this._k('lit.empty')));
             return;
         }
         for (const raw of lights) {
             const light = typeof RRMapLights !== 'undefined'
                 ? RRMapLights.normalize(raw, raw.id || 'light') : raw;
-            const row = this._el('button');
+            const row = this._el('button', 'lit-list-row' + (light.id === this.selectedId ? ' selected' : ''));
             row.type = 'button';
-            const selected = light.id === this.selectedId;
-            row.style.cssText = 'display:flex;gap:8px;align-items:center;padding:4px 6px;'
-                + 'border:1px solid ' + (selected ? 'var(--color-accent)' : 'var(--color-border)') + ';'
-                + 'border-radius:3px;background:' + (selected ? 'var(--color-bg-selected)' : 'var(--color-bg-input)') + ';'
-                + 'color:var(--color-text);cursor:pointer;font-size:11px;text-align:left;';
-            const swatch = this._el('span');
-            swatch.style.cssText = 'width:12px;height:12px;border-radius:50%;flex:0 0 auto;'
-                + 'background:' + light.color + ';opacity:' + (light.on ? 1 : 0.3) + ';'
-                + 'border:1px solid rgba(0,0,0,.5);';
+            const swatch = this._el('span', 'lit-swatch-dot');
+            swatch.style.background = light.color;
+            swatch.style.opacity = light.on ? '1' : '0.3';
             row.appendChild(swatch);
-            const name = this._el('span', '', light.id
-                + (light.tag ? ' #' + light.tag : '')
-                + ' · ' + this._k(light.type === 'spot' ? 'lit.spot' : 'lit.point'));
-            name.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-            row.appendChild(name);
+            row.appendChild(this._el('span', 'lit-list-name', light.id + (light.tag ? ' #' + light.tag : '')));
+            row.appendChild(this._el('span', 'lit-list-kind', this._typeLabel(light.type)));
             row.addEventListener('click', () => this.select(light.id));
             host.appendChild(row);
         }
+    }
+
+    /**
+     * The tag control: a dropdown of every tag on the map, the presets'
+     * tags, none, and "new", which turns into a field for the name.
+     */
+    _tagControl(light, commit) {
+        const NEW = '*new*';
+        const known = new Set(typeof RRMapLights !== 'undefined' ? RRMapLights.tags(this.map()) : []);
+        for (const preset of this._presets()) if (preset.template.tag) known.add(preset.template.tag);
+        if (light.tag) known.add(light.tag);
+        const options = [['', this._k('lit.tagNone')]]
+            .concat(Array.from(known).sort().map(tag => [tag, '#' + tag]))
+            .concat([[NEW, this._k('lit.tagNew')]]);
+        const host = this._el('div');
+        const select = this._select(options, light.tag || '', value => {
+            if (value !== NEW) {
+                commit({ tag: value });
+                return;
+            }
+            const field = this._el('input', 'lit-input');
+            field.type = 'text';
+            field.placeholder = this._k('lit.tagPlaceholder');
+            field.maxLength = 40;
+            field.spellcheck = false;
+            let done = false;
+            const finish = keep => {
+                if (done) return;
+                done = true;
+                const tag = keep ? field.value.trim().replace(/^#+/, '') : '';
+                if (tag) commit({ tag });
+                else this._syncProps();
+            };
+            field.addEventListener('keydown', event => {
+                if (event.key === 'Enter') { event.preventDefault(); finish(true); }
+                if (event.key === 'Escape') { event.preventDefault(); finish(false); }
+                event.stopPropagation();
+            });
+            field.addEventListener('blur', () => finish(true));
+            host.replaceChildren(field);
+            field.focus();
+        });
+        host.appendChild(select);
+        return host;
     }
 
     _syncProps() {
@@ -1500,129 +1781,134 @@ class LightingManager {
         if (!host) return;
         host.replaceChildren();
         const selected = this.selected();
-        if (!selected || typeof RRMapLights === 'undefined') return;
+        const map = this.map();
+        if (!selected || !map || typeof RRMapLights === 'undefined') return;
         const light = RRMapLights.normalize(selected, selected.id);
-        const box = this._section(light.id);
-        const commit = patch => {
-            this.pushUndo();
-            this.updateSelected(patch);
-        };
+        const commit = patch => this._endGesture(patch);
         const numberInput = (key, value, min, max, step) => {
             const input = this._input('number', String(value), field => {
-                const patch = {};
-                patch[key] = Number(field.value);
-                commit(patch);
+                const n = Number(field.value);
+                commit({ [key]: Number.isFinite(n) ? n : value });
             });
+            input.setAttribute('data-no-stepper', '');
             input.min = String(min);
             input.max = String(max);
             input.step = String(step);
             return input;
         };
+        const aimed = light.type !== 'point';
 
-        const type = this._el('select');
-        type.style.cssText = 'width:100%;padding:3px 5px;background:var(--color-bg-input);'
-            + 'color:var(--color-text);border:1px solid var(--color-border-input);border-radius:3px;';
-        for (const [value, key] of [['point', 'lit.point'], ['spot', 'lit.spot']]) {
-            const option = this._el('option', '', this._k(key));
-            option.value = value;
-            type.appendChild(option);
-        }
-        type.value = light.type;
-        type.addEventListener('change', () => commit({ type: type.value }));
-        box.appendChild(this._row(this._k('lit.type'), type));
+        const card = this._section(this._k('lit.selected'), this._typeLabel(light.type));
+        const body = card.body;
 
-        box.appendChild(this._row(this._k('lit.color'),
-            this._input('color', light.color, input => commit({ color: input.value }))));
-        box.appendChild(this._row(this._k('lit.intensity'), numberInput('intensity', light.intensity, 0, 4, 0.05)));
-        box.appendChild(this._row(this._k('lit.radius'), numberInput('radius', light.radius, 0.1, 200, 0.1)));
-        box.appendChild(this._row(this._k('lit.height'), numberInput('height', light.height, 0, 512, 0.1)));
+        // Identity: the id events address the light by, and what kind it is.
+        const id = this._input('text', light.id, field => this._renameSelected(field));
+        id.classList.add('lit-id-input');
+        id.maxLength = 40;
+        id.spellcheck = false;
+        id.addEventListener('keydown', event => {
+            if (event.key === 'Enter') { event.preventDefault(); id.blur(); }
+            event.stopPropagation();
+        });
+        body.appendChild(this._row(this._k('lit.id'), id));
+        body.appendChild(this._row(this._k('lit.type'), this._select(
+            [['point', this._k('lit.point')], ['spot', this._k('lit.spot')], ['beam', this._k('lit.beam')]],
+            light.type, value => commit({ type: value }))));
+
+        // The light itself.
+        const look = this._group(body, this._k('lit.section.light'));
+        look.appendChild(this._row(this._k('lit.color'), this._colour(light.color,
+            hex => this._liveUpdate({ color: hex }), hex => commit({ color: hex }))));
+        look.appendChild(this._row(this._k('lit.intensity'), this._slider('intensity', light.intensity, 0, 4, 0.05)));
+        look.appendChild(this._row(this._k('lit.radius'), this._slider('radius', light.radius, 0.1, 30, 0.1, { numberMax: 200 })));
         if (light.type === 'spot') {
-            box.appendChild(this._row(this._k('lit.yaw'), numberInput('yaw', light.yaw, -180, 180, 1)));
-            box.appendChild(this._row(this._k('lit.pitch'), numberInput('pitch', light.pitch, -90, 90, 1)));
-            box.appendChild(this._row(this._k('lit.angle'), numberInput('angle', light.angle, 1, 179, 1)));
+            look.appendChild(this._row(this._k('lit.angle'), this._slider('angle', light.angle, 1, 179, 1)));
         }
-        box.appendChild(this._row(this._k('lit.flicker'), numberInput('flicker', light.flicker, 0, 1, 0.05)));
+        if (light.type === 'beam') {
+            look.appendChild(this._row(this._k('lit.width'), this._slider('width', light.width, 0.005, 1, 0.005, { numberMax: 5 })));
+        }
 
+        // Where it stands: X and Y in tiles (offsets from the carrier when
+        // attached), Z the height off the ground.
+        const position = this._group(body, this._k('lit.position'));
+        const attached = !!light.attach;
+        const spanX = attached ? [-10, 10] : [0, Math.max(1, map.width || 1)];
+        const spanY = attached ? [-10, 10] : [0, Math.max(1, map.height || 1)];
+        position.appendChild(this._row(this._k('lit.x'), this._slider('x', light.x, spanX[0], spanX[1], 0.05, { numberMin: -10000, numberMax: 10000 })));
+        position.appendChild(this._row(this._k('lit.y'), this._slider('y', light.y, spanY[0], spanY[1], 0.05, { numberMin: -10000, numberMax: 10000 })));
+        position.appendChild(this._row(this._k('lit.height'), this._slider('height', light.height, 0, 12, 0.05, { numberMax: 512 })));
+
+        // Which way it aims — nothing to aim on a point light.
+        if (aimed) {
+            const rotation = this._group(body, this._k('lit.rotation'));
+            rotation.appendChild(this._row(this._k('lit.yaw'), this._slider('yaw', light.yaw, -180, 180, 1, { numberMin: -100000, numberMax: 100000 })));
+            rotation.appendChild(this._row(this._k('lit.pitch'), this._slider('pitch', light.pitch, -90, 90, 1)));
+        }
+
+        // Motion in the light.
+        const animation = this._group(body, this._k('lit.animation'));
+        animation.appendChild(this._row(this._k('lit.flicker'), this._slider('flicker', light.flicker, 0, 1, 0.05)));
         const pulse = this._input('checkbox', '', input => {
             commit({ pulse: input.checked ? { min: 0.6, max: 1, period: 90 } : null });
         });
         pulse.checked = !!light.pulse;
-        box.appendChild(this._row(this._k('lit.pulse'), pulse));
+        animation.appendChild(this._row(this._k('lit.pulse'), pulse));
         if (light.pulse) {
             const pulseField = (key, labelKey, min, max, step) => {
-                const input = this._input('number', String(light.pulse[key]), field => {
+                const input = numberInput(key, light.pulse[key], min, max, step);
+                input.addEventListener('change', () => {}, { once: true });
+                // The number's own commit writes a top-level key; pulse keys
+                // live one level down, so this field commits the object.
+                input.onchange = () => {
                     const next = Object.assign({}, light.pulse);
-                    next[key] = Number(field.value);
+                    const n = Number(input.value);
+                    next[key] = Number.isFinite(n) ? n : light.pulse[key];
                     commit({ pulse: next });
-                });
-                input.min = String(min);
-                input.max = String(max);
-                input.step = String(step);
-                box.appendChild(this._row(this._k(labelKey), input));
+                };
+                animation.appendChild(this._row(this._k(labelKey), input));
             };
             pulseField('min', 'lit.pulseMin', 0, 10, 0.05);
             pulseField('max', 'lit.pulseMax', 0, 10, 0.05);
             pulseField('period', 'lit.pulsePeriod', 2, 100000, 1);
         }
 
-        const tag = this._input('text', light.tag, input => commit({ tag: input.value.trim() }));
-        box.appendChild(this._row(this._k('lit.tag'), tag));
-
-        const attach = this._el('select');
-        attach.style.cssText = type.style.cssText;
-        const none = this._el('option', '', this._k('lit.attachNone'));
-        none.value = '';
-        attach.appendChild(none);
-        const player = this._el('option', '', this._k('lit.attachPlayer'));
-        player.value = 'player';
-        attach.appendChild(player);
-        for (const event of this.map()?.events || []) {
+        // Who it belongs with, what it rides, and its switches.
+        const group = this._group(body, this._k('lit.group'));
+        group.appendChild(this._row(this._k('lit.tag'), this._tagControl(light, commit)));
+        const attachOptions = [['', this._k('lit.attachNone')], ['player', this._k('lit.attachPlayer')]];
+        for (const event of map.events || []) {
             if (!event) continue;
-            const option = this._el('option', '',
-                'EV' + String(event.id).padStart(3, '0') + (event.name ? ' ' + event.name : ''));
-            option.value = String(event.id);
-            attach.appendChild(option);
+            attachOptions.push([String(event.id),
+                'EV' + String(event.id).padStart(3, '0') + (event.name ? ' ' + event.name : '')]);
         }
-        attach.value = light.attach
-            ? (light.attach.player ? 'player' : String(light.attach.event)) : '';
-        attach.addEventListener('change', () => {
+        const attachValue = light.attach ? (light.attach.player ? 'player' : String(light.attach.event)) : '';
+        group.appendChild(this._row(this._k('lit.attach'), this._select(attachOptions, attachValue, value => {
             commit({
-                attach: !attach.value ? null
-                    : attach.value === 'player' ? { player: true }
-                        : { event: Number(attach.value) }
+                attach: !value ? null
+                    : value === 'player' ? { player: true }
+                        : { event: Number(value) }
             });
-        });
-        box.appendChild(this._row(this._k('lit.attach'), attach));
-
-        const flags = this._el('div');
-        flags.style.cssText = 'display:flex;gap:14px;';
+        })));
+        const flags = this._el('div', 'lit-flags');
         for (const [key, label] of [['on', 'lit.on'], ['occlude', 'lit.occlude'], ['shadow', 'lit.shadow']]) {
             const wrap = this._el('label');
-            wrap.style.cssText = 'display:flex;gap:5px;align-items:center;font-size:11px;';
-            const input = this._input('checkbox', '', field => {
-                const patch = {};
-                patch[key] = field.checked;
-                commit(patch);
-            });
+            const input = this._input('checkbox', '', field => commit({ [key]: field.checked }));
             input.checked = !!light[key];
             wrap.append(input, this._el('span', '', this._k(label)));
             flags.appendChild(wrap);
         }
-        box.appendChild(flags);
+        group.appendChild(flags);
 
-        const actions = this._el('div');
-        actions.style.cssText = 'display:flex;gap:6px;';
+        const footer = this._footer(card.section);
         const duplicate = this._el('button', 'rr-btn-secondary', this._k('lit.duplicate'));
         duplicate.type = 'button';
         duplicate.addEventListener('click', () => this.duplicateSelected());
         const remove = this._el('button', 'rr-btn-secondary', this._k('lit.delete'));
         remove.type = 'button';
         remove.addEventListener('click', () => this.removeSelected());
-        for (const button of [duplicate, remove]) button.style.cssText = 'flex:1;padding:4px;font-size:11px;';
-        actions.append(duplicate, remove);
-        box.appendChild(actions);
+        footer.append(duplicate, remove);
 
-        host.appendChild(box);
+        host.appendChild(card.section);
     }
 }
 
