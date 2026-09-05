@@ -2,6 +2,7 @@
 
 This folder contains release notes, audit history, and maintainer workflows that are not required for normal RPG Reactor editor use.
 
+- [September 5 PR integration](PR-INTEGRATION-2026-09-05.md): PRs #44 and #45, combined-tree validation, and two reproduced Project Tools follow-ups.
 - [September 4 session closeout](SESSION-2026-09-04.md): the day's rendering, speech, database, language/theme, recovery and Demo changes, with validation and remaining work.
 - [Model face points and speech](3D-FACE-AND-SPEECH.md): eye placement, mouth/lip authoring, spoken dialogue and per-prop animation speed.
 - [Editor audit](EDITOR_AUDIT.md): command/database authoring, nested dialogs, translation coverage and themes.
