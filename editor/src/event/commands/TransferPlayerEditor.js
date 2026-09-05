@@ -176,7 +176,7 @@ class TransferPlayerEditor {
             font-size: 12px;
             font-weight: bold;
         `;
-        browseBtn.addEventListener('mouseenter', () => { browseBtn.style.backgroundColor = '#e8c84a'; });
+        browseBtn.addEventListener('mouseenter', () => { browseBtn.style.backgroundColor = 'var(--color-accent-hover)'; });
         browseBtn.addEventListener('mouseleave', () => { browseBtn.style.backgroundColor = 'var(--color-accent)'; });
         browseBtn.addEventListener('click', () => {
             this.showMapPicker();

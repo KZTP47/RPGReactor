@@ -1,5 +1,8 @@
 # Declaring a building: 3D objects painted on the map
 
+Historical release/cycle notes. Features, limitations, and counts below describe
+that period; see [current project status](../STATUS.md) for today's behavior.
+
 RPG Reactor-owned code is MIT-licensed. Bundled third-party components retain
 their respective licenses as recorded in `THIRD_PARTY_NOTICES.md`; the project
 does not claim one uniform license for third-party or user/project content.

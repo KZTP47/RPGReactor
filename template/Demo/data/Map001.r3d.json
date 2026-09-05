@@ -9,7 +9,7 @@
         "ext": ".glb",
         "size": 2,
         "scale": 1,
-        "yaw": -0.37215798138506795,
+        "yaw": 0,
         "pitch": 0,
         "roll": 0
       }
@@ -10398,7 +10398,7 @@
     }
   ],
   "camera": {
-    "mode": "thirdPerson"
+    "mode": "firstPerson"
   },
   "eventZ": {
     "2": 20,

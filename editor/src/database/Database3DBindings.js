@@ -90,11 +90,20 @@
         const sections = Object.keys(data).filter(key => key !== 'version');
         if (!sections.length) {
             // Nothing bound: the absent file is the clean state.
-            try { fs.rmSync(filePath(projectPath), { force: true }); } catch (error) {}
+            fs.rmSync(filePath(projectPath), { force: true });
             return;
         }
         data.version = 1;
         writeFile(fs, filePath(projectPath), JSON.stringify(data, null, 2) + '\n');
+    }
+
+    function trySet(projectPath, section, id, spec, slot) {
+        try { set(projectPath, section, id, spec, slot); return true; }
+        catch (error) {
+            console.error('Could not save 3D model binding:', error);
+            alert(root.I18n ? root.I18n.tText('Could not save the 3D model binding.') : 'Could not save the 3D model binding.');
+            return false;
+        }
     }
 
     /**
@@ -162,7 +171,20 @@
         }
 
         const sync = () => {
-            const spec = get(project.path, section, id);
+            let spec;
+            try { spec = get(project.path, section, id); }
+            catch (error) {
+                check.disabled = change.disabled = true;
+                name.style.display = '';
+                name.textContent = tt('(Failed to load)');
+                name.title = error.message || String(error);
+                name.style.color = 'var(--color-danger-bright)';
+                if (pane) pane.style.display = 'none';
+                return;
+            }
+            check.disabled = change.disabled = false;
+            name.title = '';
+            name.style.color = '';
             check.checked = !!spec;
             name.textContent = spec ? spec.name : tt('(None)');
             name.style.display = spec ? '' : 'none';
@@ -207,7 +229,7 @@
                 mapEditor3D
             });
             picker.show(get(project.path, section, id), result => {
-                set(project.path, section, id, result);
+                if (!trySet(project.path, section, id, result)) { sync(); return; }
                 if (options.onChange) options.onChange(result);
             });
             resyncWhenClosed();
@@ -217,7 +239,7 @@
             if (check.checked) {
                 openPicker();
             } else {
-                set(project.path, section, id, null);
+                if (!trySet(project.path, section, id, null)) { sync(); return; }
                 if (options.onChange) options.onChange(null);
                 sync();
             }
@@ -238,6 +260,9 @@
     function modelThumbnail(reactor3dEditor, spec) {
         const ed = reactor3dEditor;
         if (!ed || !ed._renderThumbnail || !spec) return null;
+        ed._ensureProjectCaches?.();
+        const project = ed._project?.();
+        const current = () => !ed._project || ed._project() === project;
         if (!ed._thumbs) ed._thumbs = {};
         if (!ed._thumbPromises) ed._thumbPromises = {};
         if (ed._thumbs[spec.name]) return ed._thumbs[spec.name];
@@ -256,7 +281,9 @@
             return cached;
         }
         if (ed._thumbPromises[spec.name]) return ed._thumbPromises[spec.name];
+        const pendingCache = ed._thumbPromises;
         const pending = ed._renderThumbnail(entry).then(url => {
+            if (!current()) return null;
             if (url) {
                 ed._thumbs[spec.name] = url;
                 const template = ed._templates?.[spec.name];
@@ -264,8 +291,9 @@
                     || Database3DEditor.texturesDecoded(template?.userData?.glbTextures);
                 if (decoded) ed._writeCachedThumbnail?.(entry, url);
                 else setTimeout(() => {
+                    if (!current()) return;
                     Promise.resolve(ed._renderThumbnail(entry)).then(settled => {
-                        if (settled) {
+                        if (current() && settled) {
                             ed._thumbs[spec.name] = settled;
                             ed._writeCachedThumbnail?.(entry, settled);
                         }
@@ -273,7 +301,7 @@
                 }, 1800);
             }
             return url;
-        }).finally(() => { delete ed._thumbPromises[spec.name]; });
+        }).finally(() => { delete pendingCache[spec.name]; });
         ed._thumbPromises[spec.name] = pending;
         return pending;
     }
@@ -347,7 +375,21 @@
 
         const bound = () => get(project.path, 'actors', id, slot);
         const sync = () => {
-            const spec = bound();
+            let spec;
+            try { spec = bound(); }
+            catch (error) {
+                check.disabled = button.disabled = true;
+                pane.style.display = 'flex';
+                thumb.style.display = 'none';
+                nameTag.textContent = tt('(Failed to load)');
+                nameTag.title = error.message || String(error);
+                nameTag.style.color = 'var(--color-danger-bright)';
+                return;
+            }
+            check.disabled = button.disabled = false;
+            thumb.style.display = '';
+            nameTag.title = '';
+            nameTag.style.color = '';
             check.checked = !!spec;
             label.textContent = spec ? tt(options.label) : label2d;
             canvasBox.style.display = spec ? 'none' : '';
@@ -381,7 +423,9 @@
         const openPicker = () => {
             const picker = new ModelGraphicPicker(pickerController(projectManager, project));
             picker.show(bound(), result => {
-                set(project.path, 'actors', id, result, slot);
+                // The modal-close observer restores the persisted selection on
+                // failure too, without starting a second thumbnail render.
+                trySet(project.path, 'actors', id, result, slot);
             }, options.framing ? { framing: true } : undefined);
             resyncWhenClosed();
         };
@@ -389,7 +433,7 @@
         check.addEventListener('change', () => {
             if (check.checked) openPicker();
             else {
-                set(project.path, 'actors', id, null, slot);
+                if (!trySet(project.path, 'actors', id, null, slot)) { sync(); return; }
                 sync();
             }
         });

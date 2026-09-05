@@ -119,6 +119,7 @@ class EventCommandList {
         this.lightCommandEditor = typeof LightCommandEditor !== 'undefined' ? new LightCommandEditor() : null;
         this.waitForModel3DEditor = typeof WaitForModel3DEditor !== 'undefined' ? new WaitForModel3DEditor() : null;
         this.playModelEffectEditor = typeof PlayModelEffectEditor !== 'undefined' ? new PlayModelEffectEditor() : null;
+        this.speakModel3DEditor = typeof SpeakModel3DEditor !== 'undefined' ? new SpeakModel3DEditor() : null;
         this.videoSurfaceEditor = typeof VideoSurfaceEditor !== 'undefined'
             ? new VideoSurfaceEditor(eventEditor.databaseManager, eventEditor.projectController) : null;
         this.selectedIndices = [];
@@ -478,12 +479,13 @@ class EventCommandList {
             && VideoSurfaceEditor.supports(name)) {
             return this.videoSurfaceEditor;
         }
-        if (name === 'PlayModelAnimation') return this.playModelAnimationEditor;
+        if (name === 'PlayModelAnimation' || name === 'SetModelAnimationSpeed') return this.playModelAnimationEditor;
         if (name === 'ChangeCamera3D') return this.camera3DEditor;
         if (name === 'TransformModel3D') return this.transformModel3DEditor;
         if (typeof LightCommandEditor !== 'undefined' && LightCommandEditor.supports(name)) return this.lightCommandEditor;
         if (name === 'WaitForModelAnimation' || name === 'ScopedWait') return this.waitForModel3DEditor;
         if (name === 'PlayModelEffect') return this.playModelEffectEditor;
+        if (name === 'SpeakModel3D') return this.speakModel3DEditor;
         if (name === 'CallUserInterface') return this.callUserInterfaceEditor;
         if (typeof QuestCommandEditor !== 'undefined' && QuestCommandEditor.supports(name)) return this.questCommandEditor;
         return null;
@@ -930,7 +932,7 @@ class EventCommandList {
                     `;
 
                     const keySpan = document.createElement('span');
-                    keySpan.style.cssText = 'color: #9cdcfe; min-width: 120px;';
+                    keySpan.style.cssText = 'color: var(--color-syntax-keyword); min-width: 120px;';
                     keySpan.textContent = key + ':';
 
                     const valueSpan = document.createElement('span');
@@ -941,7 +943,7 @@ class EventCommandList {
                     if (typeof value === 'boolean') {
                         valueSpan.style.color = 'var(--color-syntax-type)';
                     } else if (typeof value === 'number') {
-                        valueSpan.style.color = '#b5cea8';
+                        valueSpan.style.color = 'var(--color-syntax-type)';
                     }
                     valueSpan.textContent = displayValue;
 

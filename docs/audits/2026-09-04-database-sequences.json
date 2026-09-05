@@ -1,0 +1,158 @@
+{
+  "date": "2026-09-04",
+  "host": "NW.js; disposable Demo copy",
+  "checks": 405,
+  "uncaughtErrors": [],
+  "phases": [
+    {
+      "phase": "races",
+      "checks": [
+        "actor paste after Cancel",
+        "common-event paste after section switch",
+        "animation resources released on section switch",
+        "superseded effect picker released",
+        "effect picker retired on section switch",
+        "interface listeners released on section switch",
+        "trait dialog retired on section switch",
+        "superseded trait dialog cannot save",
+        "image picker retired on section switch",
+        "maximum dialog retired on section switch",
+        "icon picker retired on section switch",
+        "closed detail detached"
+      ],
+      "failures": []
+    },
+    {
+      "phase": "workflows",
+      "checks": [
+        "actors: edit \u2192 leave \u2192 return",
+        "actors: Cancel restores original",
+        "classes: edit \u2192 leave \u2192 return",
+        "classes: Cancel restores original",
+        "skills: edit \u2192 leave \u2192 return",
+        "skills: Cancel restores original",
+        "items: edit \u2192 leave \u2192 return",
+        "items: Cancel restores original",
+        "weapons: edit \u2192 leave \u2192 return",
+        "weapons: Cancel restores original",
+        "armors: edit \u2192 leave \u2192 return",
+        "armors: Cancel restores original",
+        "enemies: edit \u2192 leave \u2192 return",
+        "enemies: Cancel restores original",
+        "troops: edit \u2192 leave \u2192 return",
+        "troops: Cancel restores original",
+        "states: edit \u2192 leave \u2192 return",
+        "states: Cancel restores original",
+        "animations: edit \u2192 leave \u2192 return",
+        "animations: Cancel restores original",
+        "tilesets: edit \u2192 leave \u2192 return",
+        "tilesets: Cancel restores original",
+        "commonEvents: edit \u2192 leave \u2192 return",
+        "commonEvents: Cancel restores original",
+        "userInterfaces: edit \u2192 leave \u2192 return",
+        "userInterfaces: Cancel restores original",
+        "quests: edit \u2192 leave \u2192 return",
+        "quests: Cancel restores original",
+        "Apply writes database",
+        "Apply \u2192 edit another section \u2192 Cancel",
+        "interface undo after record switch"
+      ],
+      "failures": []
+    },
+    {
+      "phase": "actors",
+      "checks": 19,
+      "failures": []
+    },
+    {
+      "phase": "classes",
+      "checks": 20,
+      "failures": []
+    },
+    {
+      "phase": "skills",
+      "checks": 19,
+      "failures": []
+    },
+    {
+      "phase": "items",
+      "checks": 19,
+      "failures": []
+    },
+    {
+      "phase": "weapons",
+      "checks": 19,
+      "failures": []
+    },
+    {
+      "phase": "armors",
+      "checks": 19,
+      "failures": []
+    },
+    {
+      "phase": "enemies",
+      "checks": 19,
+      "failures": []
+    },
+    {
+      "phase": "troops",
+      "checks": 19,
+      "failures": []
+    },
+    {
+      "phase": "states",
+      "checks": 19,
+      "failures": []
+    },
+    {
+      "phase": "animations",
+      "checks": 19,
+      "failures": []
+    },
+    {
+      "phase": "tilesets",
+      "checks": 19,
+      "failures": []
+    },
+    {
+      "phase": "commonEvents",
+      "checks": 19,
+      "failures": []
+    },
+    {
+      "phase": "userInterfaces",
+      "checks": 19,
+      "failures": []
+    },
+    {
+      "phase": "quests",
+      "checks": 19,
+      "failures": []
+    },
+    {
+      "phase": "system1",
+      "checks": 19,
+      "failures": []
+    },
+    {
+      "phase": "system2",
+      "checks": 19,
+      "failures": []
+    },
+    {
+      "phase": "types",
+      "checks": 19,
+      "failures": []
+    },
+    {
+      "phase": "terms",
+      "checks": 19,
+      "failures": []
+    },
+    {
+      "phase": "reactor3d",
+      "checks": 19,
+      "failures": []
+    }
+  ]
+}

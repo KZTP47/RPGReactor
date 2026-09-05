@@ -155,7 +155,7 @@ test('a map default camera is written to the sidecar only when it differs from t
 
 test('the runtime, editor, and manifest are wired for the camera module', () => {
     const main = read('runtime/reactor_main.js');
-    assert.match(main, /runtime revision: 20260904.13/);
+    assert.match(main, /runtime revision: 20260904.17/);
     assert.doesNotMatch(main, /reactor_camera_3d/, 'the camera lives in reactor_3d.js, not a file of its own');
 
     const sprites = read('runtime/reactor_sprites.js');
@@ -164,7 +164,7 @@ test('the runtime, editor, and manifest are wired for the camera module', () => 
     const module = read('runtime/reactor_3d.js');
     assert.match(module, /PluginManager\.registerCommand\(PLUGIN_NAME, COMMAND/);
     assert.match(module, /Sprite_Character\.prototype\.updateVisibility = function/);
-    assert.equal((module.match(/Reactor3D\.characterHiddenByCamera\(character\)/g) || []).length, 2, 'models and billboards hide the party in first person');
+    assert.equal((module.match(/Reactor3D\.characterHiddenByCamera\(character(?:, true)?\)/g) || []).length, 2, 'models and billboards use separate first-person visibility rules');
     assert.match(module, /Reactor3D\.Camera = api;/);
     assert.equal(cameras.COMMAND, 'ChangeCamera3D');
 

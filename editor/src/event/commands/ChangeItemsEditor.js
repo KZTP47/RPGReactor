@@ -176,7 +176,7 @@ class ChangeItemsEditor {
 
             btn.addEventListener('mouseenter', () => {
                 if (this.operation !== value) {
-                    btn.style.backgroundColor = '#3d3d3d';
+                    btn.style.backgroundColor = 'var(--color-bg-hover)';
                 }
             });
 
@@ -231,7 +231,7 @@ class ChangeItemsEditor {
 
             btn.addEventListener('mouseenter', () => {
                 if (this.operandType !== value) {
-                    btn.style.backgroundColor = '#3d3d3d';
+                    btn.style.backgroundColor = 'var(--color-bg-hover)';
                 }
             });
 

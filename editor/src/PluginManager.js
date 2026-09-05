@@ -3518,7 +3518,7 @@ class PluginManager {
                 background-color: rgba(255, 136, 0, 0.12);
                 border: 1px solid rgba(255, 136, 0, 0.45);
                 border-radius: 4px;
-                color: #ffb366;
+                color: var(--color-warning-text);
                 font-size: 12px;
                 line-height: 1.4;
             `;
@@ -3544,7 +3544,7 @@ class PluginManager {
             notice.style.cssText = `
                 margin-bottom: 10px;
                 padding: 8px 10px;
-                background-color: var(--color-accent-tint-12, rgba(120, 170, 255, 0.10));
+                background-color: var(--color-accent-tint-10);
                 border-left: 3px solid var(--color-accent);
                 border-radius: 3px;
                 color: var(--color-text-muted);

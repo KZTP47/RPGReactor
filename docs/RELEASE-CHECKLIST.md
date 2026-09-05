@@ -5,13 +5,11 @@ from a different commit than the release tag, or from an unsigned candidate
 run. Public editor releases use NW.js 0.107.0 exactly.
 
 **Never upload a locally built (unsigned) Windows or macOS editor package to
-itch or GitHub.** Fresh Windows installs refuse unsigned executables with
-little or no visible error: Windows 11's Smart App Control ships ON in
-evaluation mode and silently blocks them, SmartScreen interposes on
-Mark-of-the-Web downloads, and Defender's heuristics vary build to build —
-which reads as "the release randomly doesn't launch on some machines." Wine
-enforces none of this, so a Wine success proves nothing about native
-Windows. The signed release-candidate artifacts from CI are the only
+itch or GitHub.** Unsigned or unrecognized downloads can trigger native OS
+security warnings or launch restrictions. Smart App Control's evaluation mode
+itself does not block apps; see [Microsoft's Smart App Control documentation](https://learn.microsoft.com/en-us/windows/apps/develop/smart-app-control/overview).
+A successful Wine run does not validate native Windows signing or launch policy.
+The signed release-candidate artifacts from CI are the only
 Windows/macOS binaries that go public; local `dist-editor` builds are for
 Linux and for your own testing. Every Windows package ships a
 `Launch with log.bat` that captures the exit code and a log for exactly this
@@ -129,8 +127,9 @@ The test suite statically rejects hard dependencies on ignored local projects.
 The distribution worker copies the tracked Reactor One project from
 `template/Demo`, preserves its authored content and plugin configuration, and
 refreshes its Reactor runtime files from the staged runtime.
-The current 0.98.5 baseline is **2,150 Node tests**;
-retain older counts only where a document clearly labels a historical release.
+See [Current project status](STATUS.md) for the latest dated working-tree test
+result. Run the entire discovered suite on the candidate; do not treat a fixed
+historical count or a dirty-tree pass as clean release validation.
 
 When the optional authored-project compatibility corpus is present locally,
 also verify that every project carries the candidate runtime:
@@ -169,8 +168,9 @@ depend on ignored project files being available.
 Before that smoke test, open Haven through the candidate editor and confirm its
 `project.rpgreactor` `engineVersion` and the version marker at the top of
 `js/reactor_main.js` both advance to `0.98.5`, while `js/reactor_plugins.js`
-remains unchanged. This verifies the project is executing the candidate runtime
-rather than a stale copied corescript.
+remains unchanged. Also compare `RPG_REACTOR_RUNTIME_REVISION` in the running
+game with the candidate entry point; a matching version alone does not detect
+a stale copy from earlier in the same development cycle.
 
 On a large Haven map, walk diagonally in both directions while watching the map
 edges and layered structures. Confirm there is no blank or partial tilemap frame
@@ -218,9 +218,12 @@ node editor/build-scripts/cut-release.cjs 0.98.5 --dry-run
 node editor/build-scripts/cut-release.cjs 0.98.5
 ```
 
-The second command runs the full test suite again, finalizes the release date
-and test count, creates a release commit when needed, creates `v0.98.5`, and
-pushes the branch and tag. The tag starts **Publish Release**, which publishes
+The second command runs the full test suite again, finalizes both changelog
+headings, updates the package version and root README release link/count
+sentence, creates a release commit when needed, creates `v0.98.5`, and pushes
+the branch and tag. The editor README, status page, other version prose, and
+validation dates are not automatically refreshed; review those before cutting
+the release. The tag starts **Publish Release**, which publishes
 the source release from the matching root changelog section. Wait for that run
 and verify the tag before starting signed builds:
 

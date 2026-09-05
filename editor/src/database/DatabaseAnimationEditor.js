@@ -86,9 +86,24 @@ function RR_loadEffekseerEffectFromFile(context, effectPath, scale, onLoad, onEr
     const watchdog = setTimeout(() => {
         console.warn('Effekseer effect load stalled (no onload/onerror after 10s):', effectPath);
     }, 10000);
-    const wrappedLoad = (...args) => { clearTimeout(watchdog); if (onLoad) onLoad(...args); };
-    const wrappedError = (...args) => { clearTimeout(watchdog); if (onError) onError(...args); };
-    return context.loadEffect(arrayBuffer, scale, wrappedLoad, wrappedError, redirect);
+    const wrappedLoad = (...args) => { clearTimeout(watchdog); if (context.nativeptr !== null && onLoad) onLoad(...args); };
+    const wrappedError = (...args) => { clearTimeout(watchdog); if (context.nativeptr !== null && onError) onError(...args); };
+    const effect = context.loadEffect(arrayBuffer, scale, wrappedLoad, wrappedError, redirect);
+    // The bundled Effekseer releaseContext terminates WASM/WebGL, but its
+    // pending texture callbacks still call effect._update before onLoad.
+    // Guard that entry point: an onLoad guard alone runs too late to prevent
+    // access to the released context. releaseEffect also nulls nativeptr.
+    if (effect && typeof effect._update === 'function') {
+        const update = effect._update;
+        effect._update = function (...args) {
+            if (context.nativeptr === null || this.nativeptr === null) {
+                clearTimeout(watchdog);
+                return;
+            }
+            return update.apply(this, args);
+        };
+    }
+    return effect;
 }
 
 class DatabaseAnimationEditor {
@@ -2095,6 +2110,7 @@ class DatabaseAnimationEditor {
         // SE preview button
         const sePreviewBtn = document.getElementById('timing-se-preview');
         let previewAudio = null;
+        this._registerDetailCleanup(() => { previewAudio?.pause(); previewAudio = null; });
         sePreviewBtn?.addEventListener('click', () => {
             const seName = document.getElementById('timing-se-name').value;
             if (!seName || seName === noneLabel) return;
@@ -2272,12 +2288,15 @@ class DatabaseAnimationEditor {
 
         // Remove existing modal if any
         const existingModal = document.getElementById('cell-properties-modal');
-        if (existingModal) existingModal.remove();
+        if (existingModal) {
+            if (existingModal.closeEffectPicker) existingModal.closeEffectPicker();
+            else existingModal.remove();
+        }
 
         // Blend mode names
         const blendModes = ['Normal', 'Additive', 'Multiply', 'Screen'];
 
-        const inputBase = 'width:100%; padding:8px; background:var(--color-bg-input); border:1px solid var(--color-border-input); color:#e8e8e8; border-radius:3px; font-size:12px; box-sizing:border-box; outline:none;';
+        const inputBase = 'width:100%; padding:8px; background:var(--color-bg-input); border:1px solid var(--color-border-input); color:var(--color-text); border-radius:3px; font-size:12px; box-sizing:border-box; outline:none;';
         const inputFocus = `onfocus="this.style.borderColor='rgba(255,215,0,0.7)'" onblur="this.style.borderColor='var(--color-border-input)'"`;
         const labelStyle = 'font-size:11px; color:var(--color-text-muted); margin-bottom:5px; text-transform:uppercase; letter-spacing:0.5px;';
         const fieldRow = (label, html) => `<div><div style="${labelStyle}">${label}</div>${html}</div>`;
@@ -2338,6 +2357,7 @@ class DatabaseAnimationEditor {
         const closeModal = () => {
             modal.remove();
         };
+        this._registerDetailCleanup(closeModal);
 
         closeBtn?.addEventListener('click', closeModal);
         cancelBtn?.addEventListener('click', closeModal);
@@ -2348,6 +2368,7 @@ class DatabaseAnimationEditor {
 
         // Save changes
         saveBtn?.addEventListener('click', () => {
+            if (!modal.isConnected) return;
             // `|| default` would clobber legitimate zeros (invisible or
             // zero-scale cells) — only fall back when the input isn't a number.
             const intOr = (id, fallback) => {
@@ -5178,7 +5199,11 @@ class DatabaseAnimationEditor {
             if (restoreFocus) previousFocus?.focus?.();
         };
 
+        modal.closeEffectPicker = () => closeModal(false);
+        this._registerDetailCleanup(modal.closeEffectPicker);
+
         const confirmSelection = () => {
+            if (modalClosed) return;
             animation.effectName = selectedEffect;
             this.databaseManager?.updateAnimation?.(animation.id, animation);
             const effectNameDisplay = document.getElementById('effekseer-effect-name');

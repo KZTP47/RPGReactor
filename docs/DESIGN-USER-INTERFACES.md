@@ -1,7 +1,7 @@
 # Custom user interfaces
 
-Written 2026-08-24 and implemented through the 0.98.4 cycle. The current
-system covers scene and map-overlay records, live visual capture, generated
+Written 2026-08-24, implemented through the 0.98.4 cycle, and checked against
+the 0.98.5 source on 2026-09-04. The current system covers scene and map-overlay records, live visual capture, generated
 stock baselines, typed Lists and actor bindings, Gauges, styling and focus
 overrides, transitions, and opt-in replacement of seven supported stock scene
 roles.
@@ -17,8 +17,8 @@ project data.
 **1. Interfaces are database records in `data/UserInterfaces.json`.** The file
 is an MZ-shaped array (`null` at index 0) so the standard database list,
 clipboard, and transaction paths apply. Stock RPG Maker does not load the file.
-It does not belong in a 3D sidecar, and no custom fields are added to stock map
-or database records.
+Node data does not belong in a 3D sidecar or stock actor/item/map records.
+Opt-in replacement assignments are stored separately in `System.json`.
 
 **2. `Call User Interface` is a normal plugin command.** Event calls are stored
 as code 357 for `RPGReactor` / `CallUserInterface`. Stock MZ ignores the
@@ -275,13 +275,13 @@ active phase.
 | RPG Maker MV project on Reactor | Uses the existing MV compatibility layer |
 | Standalone MZ plugin | Deferred, not shipped |
 
-The full tracked validation contains **2,150 Node tests**.
+The current full-suite result is recorded in [Current project status](STATUS.md).
 Focused coverage includes schemas, typed rows and named contexts, actor bindings
 and tokens, generated baselines, functional Options and Save/Load semantics,
 role-safe post-plugin routing and fallback, styling, focus, nine-slice behavior,
 transitions, and the responsive editor UX. Node coverage verifies that authored
 `UserInterfaces.json` participates in database saves. The real Chromium Web and
 Linux NW.js GUI save smokes exercise project-metadata durability, not an
-end-to-end interface edit/save/reload. The read-only NW.js UI-layout smoke passes
+end-to-end interface edit/save/reload. The previously recorded read-only NW.js UI-layout smoke passed
 at 1280x720, 1600x900, 1920x1080, and 2560x1440. No manual visual playtest is
 claimed for this documentation update.

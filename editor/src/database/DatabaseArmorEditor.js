@@ -417,7 +417,6 @@ class DatabaseArmorEditor {
                 { label: 'Copy', action: () => this.copyTrait(armor, traitIndex), enabled: traitIndex !== null },
                 { label: 'Paste', action: () => this.pasteTrait(armor), enabled: true },
                 { label: 'Delete', action: () => this.deleteTrait(armor, traitIndex), enabled: traitIndex !== null },
-                { label: 'Select All', action: () => this.selectAllTraits(armor), enabled: true }
             ];
 
             menuItems.forEach(item => {
@@ -527,9 +526,6 @@ class DatabaseArmorEditor {
         this.refreshArmorDetail(armor);
     }
 
-    selectAllTraits(armor) {
-        console.debug('Select all traits');
-    }
 
     refreshArmorDetail(armor) {
         console.debug('DatabaseArmorEditor.refreshArmorDetail - Refreshing armor:', armor.id);

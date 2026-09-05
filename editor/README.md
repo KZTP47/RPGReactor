@@ -23,7 +23,7 @@ RPG Reactor 0.98.5 is an open-source, cross-platform RPG game editor and runtime
 ### Event System
 - **Visual event editor**: Create interactive objects, NPCs, and triggers
 - **Show Text as a conversation**: A run of consecutive message boxes is edited as one strip (add, remove, reorder; overflow becomes more boxes and says so before OK), the text and name fields carry RPG Maker's right-click Cut/Copy/Paste/Select All/Insert Color/Insert Icon/Insert Control Character/Plugin Help menu, the Preview draws the boxes with the project's own windowskin, and a reference panel lists the codes that apply — vanilla, VisuStella MessageCore's when it is enabled, and the project's own custom codes. Troop battle events can open Show Text too
-- **Transactional event workflow**: In Event mode, double-click an empty tile to open a detached default event; Apply or OK inserts it with one Undo snapshot, while Cancel, X, or backdrop dismissal leaves the map unchanged. Double-click an occupied tile to edit it
+- **Transactional event workflow**: In Event mode, double-click an empty tile to open a detached default event; Apply or OK inserts it with one Undo snapshot, while Cancel or X leaves the map unchanged. Clicking the backdrop does not dismiss the editor. Double-click an occupied tile to edit it
 - **Quick Event Creation**: Right-click an empty Event-mode cell to generate a Transfer, Door, Treasure, or Inn. Transfer and Door use the visual destination picker; Door/Treasure choose project graphics and suggest matching assets; Treasure supports gold/items/weapons/armors and an opened self-switch page; Inn authors the complete price, choice, recovery, and insufficient-funds flow. Creation is transactional and one Undo step
 - **Multi-page events**: Conditional pages that change based on game state
 - **100+ event commands** with dedicated editor UIs including:
@@ -72,8 +72,30 @@ Comprehensive editors for all game data in a near-full-viewport workspace with f
 | **System 2** | Menu commands, item categories, attack motions, editor settings, asset sizes, advanced options, and an ordered fillable Magic Skills list of Skill Type IDs controlling side-view casting motion |
 | **Types** | Five simultaneous ID-preserving lists for Elements, Skill Types, Weapon Types, Armor Types, and Equipment Types, with multiselect, keyboard and context-menu Cut/Copy/Paste, bulk clear, Add, and confirmed Change Maximum |
 | **Terms** | One compact workspace for Basic Statuses, Parameters, Commands, and the complete grouped Messages schema with text clipboard context menus |
-| **3D** | Browse the project's `3d/` model library in folders, carve any mesh region into a named part, rig static models with Humanoid/Quadruped/Plant/Vehicle skeletons, apply preset motions, and author every pose, swing, spin, bob, clip, keyframe timeline, and timed effect on one slider card with live preview. Bindings live in `data/Database.r3d.json` and per-model `model.json` / `model.rig.bin` sidecars; an Effects section names animations and video surfaces anchored on the model (placed by clicking it or dragging the marker, offset/rotate/scale on the card with a live preview) for the Play 3D Effect command and animation timelines |
+| **3D** | Browse the project's `3d/` model library in folders, carve any mesh region into a named part, rig static models with Humanoid/Quadruped/Plant/Vehicle skeletons, apply preset motions, and author every pose, swing, spin, bob, clip, keyframe timeline, and timed effect on one slider card with live preview. Bindings live in `data/Database.r3d.json` and per-model `model.json` / `model.rig.bin` sidecars; an Effects section names animations, video/image surfaces, and lights anchored on the model (placed by clicking it or dragging the marker, offset/rotate/scale on the card with a live preview) for the Play 3D Effect command and animation timelines |
+| **Quests** | Author quest categories, descriptions, objectives, visibility rules, and descriptive rewards; import VisuStella, Yanfly, or GS definitions. Reactor stores definitions in `data/ReactorQuests.json`, separately from plugin quest files; progress saves with the game. The on-map tracker and automatic reward grants are not built |
 | **User Interfaces** | Author Box, Image, Text, Button, Gauge, and typed List nodes as interactive scenes or display-only map HUDs. Seven generated baselines and seven opt-in, role-safe replacements cover Title, Main Menu, Game End, Status, Options, Save, and Load; stock fallback remains automatic. Named List contexts, actor bindings, functional Options and Save/Load rows, detailed typography/state/focus styling, transitions, live visual capture, and runtime preview are built. Records live in `data/UserInterfaces.json`, invisible to stock RPG Maker |
+
+### Rendering and model optimization
+
+The shared Three.js/PIXI WebGL path renders the 3D world at game resolution by
+default (`Reactor3D.maxPassPixelRatio = 1`), enlarges it with nearest sampling,
+and uses no MSAA. A project may opt into native-resolution passes or MSAA;
+adaptive resolution is off by default. Main-canvas/UI resolution also depends
+on GPU tier. See [current rendering status](../docs/STATUS.md).
+
+Volume lights use distance and point/spot/beam shape; surface normals and normal
+maps do not contribute to this lighting model. Shadow atlases budget 8 static /
+3 dynamic light rows on full quality and 4 / 2 on weak quality. Rows are cached
+and prioritize light incident on the player, so a light's casting flag does not
+guarantee a shadow row when the budget is full. Model lights exclude their own
+carrier from the shadow pass.
+
+GLB import and the 3D database's Optimize action offer texture capping, skin
+weight packing, geometry reduction, and GPU cache ordering. Both presets can
+reduce geometry; inspect the result on an animated model where applicable.
+Separate LOD-file generation is off in both presets. Existing authored levels
+still load; automatic in-memory levels remain planned.
 
 ### Custom User Interfaces
 
@@ -101,6 +123,7 @@ imports only through explicit Starting Layout / Add to Front actions.
 - **Formats**: OGG, MP3, WAV, FLAC, and M4A, with per-format loop tags (`LOOPSTART`/`LOOPLENGTH` comments, ID3 `TXXX`, WAV `smpl`) and embedded album art shown beside each track; the same interface and one shared extraction cache back every audio picker, System music/sound picker, event command, and plugin audio field in the editor
 - **Playback controls**: Volume, pitch, pan, and seek
 - **Loop configuration**: Set custom loop points
+- **BGM sequences**: Map Properties sequences repeat ordered tracks, silence, and layered palettes with random pools, timing, and fades. Native track loop points are ignored inside a sequence
 - **Real-time preview**: Play BGM/BGS/ME/SE in map, Common, and Troop events uses the same current art-backed browser, native loop points, seek/transport controls, and volume/pitch/pan preview as system audio and map autoplay settings
 - **Unicode filename index**: The left rail uses normalized Unicode initials and locale-aware ordering; numbers and punctuation remain under `#`
 - **Recursive folders**: BGM, BGS, ME, and SE browsers discover nested files and preserve extensionless relative names such as `Boss/Phase 2`
@@ -115,8 +138,9 @@ imports only through explicit Starting Layout / Add to Front actions.
 ### Resource Manager
 - **One project catalog**: Tools > Resource Manager lists categories alphabetically in the current locale and searches nested image, audio, effect, movie, font, application-icon, and Reactor 3D folders while preserving each file's real physical path and encrypted storage identity. A dedicated cyan/gold SVG icon also opens it from the Tools toolbar
 - **Media and model previews**: Images, audio, video, and fonts preview in place. 3D models reuse the Reactor3D parser, texture resolution, camera, and template-cloning framework with drag orbit and wheel zoom; effects retain metadata-only browsing
+- **Model animation/effect clipboard**: In Database → 3D Models, select a saved animation or effect in the right-hand lists and press Ctrl+C/Ctrl+V (Cmd on macOS), or right-click for Edit, Copy, Paste, Duplicate and Delete. Paste creates a uniquely named copy and opens it for editing. Copies work between models and include an animation's referenced named effects; retarget part/bone or embedded-clip names when the destination model differs.
 - **Multi-file export**: Ctrl/Cmd-click toggles files and Shift-click selects a range. Batch export preserves nested paths, disambiguates physical aliases, and emits original plain bytes even when the project stores the assets encrypted
-- **Safe desktop import**: Multi-file imports target an existing nested folder, validate filenames, extensions, file signatures, collisions, symlink-free ancestry, project identity, and the live project lock, then use an atomic write. Alternate audio/movie formats with the same base name may coexist. PNG, JPG/JPEG, WebP, GIF, and restricted self-contained SVG images are validated before writing
+- **Safe desktop import**: Multi-file imports target an existing nested folder, validate filenames, extensions, file signatures, collisions, symlink-free ancestry, project identity, and the live project lock, then use an atomic write. Alternate audio/movie formats with the same base name may coexist. PNG/APNG, JPG/JPEG, WebP, GIF, and restricted self-contained SVG images are validated before writing
 - **Transactional model import**: The read-only 3D catalog allows one special creation path without enabling deletion. A user-named nested model folder accepts GLB, OBJ, FBX, STL, USDZ, 3MF, or DXF after triangle/geometry validation; GLB buffers and images must be embedded, and `.blend` must be exported first. Import stages `source/<case-preserved filename>` plus an empty `textures/`, reserves the exact destination, rechecks project/staging identity, and publishes without merging or replacing an existing folder. Failures roll back owned staging and newly created empty parents
 - **Encrypted-project support**: Image/audio imports are encrypted with the project's validated key and fail without writing if no key can be recovered
 - **Conservative mutations**: Delete warns that references are not scanned and repeats physical path/lock checks. Existing Reactor 3D files and folders cannot be deleted or replaced through Resource Manager; only the transactional new-model import above is allowed. Web can browse, preview, and export but cannot import or delete in this version
@@ -157,6 +181,7 @@ imports only through explicit Starting Layout / Add to Front actions.
 ### Playtest
 - **One-click testing**: Launch your game instantly from the editor
 - **Debug mode**: Test with development features enabled
+- **Playtest checkpoints**: Slot 99 is written after battles and map transfers in test mode; F9 on the title loads the checkpoint. This is separate from ordinary player save slots and is disabled outside test mode
 - **Built-in frame profiler**: Press F10 in any playtest (or deployed game) to record per-phase frame timings; a second press writes `save/reactor-profile.json` attributing every slow frame
 - **Process management**: Start and stop playtests easily
 - **Start-map validation**: Repairs invalid player and vehicle start-map references before launch when maps have been deleted
@@ -456,7 +481,14 @@ Database shortcuts are scoped to the active database section. The Types workspac
 
 ### Tests
 
-The Node test suite covers project creation/import and version metadata, generated-project validity, runtime manifests, local Markdown links, all 18 localization dictionaries, reviewed precedence/routing and no-fallback labels, cross-instance map/database/event clipboard transport, database batch/scroll behavior and trait/effect reference remapping, persisted A1 animation control, exact Shift autotile placement, database limits and Types/Terms behavior, complete Conditional Branch and nested-structure round trips, advanced Control Variables and Game Data operands, stock Loop insertion, dynamic event calls, extended input conditions, dynamic/extended Picture and Video Surface commands, transactional event creation/editing and all four Quick Event generators, visual start locations, Magic Skills, searchable Plugin Help, nested plugin-parameter serialization, typed plugin references, modern image formats, animated GIF refresh, and MZ command blocks, MV saves and visual compatibility, recursive/Unicode assets and folder trees, project lock and atomic-write safety, transactional model import and rollback, package preflights, preview cleanup, deployment/runtime/codec acquisition, release policy/signing gates, Forge generation, editor/Web distribution, Effekseer format/model round trips, all 106 recipes at default/extreme/swept values, composition, real-WASM playback, and the complete custom-interface data/runtime surface. Two sweeps also run every invocation against shapes derived from the bundled RPG Maker-authored projects (vendored in `tests/helpers/authored-data-shapes.json`): each command editor's emitted parameter count versus the highest `params[n]` the matching `Game_Interpreter.commandNNN` reads, and each new-record template versus the fields authored records always carry. The current suite discovers 1,902 Node tests. The latest uncommitted-tree run passes 1,900; only the two clean-checkout guards fail because newly referenced runtime/editor/SVG files remain untracked. A release commit must pass all 1,902. `npm run smoke:web` drives real Chromium through save, IndexedDB, and reload; `npm run smoke:nw` launches the real editor through the matching NW.js SDK ChromeDriver and verifies a native project save. Both GUI persistence smokes pass. `npm run smoke:nw-ui` is a read-only local release gate that verifies the responsive interface editor from 1280x720 through 2560x1440. Manual GIF animation, live 2D/3D Video Surface authoring/navigation, actor-preview performance, and final toolbar-icon checks remain outstanding.
+The Node test suite covers project creation/import and version metadata, generated-project validity, runtime manifests, local Markdown links, all 18 localization dictionaries, reviewed precedence/routing and no-fallback labels, cross-instance map/database/event clipboard transport, database batch/scroll behavior and trait/effect reference remapping, persisted A1 animation control, exact Shift autotile placement, database limits and Types/Terms behavior, complete Conditional Branch and nested-structure round trips, advanced Control Variables and Game Data operands, stock Loop insertion, dynamic event calls, extended input conditions, dynamic/extended Picture and Video Surface commands, transactional event creation/editing and all four Quick Event generators, visual start locations, Magic Skills, searchable Plugin Help, nested plugin-parameter serialization, typed plugin references, modern image formats, animated GIF refresh, and MZ command blocks, MV saves and visual compatibility, recursive/Unicode assets and folder trees, project lock and atomic-write safety, transactional model import and rollback, package preflights, preview cleanup, deployment/runtime/codec acquisition, release policy/signing gates, Forge generation, editor/Web distribution, Effekseer format/model round trips, all 106 recipes at default/extreme/swept values, composition, real-WASM playback, and the complete custom-interface data/runtime surface. Two sweeps also run every invocation against shapes derived from the bundled RPG Maker-authored projects (vendored in `tests/helpers/authored-data-shapes.json`): each command editor's emitted parameter count versus the highest `params[n]` the matching `Game_Interpreter.commandNNN` reads, and each new-record template versus the fields authored records always carry. The current full-suite result and tested-tree context are recorded in
+[`docs/STATUS.md`](../docs/STATUS.md). `npm run smoke:web` drives real Chromium
+through save, IndexedDB, and reload; `npm run smoke:nw` launches the editor
+through the matching NW.js SDK ChromeDriver and verifies a native project save.
+Both are CI gates. `npm run smoke:nw-ui` checks the responsive interface editor
+from 1280x720 through 2560x1440 as a local release gate. Prior GUI passes do not
+replace a fresh check of the candidate, and Node tests do not establish visual
+correctness or complete game compatibility.
 
 ```bash
 cd editor

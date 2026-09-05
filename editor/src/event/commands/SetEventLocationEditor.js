@@ -196,7 +196,7 @@ class SetEventLocationEditor {
 
             btn.addEventListener('mouseenter', () => {
                 if (this.type !== value) {
-                    btn.style.backgroundColor = '#3d3d3d';
+                    btn.style.backgroundColor = 'var(--color-bg-hover)';
                 }
             });
 

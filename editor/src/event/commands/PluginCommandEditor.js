@@ -166,7 +166,7 @@ class PluginCommandEditor {
             display: flex;
             flex-direction: column;
             gap: 16px;
-            color: #ff6666;
+            color: var(--color-danger-bright);
         `;
         const heading = document.createElement('div');
         heading.style.cssText = 'font-size: 14px; font-weight: bold;';
@@ -1033,7 +1033,7 @@ class PluginCommandEditor {
                     background-color: ${isSelected ? 'var(--color-accent)' : 'var(--color-bg-input)'};
                     color: ${isSelected ? 'var(--color-bg-deep)' : 'var(--color-text)'};
                 `;
-                item.addEventListener('mouseenter', () => { if (file !== selectedFile) item.style.backgroundColor = '#3d3d3d'; });
+                item.addEventListener('mouseenter', () => { if (file !== selectedFile) item.style.backgroundColor = 'var(--color-bg-hover)'; });
                 item.addEventListener('mouseleave', () => { if (file !== selectedFile) item.style.backgroundColor = 'var(--color-bg-input)'; });
                 item.addEventListener('click', () => { selectedFile = file; renderList(filter); });
                 item.addEventListener('dblclick', () => { selectAndClose(file); });

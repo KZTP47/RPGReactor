@@ -244,6 +244,7 @@ class RPGReactor {
             }
             if (this.lightingManager) {
                 this.projectController.lightingManager = this.lightingManager;
+                this.lightingManager._startTicking();
             }
 
             // Set current map for event manager

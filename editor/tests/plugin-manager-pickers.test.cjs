@@ -116,7 +116,7 @@ test('every Plugin Manager surface routes icon and file values through the share
     assert.match(commands, /case 'icon': \{[\s\S]*?RRIconPicker\.createField\(/);
     assert.match(commands, /if \(!this\.showAudioPicker\(arg, input\)\) this\.showFilePicker\(arg, input\)/);
     // One picker: the database editor delegates instead of keeping a copy.
-    assert.match(read('src/DatabaseEditorUI.js'), /showIconPicker\(currentIconIndex, onSelectCallback, iconSetPath\) \{\s*\/\/[^\n]*\n\s*return window\.RRIconPicker\.show\(/);
+    assert.match(read('src/DatabaseEditorUI.js'), /showIconPicker\(currentIconIndex, onSelectCallback, iconSetPath\) \{[\s\S]*?const modal = window\.RRIconPicker\.show\(/);
     const html = read('index.html');
     assert.ok(html.indexOf('src/utils/IconPicker.js') < html.indexOf('src/event/commands/PluginCommandEditor.js'));
 });

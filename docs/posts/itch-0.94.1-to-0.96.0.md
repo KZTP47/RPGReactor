@@ -1,5 +1,8 @@
 # What we've been building since 0.94.1
 
+Historical release/cycle notes. Features, limitations, and counts below describe
+that period; see [current project status](../STATUS.md) for today's behavior.
+
 It's been a while since the last update post, so here's where RPG Reactor is.
 
 Short version: three releases' worth of work, most of it under the hood. A

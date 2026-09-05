@@ -314,7 +314,7 @@ class AnimationPicker {
 
         const animation = this.databaseManager.getAnimation(animId);
         if (!animation) {
-            panel.innerHTML = `<div style="color: #f88; margin-top: 40px; font-size: 13px;">${this._t('Animation data not found')}</div>`;
+            panel.innerHTML = `<div style="color: var(--color-danger-bright); margin-top: 40px; font-size: 13px;">${this._t('Animation data not found')}</div>`;
             return;
         }
 

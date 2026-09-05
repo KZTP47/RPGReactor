@@ -173,7 +173,7 @@ class ChangePartyMemberEditor {
 
             btn.addEventListener('mouseenter', () => {
                 if (this.operation !== value) {
-                    btn.style.backgroundColor = '#3d3d3d';
+                    btn.style.backgroundColor = 'var(--color-bg-hover)';
                 }
             });
 

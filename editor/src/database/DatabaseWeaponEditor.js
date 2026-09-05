@@ -419,7 +419,6 @@ class DatabaseWeaponEditor {
                 { label: 'Copy', action: () => this.copyTrait(weapon, traitIndex), enabled: traitIndex !== null },
                 { label: 'Paste', action: () => this.pasteTrait(weapon), enabled: true },
                 { label: 'Delete', action: () => this.deleteTrait(weapon, traitIndex), enabled: traitIndex !== null },
-                { label: 'Select All', action: () => this.selectAllTraits(weapon), enabled: true }
             ];
 
             menuItems.forEach(item => {
@@ -529,9 +528,6 @@ class DatabaseWeaponEditor {
         this.refreshWeaponDetail(weapon);
     }
 
-    selectAllTraits(weapon) {
-        console.debug('Select all traits');
-    }
 
     refreshWeaponDetail(weapon) {
         console.debug('DatabaseWeaponEditor.refreshWeaponDetail - Refreshing weapon:', weapon.id);

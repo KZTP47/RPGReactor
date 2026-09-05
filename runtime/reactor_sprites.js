@@ -429,6 +429,7 @@ Sprite_Character.prototype.createHalfBodySprites = function() {
 };
 
 Sprite_Character.prototype.updatePosition = function() {
+    this._reactorSortY = undefined;
     if (this.updateReactor3DPosition()) return;
     this.x = this._character.screenX();
     this.y = this._character.screenY();
@@ -534,7 +535,8 @@ Sprite_Character.prototype.updateVisibility = function() {
     const character = this._character;
     if (!character) return;
     const isEvent = typeof character.eventId === "function";
-    if (isEvent && Reactor3D.isEventProp(character.eventId())) {
+    if (isEvent && Reactor3D.isEventProp(character.eventId())
+        && typeof $dataMap !== "undefined" && Reactor3D.shouldRender3D($dataMap)) {
         this.visible = false;
         return;
     }
@@ -598,6 +600,16 @@ Sprite_Character.prototype.reactor3DScale = function() {
 // plugins subclass these sprites or borrow their methods onto other
 // prototypes (LeTBS runs Sprite_AnimationMV.update on a Sprite_Animation),
 // and there `this` has no such property.
+Sprite_Character.prototype.destroy = function(options) {
+    const state = this._reactorMapModel;
+    if (state) {
+        Reactor3D.pauseModelPlayback(state);
+        Reactor3D.releaseMapModelState(state);
+        this._reactorMapModel = null;
+    }
+    Sprite.prototype.destroy.call(this, options);
+};
+
 Sprite_Character.prototype._reactor3dBaseUpdate = Sprite_Character.prototype.update;
 Sprite_Character.prototype.update = function() {
     const was = this._reactor3dStand;
@@ -614,6 +626,7 @@ Sprite_Character.prototype.update = function() {
     if (!this._rrCulled && this._character && this._character._reactorLift > 0
         && typeof $gameMap !== "undefined" && $gameMap && $gameMap.tileHeight
         && (typeof this._character.eventId !== "function" || typeof Reactor3D === "undefined"
+            || this._character.eventId() >= Reactor3D.PROP_EVENT_BASE
             || !Reactor3D.isEventProp || Reactor3D.isEventProp(this._character.eventId()))) {
         this.y -= this._character._reactorLift * $gameMap.tileHeight();
     }
@@ -4114,6 +4127,12 @@ Spriteset_Map.prototype.updateOffscreenCulling = function() {
             culled =
                 sx + halfW < minX || sx - halfW > maxX ||
                 sy < minY || sy - spriteH > maxY;
+            if (sprite._reactorMapModel) {
+                const y = sy - Reactor3D.flatModelLift(character) * $gameMap.tileHeight();
+                const anchor = sprite.anchor ? sprite.anchor.y : 0.5;
+                culled = sx + halfW < minX || sx - halfW > maxX
+                    || y + spriteH * (1 - anchor) < minY || y - spriteH * anchor > maxY;
+            }
         }
         // Never park a sprite that hasn't completed a first update: its z
         // is still undefined, and one undefined z NaN-poisons the tilemap's
@@ -4730,7 +4749,7 @@ function reactorFlatLightTexture(kind) {
     const key = kind === "cone" ? "_coneLightPixi" : kind === "beam" ? "_beamLightPixi" : "_roundLightPixi";
     if (!Reactor3D[key]) {
         const canvas = kind === "beam" ? Reactor3D.beamLightCanvas()
-            : kind === "cone" ? Reactor3D.coneLightCanvas() : Reactor3D.roundLightCanvas();
+            : kind === "cone" ? Reactor3D.flatConeLightCanvas() : Reactor3D.roundLightCanvas();
         Reactor3D[key] = PIXI.Texture.from(canvas);
     }
     return Reactor3D[key];
@@ -4752,15 +4771,11 @@ Spriteset_Map.prototype.updateReactorLighting2D = function() {
     if (!state) return;
 
     const ambient = Reactor3D.ambientFor($dataMap);
-    const level = Math.max(0, Math.min(1, ambient.intensity));
-    const colour = ambient.colour;
-    const channel = shift =>
-        Math.round(Math.max(0, Math.min(255, ((colour >> shift) & 0xff) * level)));
-    state.darkness.tint = (channel(16) << 16) | (channel(8) << 8) | channel(0);
+    state.darkness.tint = Reactor3D.flatAmbientTint(ambient);
     state.darkness.width = Graphics.width;
     state.darkness.height = Graphics.height;
 
-    this.syncReactorFlatLights(state, Reactor3D.nativeLights($dataMap));
+    this.syncReactorFlatLights(state, Reactor3D.nativeLights($dataMap).concat(Reactor3D.modelEffectLights()));
     this.keepReactorLighting2DOnTop();
 };
 
@@ -4839,8 +4854,7 @@ Spriteset_Map.prototype.syncReactorFlatLights = function(state, lights) {
         }
         sprite.position.set(x, y);
         sprite.tint = light.colour !== undefined ? light.colour : 0xffffff;
-        sprite.alpha = Math.max(0, Math.min(1,
-            light.intensity === undefined ? 1 : light.intensity));
+        sprite.alpha = Reactor3D.flatLightOpacity(light);
         used++;
     }
     for (let i = used; i < state.sprites.length; i++) {
@@ -4934,7 +4948,7 @@ Spriteset_Map.prototype.updateReactor3DCamera = function() {
 };
 
 // reactor_3d.js loads before the game classes exist, so its camera hooks
-// (Game_Map.setup, the interpreter wait mode, the party hidden in first
+// (Game_Map.setup, the interpreter wait mode, the player’s flat sprite hidden in first
 // person) and its plugin command are installed here, once everything they
 // wrap is defined.
 if (typeof Reactor3D !== "undefined" && Reactor3D.Camera) {

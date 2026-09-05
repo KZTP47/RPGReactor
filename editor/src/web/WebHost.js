@@ -475,7 +475,7 @@
         modal.id = 'web-playtest-modal';
         modal.style.cssText = 'position:fixed;inset:0;z-index:12000;background:rgba(0,0,0,.92);display:none;flex-direction:column;padding:14px;';
         const toolbar = document.createElement('div');
-        toolbar.style.cssText = 'display:flex;justify-content:space-between;align-items:center;color:#fff;padding:0 0 10px;font:600 13px sans-serif;';
+        toolbar.style.cssText = 'display:flex;justify-content:space-between;align-items:center;color:var(--color-text-strong);padding:0 0 10px;font:600 13px sans-serif;';
         const title = document.createElement('span');
         title.textContent = tt('Reactor One - Browser Playtest');
         toolbar.appendChild(title);
@@ -496,7 +496,7 @@
         toolbar.appendChild(close);
         const frame = document.createElement('iframe');
         frame.allow = 'autoplay; fullscreen; gamepad';
-        frame.style.cssText = 'flex:1;width:100%;border:1px solid #555;background:#000;';
+        frame.style.cssText = 'flex:1;width:100%;border:1px solid var(--color-border-input);background:#000;';
         modal.append(toolbar, frame);
         document.body.appendChild(modal);
         return modal;

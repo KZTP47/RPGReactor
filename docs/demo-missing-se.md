@@ -1,7 +1,7 @@
 # Demo: assets not on disk
 
-Re-verified 2026-08-24 against `template/Demo`: 120 SE names missing, 75 SE
-files on disk. The owner is replacing stock assets with originals as they are
+Re-verified 2026-09-04 against `template/Demo`: 121 distinct animation SE
+names missing, 75 SE files on disk. The owner is replacing stock assets with originals as they are
 made; keep this list current rather than restoring stock files.
 
 ## Character and battler art
@@ -18,9 +18,12 @@ Actors 1–2 carry `Database.r3d.json` model bindings, so their map sprites are
 ## Animation sounds
 
 Every SE name the animation database references that audio/se no longer holds.
-Replace or re-pick these to keep animations from stopping the game.
+Replace or re-pick these for complete audio playback. Reactor reports missing
+audio and degrades gracefully; this inventory does not imply a missing sound
+always stops the game.
 
 - Absorb2 — used by 63 Confusion
+- Attack1 — used by 121 Gamma Ray Pulse
 - Attack2 — used by 18 Claw Fire, 19 Claw Ice, 20 Claw Thunder, 28 Claw Special
 - Attack3 — used by 28 Claw Special, 29 Arrow Special
 - Battle3 — used by 29 Arrow Special
@@ -71,11 +74,11 @@ Replace or re-pick these to keep animations from stopping the game.
 - Ice1 — used by 44 Heal All 2, 45 Cure One 1, 46 Cure One 2, 47 Cure All 1
 - Ice10 — used by 74 Ice All 2, 75 Ice All 3
 - Ice11 — used by 71 Ice One 1, 73 Ice All 1
-- Ice3 — used by 4 Hit Ice, 9 Slash Ice, 14 Pierce Ice, 19 Claw Ice, 24 Slash Special 2, 97 Light One 2, …
-- Ice4 — used by 36 Song, 43 Heal All 1, 44 Heal All 2, 45 Cure One 1, 46 Cure One 2, 47 Cure All 1, …
+- Ice3 — used by 4 Hit Ice, 9 Slash Ice, 14 Pierce Ice, 19 Claw Ice, 24 Slash Special 2, 97 Light One 2, 100 Light All 3
+- Ice4 — used by 36 Song, 43 Heal All 1, 44 Heal All 2, 45 Cure One 1, 46 Cure One 2, 47 Cure All 1, 48 Cure All 2, 50 Revive 2, 53 Power up 3, 72 Ice One 2, 100 Light All 3
 - Ice5 — used by 43 Heal All 1, 73 Ice All 1, 75 Ice All 3, 98 Light All 1
 - Laser1 — used by 115 Laser One
-- Magic1 — used by 49 Revive 1, 51 Power up 1, 75 Ice All 3, 80 Thunder All 3, 85 Water All 3, 90 Earth All 3, …
+- Magic1 — used by 49 Revive 1, 51 Power up 1, 75 Ice All 3, 80 Thunder All 3, 85 Water All 3, 90 Earth All 3, 95 Wind All 3, 100 Light All 3, 105 Darkness All 3
 - Magic10 — used by 105 Darkness All 3
 - Magic12 — used by 100 Light All 3
 - Magic2 — used by 50 Revive 2, 54 Power down 1, 117 Light Pillar 1, 118 Light Pillar 2
@@ -100,8 +103,8 @@ Replace or re-pick these to keep animations from stopping the game.
 - Skill1 — used by 49 Revive 1, 95 Wind All 3, 99 Light All 2, 114 Shoot Special
 - Skill2 — used by 95 Wind All 3, 114 Shoot Special
 - Skill3 — used by 100 Light All 3
-- Slash1 — used by 6 Slash Physical, 7 Slash Effect, 9 Slash Ice, 10 Slash Thunder, 23 Slash Special 1, 24 Slash Special 2, …
-- Slash2 — used by 18 Claw Fire, 19 Claw Ice, 20 Claw Thunder, 24 Slash Special 2, 25 Slash Special 3, 26 Pierce Special 1, …
+- Slash1 — used by 6 Slash Physical, 7 Slash Effect, 9 Slash Ice, 10 Slash Thunder, 23 Slash Special 1, 24 Slash Special 2, 25 Slash Special 3, 26 Pierce Special 1, 28 Claw Special, 30 General Special 1, 31 General Special 2
+- Slash2 — used by 18 Claw Fire, 19 Claw Ice, 20 Claw Thunder, 24 Slash Special 2, 25 Slash Special 3, 26 Pierce Special 1, 27 Pierce Special 2, 28 Claw Special, 30 General Special 1
 - Slash3 — used by 23 Slash Special 1, 25 Slash Special 3, 28 Claw Special, 31 General Special 2
 - Slash4 — used by 23 Slash Special 1, 30 General Special 1
 - Slash5 — used by 30 General Special 1
@@ -114,9 +117,9 @@ Replace or re-pick these to keep animations from stopping the game.
 - Sword1 — used by 40 Flash
 - Sword2 — used by 71 Ice One 1, 98 Light All 1
 - Sword4 — used by 24 Slash Special 2, 26 Pierce Special 1, 27 Pierce Special 2, 96 Light One 1
-- Sword5 — used by 8 Slash Fire, 11 Pierce Physical, 13 Pierce Fire, 14 Pierce Ice, 15 Pierce Thunder, 26 Pierce Special 1, …
+- Sword5 — used by 8 Slash Fire, 11 Pierce Physical, 13 Pierce Fire, 14 Pierce Ice, 15 Pierce Thunder, 26 Pierce Special 1, 27 Pierce Special 2
 - Teleport — used by 104 Darkness All 2, 119 Balls of Light
-- Thunder1 — used by 8 Slash Fire, 11 Pierce Physical, 13 Pierce Fire, 14 Pierce Ice, 15 Pierce Thunder, 32 Breath, …
+- Thunder1 — used by 8 Slash Fire, 11 Pierce Physical, 13 Pierce Fire, 14 Pierce Ice, 15 Pierce Thunder, 32 Breath, 72 Ice One 2, 78 Thunder All 1
 - Thunder10 — used by 79 Thunder All 2
 - Thunder2 — used by 39 Bodyslam, 87 Earth One 2
 - Thunder3 — used by 31 General Special 2, 77 Thunder One 2, 103 Darkness All 1
@@ -134,7 +137,7 @@ Replace or re-pick these to keep animations from stopping the game.
 - Water4 — used by 83 Water All 1
 - Water5 — used by 81 Water One 1, 83 Water All 1
 - Wind1 — used by 71 Ice One 1, 85 Water All 3
-- Wind2 — used by 75 Ice All 3, 80 Thunder All 3, 85 Water All 3, 90 Earth All 3, 93 Wind All 1, 95 Wind All 3, …
+- Wind2 — used by 75 Ice All 3, 80 Thunder All 3, 85 Water All 3, 90 Earth All 3, 93 Wind All 1, 95 Wind All 3, 100 Light All 3, 105 Darkness All 3
 - Wind3 — used by 92 Wind One 2, 95 Wind All 3
 - Wind4 — used by 24 Slash Special 2
 - Wind5 — used by 27 Pierce Special 2, 57 Bind, 92 Wind One 2, 93 Wind All 1, 94 Wind All 2

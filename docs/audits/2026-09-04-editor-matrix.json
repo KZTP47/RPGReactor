@@ -1,0 +1,1198 @@
+{
+  "date": "2026-09-04",
+  "scope": "NW.js editor creation/reopening with valid sample inputs; this is not exhaustive runtime scenario coverage.",
+  "commands": [
+    {
+      "code": 101,
+      "editor": "messageEditor",
+      "inserted": false,
+      "name": "Show Text",
+      "roundTrip": true
+    },
+    {
+      "code": 102,
+      "editor": "choicesEditor",
+      "inserted": false,
+      "name": "Show Choices",
+      "roundTrip": true
+    },
+    {
+      "code": 103,
+      "editor": "inputNumberEditor",
+      "inserted": false,
+      "name": "Input Number",
+      "roundTrip": true
+    },
+    {
+      "code": 104,
+      "editor": "selectItemEditor",
+      "inserted": false,
+      "name": "Select Item",
+      "roundTrip": true
+    },
+    {
+      "code": 105,
+      "editor": "showScrollingTextEditor",
+      "inserted": false,
+      "name": "Show Scrolling Text",
+      "roundTrip": true
+    },
+    {
+      "code": 121,
+      "editor": "switchesEditor",
+      "inserted": false,
+      "name": "Control Switches",
+      "roundTrip": true
+    },
+    {
+      "code": 122,
+      "editor": "variablesEditor",
+      "inserted": false,
+      "name": "Control Variables",
+      "roundTrip": true
+    },
+    {
+      "code": 123,
+      "editor": "controlSelfSwitchEditor",
+      "inserted": false,
+      "name": "Control Self Switch",
+      "roundTrip": true
+    },
+    {
+      "code": 124,
+      "editor": "controlTimerEditor",
+      "inserted": false,
+      "name": "Control Timer",
+      "roundTrip": true
+    },
+    {
+      "code": 111,
+      "editor": "conditionalBranchEditor",
+      "inserted": false,
+      "name": "Conditional Branch",
+      "roundTrip": true
+    },
+    {
+      "code": 112,
+      "editor": "loopEditor",
+      "inserted": true,
+      "name": "Loop"
+    },
+    {
+      "code": 113,
+      "editor": "breakLoopEditor",
+      "inserted": false,
+      "name": "Break Loop",
+      "roundTrip": true
+    },
+    {
+      "code": 115,
+      "editor": null,
+      "inserted": true,
+      "name": "Exit Event Processing"
+    },
+    {
+      "code": 117,
+      "editor": "commonEventEditor",
+      "inserted": false,
+      "name": "Common Event",
+      "roundTrip": true
+    },
+    {
+      "code": 118,
+      "editor": "labelEditor",
+      "inserted": false,
+      "name": "Label",
+      "roundTrip": true
+    },
+    {
+      "code": 119,
+      "editor": "jumpToLabelEditor",
+      "inserted": false,
+      "name": "Jump to Label",
+      "roundTrip": true
+    },
+    {
+      "code": 108,
+      "editor": "commentEditor",
+      "inserted": false,
+      "name": "Comment",
+      "roundTrip": true
+    },
+    {
+      "code": 125,
+      "editor": "goldEditor",
+      "inserted": false,
+      "name": "Change Gold",
+      "roundTrip": true
+    },
+    {
+      "code": 126,
+      "editor": "changeItemsEditor",
+      "inserted": false,
+      "name": "Change Items",
+      "roundTrip": true
+    },
+    {
+      "code": 127,
+      "editor": "changeWeaponsEditor",
+      "inserted": false,
+      "name": "Change Weapons",
+      "roundTrip": true
+    },
+    {
+      "code": 128,
+      "editor": "changeArmorsEditor",
+      "inserted": false,
+      "name": "Change Armors",
+      "roundTrip": true
+    },
+    {
+      "code": 129,
+      "editor": "changePartyMemberEditor",
+      "inserted": false,
+      "name": "Change Party Members",
+      "roundTrip": true
+    },
+    {
+      "code": 311,
+      "editor": "changeHPEditor",
+      "inserted": false,
+      "name": "Change HP",
+      "roundTrip": true
+    },
+    {
+      "code": 312,
+      "editor": "changeMPEditor",
+      "inserted": false,
+      "name": "Change MP",
+      "roundTrip": true
+    },
+    {
+      "code": 326,
+      "editor": "changeTPEditor",
+      "inserted": false,
+      "name": "Change TP",
+      "roundTrip": true
+    },
+    {
+      "code": 313,
+      "editor": "changeStateEditor",
+      "inserted": false,
+      "name": "Change State",
+      "roundTrip": true
+    },
+    {
+      "code": 314,
+      "editor": "recoverAllEditor",
+      "inserted": false,
+      "name": "Recover All",
+      "roundTrip": true
+    },
+    {
+      "code": 315,
+      "editor": "changeEXPEditor",
+      "inserted": false,
+      "name": "Change EXP",
+      "roundTrip": true
+    },
+    {
+      "code": 316,
+      "editor": "changeLevelEditor",
+      "inserted": false,
+      "name": "Change Level",
+      "roundTrip": true
+    },
+    {
+      "code": 317,
+      "editor": "changeParameterEditor",
+      "inserted": false,
+      "name": "Change Parameter",
+      "roundTrip": true
+    },
+    {
+      "code": 318,
+      "editor": "changeSkillEditor",
+      "inserted": false,
+      "name": "Change Skill",
+      "roundTrip": true
+    },
+    {
+      "code": 319,
+      "editor": "changeEquipmentEditor",
+      "inserted": false,
+      "name": "Change Equipment",
+      "roundTrip": true
+    },
+    {
+      "code": 320,
+      "editor": "changeNameEditor",
+      "inserted": false,
+      "name": "Change Name",
+      "roundTrip": true
+    },
+    {
+      "code": 321,
+      "editor": "changeClassEditor",
+      "inserted": false,
+      "name": "Change Class",
+      "roundTrip": true
+    },
+    {
+      "code": 324,
+      "editor": "changeNicknameEditor",
+      "inserted": false,
+      "name": "Change Nickname",
+      "roundTrip": true
+    },
+    {
+      "code": 325,
+      "editor": "changeProfileEditor",
+      "inserted": false,
+      "name": "Change Profile",
+      "roundTrip": true
+    },
+    {
+      "code": 201,
+      "editor": "transferPlayerEditor",
+      "inserted": false,
+      "name": "Transfer Player",
+      "roundTrip": true
+    },
+    {
+      "code": 202,
+      "editor": "setVehicleLocationEditor",
+      "inserted": false,
+      "name": "Set Vehicle Location",
+      "roundTrip": true
+    },
+    {
+      "code": 203,
+      "editor": "setEventLocationEditor",
+      "inserted": false,
+      "name": "Set Event Location",
+      "roundTrip": true
+    },
+    {
+      "code": 204,
+      "editor": "scrollMapEditor",
+      "inserted": false,
+      "name": "Scroll Map",
+      "roundTrip": true
+    },
+    {
+      "code": 205,
+      "editor": "setMovementRouteEditor",
+      "inserted": false,
+      "name": "Set Movement Route",
+      "roundTrip": true
+    },
+    {
+      "code": 206,
+      "editor": null,
+      "inserted": true,
+      "name": "Get on/off Vehicle"
+    },
+    {
+      "code": 211,
+      "editor": "changeTransparencyEditor",
+      "inserted": false,
+      "name": "Change Transparency",
+      "roundTrip": true
+    },
+    {
+      "code": 216,
+      "editor": "toggleCommandEditor",
+      "inserted": false,
+      "name": "Change Player Followers",
+      "roundTrip": true
+    },
+    {
+      "code": 217,
+      "editor": null,
+      "inserted": true,
+      "name": "Gather Followers"
+    },
+    {
+      "code": 212,
+      "editor": "showAnimationEditor",
+      "inserted": false,
+      "name": "Show Animation",
+      "roundTrip": true
+    },
+    {
+      "code": 213,
+      "editor": "balloonIconEditor",
+      "inserted": false,
+      "name": "Show Balloon Icon",
+      "roundTrip": true
+    },
+    {
+      "code": 214,
+      "editor": null,
+      "inserted": true,
+      "name": "Erase Event"
+    },
+    {
+      "code": 231,
+      "editor": "showPictureEditor",
+      "inserted": false,
+      "name": "Show Picture",
+      "roundTrip": true
+    },
+    {
+      "code": 232,
+      "editor": "movePictureEditor",
+      "inserted": false,
+      "name": "Move Picture",
+      "roundTrip": true
+    },
+    {
+      "code": 233,
+      "editor": "rotatePictureEditor",
+      "inserted": false,
+      "name": "Rotate Picture",
+      "roundTrip": true
+    },
+    {
+      "code": 234,
+      "editor": "tintPictureEditor",
+      "inserted": false,
+      "name": "Tint Picture",
+      "roundTrip": true
+    },
+    {
+      "code": 235,
+      "editor": "erasePictureEditor",
+      "inserted": false,
+      "name": "Erase Picture",
+      "roundTrip": true
+    },
+    {
+      "code": 230,
+      "editor": "waitEditor",
+      "inserted": false,
+      "name": "Wait",
+      "roundTrip": true
+    },
+    {
+      "code": 221,
+      "editor": "fadeScreenEditor",
+      "inserted": false,
+      "name": "Fadeout Screen",
+      "roundTrip": true
+    },
+    {
+      "code": 222,
+      "editor": "fadeScreenEditor",
+      "inserted": false,
+      "name": "Fadein Screen",
+      "roundTrip": true
+    },
+    {
+      "code": 223,
+      "editor": "tintScreenEditor",
+      "inserted": false,
+      "name": "Tint Screen",
+      "roundTrip": true
+    },
+    {
+      "code": 224,
+      "editor": "flashScreenEditor",
+      "inserted": false,
+      "name": "Flash Screen",
+      "roundTrip": true
+    },
+    {
+      "code": 225,
+      "editor": "shakeScreenEditor",
+      "inserted": false,
+      "name": "Shake Screen",
+      "roundTrip": true
+    },
+    {
+      "code": 236,
+      "editor": "setWeatherEffectEditor",
+      "inserted": false,
+      "name": "Set Weather Effect",
+      "roundTrip": true
+    },
+    {
+      "code": 241,
+      "editor": "audioEditor",
+      "inserted": false,
+      "name": "Play BGM",
+      "roundTrip": true
+    },
+    {
+      "code": 242,
+      "editor": "audioEditor",
+      "inserted": false,
+      "name": "Fadeout BGM",
+      "roundTrip": true
+    },
+    {
+      "code": 243,
+      "editor": null,
+      "inserted": true,
+      "name": "Save BGM"
+    },
+    {
+      "code": 244,
+      "editor": null,
+      "inserted": true,
+      "name": "Replay BGM"
+    },
+    {
+      "code": 245,
+      "editor": "audioEditor",
+      "inserted": false,
+      "name": "Play BGS",
+      "roundTrip": true
+    },
+    {
+      "code": 246,
+      "editor": "audioEditor",
+      "inserted": false,
+      "name": "Fadeout BGS",
+      "roundTrip": true
+    },
+    {
+      "code": 249,
+      "editor": "audioEditor",
+      "inserted": false,
+      "name": "Play ME",
+      "roundTrip": true
+    },
+    {
+      "code": 250,
+      "editor": "audioEditor",
+      "inserted": false,
+      "name": "Play SE",
+      "roundTrip": true
+    },
+    {
+      "code": 251,
+      "editor": "audioEditor",
+      "inserted": false,
+      "name": "Stop SE",
+      "roundTrip": true
+    },
+    {
+      "code": 261,
+      "editor": "playMovieEditor",
+      "inserted": false,
+      "name": "Play Movie",
+      "roundTrip": true
+    },
+    {
+      "code": 301,
+      "editor": "battleProcessingEditor",
+      "inserted": false,
+      "name": "Battle Processing",
+      "roundTrip": true
+    },
+    {
+      "code": 302,
+      "editor": "shopProcessingEditor",
+      "inserted": false,
+      "name": "Shop Processing",
+      "roundTrip": true
+    },
+    {
+      "code": 303,
+      "editor": "nameInputProcessingEditor",
+      "inserted": false,
+      "name": "Name Input Processing",
+      "roundTrip": true
+    },
+    {
+      "code": 351,
+      "editor": null,
+      "inserted": true,
+      "name": "Open Menu Screen"
+    },
+    {
+      "code": 352,
+      "editor": null,
+      "inserted": true,
+      "name": "Open Save Screen"
+    },
+    {
+      "code": 353,
+      "editor": null,
+      "inserted": true,
+      "name": "Game Over"
+    },
+    {
+      "code": 354,
+      "editor": null,
+      "inserted": true,
+      "name": "Return to Title Screen"
+    },
+    {
+      "code": 132,
+      "editor": "audioEditor",
+      "inserted": false,
+      "name": "Change Battle BGM",
+      "roundTrip": true
+    },
+    {
+      "code": 133,
+      "editor": "audioEditor",
+      "inserted": false,
+      "name": "Change Victory ME",
+      "roundTrip": true
+    },
+    {
+      "code": 134,
+      "editor": "toggleCommandEditor",
+      "inserted": false,
+      "name": "Change Save Access",
+      "roundTrip": true
+    },
+    {
+      "code": 135,
+      "editor": "toggleCommandEditor",
+      "inserted": false,
+      "name": "Change Menu Access",
+      "roundTrip": true
+    },
+    {
+      "code": 136,
+      "editor": "toggleCommandEditor",
+      "inserted": false,
+      "name": "Change Encounter",
+      "roundTrip": true
+    },
+    {
+      "code": 137,
+      "editor": "toggleCommandEditor",
+      "inserted": false,
+      "name": "Change Formation Access",
+      "roundTrip": true
+    },
+    {
+      "code": 138,
+      "editor": "changeWindowColorEditor",
+      "inserted": false,
+      "name": "Change Window Color",
+      "roundTrip": true
+    },
+    {
+      "code": 139,
+      "editor": "audioEditor",
+      "inserted": false,
+      "name": "Change Defeat ME",
+      "roundTrip": true
+    },
+    {
+      "code": 140,
+      "editor": "changeVehicleBGMEditor",
+      "inserted": false,
+      "name": "Change Vehicle BGM",
+      "roundTrip": true
+    },
+    {
+      "code": 322,
+      "editor": "changeActorImagesEditor",
+      "inserted": false,
+      "name": "Change Actor Images",
+      "roundTrip": true
+    },
+    {
+      "code": 323,
+      "editor": "changeVehicleImageEditor",
+      "inserted": false,
+      "name": "Change Vehicle Image",
+      "roundTrip": true
+    },
+    {
+      "code": 281,
+      "editor": "toggleCommandEditor",
+      "inserted": false,
+      "name": "Change Map Name Display",
+      "roundTrip": true
+    },
+    {
+      "code": 282,
+      "editor": "changeTilesetEditor",
+      "inserted": false,
+      "name": "Change Tileset",
+      "roundTrip": true
+    },
+    {
+      "code": 283,
+      "editor": "changeBattleBackgroundEditor",
+      "inserted": false,
+      "name": "Change Battle Background",
+      "roundTrip": true
+    },
+    {
+      "code": 284,
+      "editor": "changeParallaxEditor",
+      "inserted": false,
+      "name": "Change Parallax",
+      "roundTrip": true
+    },
+    {
+      "code": 285,
+      "editor": "getLocationInfoEditor",
+      "inserted": false,
+      "name": "Get Location Info",
+      "roundTrip": true
+    },
+    {
+      "code": 331,
+      "editor": "changeEnemyHPEditor",
+      "inserted": false,
+      "name": "Change Enemy HP",
+      "roundTrip": true
+    },
+    {
+      "code": 332,
+      "editor": "changeEnemyMPEditor",
+      "inserted": false,
+      "name": "Change Enemy MP",
+      "roundTrip": true
+    },
+    {
+      "code": 342,
+      "editor": "changeEnemyTPEditor",
+      "inserted": false,
+      "name": "Change Enemy TP",
+      "roundTrip": true
+    },
+    {
+      "code": 333,
+      "editor": "changeEnemyStateEditor",
+      "inserted": false,
+      "name": "Change Enemy State",
+      "roundTrip": true
+    },
+    {
+      "code": 334,
+      "editor": "enemyRecoverAllEditor",
+      "inserted": false,
+      "name": "Enemy Recover All",
+      "roundTrip": true
+    },
+    {
+      "code": 335,
+      "editor": "enemyAppearEditor",
+      "inserted": false,
+      "name": "Enemy Appear",
+      "roundTrip": true
+    },
+    {
+      "code": 336,
+      "editor": "enemyTransformEditor",
+      "inserted": false,
+      "name": "Enemy Transform",
+      "roundTrip": true
+    },
+    {
+      "code": 337,
+      "editor": "showBattleAnimationEditor",
+      "inserted": false,
+      "name": "Show Battle Animation",
+      "roundTrip": true
+    },
+    {
+      "code": 339,
+      "editor": "forceActionEditor",
+      "inserted": false,
+      "name": "Force Action",
+      "roundTrip": true
+    },
+    {
+      "code": 340,
+      "editor": null,
+      "inserted": true,
+      "name": "Abort Battle"
+    },
+    {
+      "code": 355,
+      "editor": "scriptEditor",
+      "inserted": false,
+      "name": "Script",
+      "roundTrip": true
+    },
+    {
+      "code": 356,
+      "editor": "pluginCommandEditor",
+      "inserted": false,
+      "name": "Plugin Command",
+      "roundTrip": true
+    },
+    {
+      "code": 357,
+      "editor": "playModelAnimationEditor",
+      "inserted": false,
+      "name": "Play Model Animation",
+      "reactor": "PlayModelAnimation",
+      "roundTrip": true
+    },
+    {
+      "code": 357,
+      "editor": "playModelAnimationEditor",
+      "inserted": false,
+      "name": "Set Model Animation Speed",
+      "reactor": "SetModelAnimationSpeed",
+      "roundTrip": true
+    },
+    {
+      "code": 357,
+      "editor": "playModelEffectEditor",
+      "inserted": false,
+      "name": "Play 3D Effect",
+      "reactor": "PlayModelEffect",
+      "roundTrip": true
+    },
+    {
+      "code": 357,
+      "editor": "speakModel3DEditor",
+      "inserted": false,
+      "name": "Speak 3D Dialogue",
+      "reactor": "SpeakModel3D",
+      "roundTrip": true
+    },
+    {
+      "code": 357,
+      "editor": "camera3DEditor",
+      "inserted": false,
+      "name": "Change 3D Camera",
+      "reactor": "ChangeCamera3D",
+      "roundTrip": true
+    },
+    {
+      "code": 357,
+      "editor": "transformModel3DEditor",
+      "inserted": false,
+      "name": "Transform 3D Model",
+      "reactor": "TransformModel3D",
+      "roundTrip": true
+    },
+    {
+      "code": 357,
+      "editor": "lightCommandEditor",
+      "inserted": false,
+      "name": "Switch Light",
+      "reactor": "LightSwitch",
+      "roundTrip": true
+    },
+    {
+      "code": 357,
+      "editor": "lightCommandEditor",
+      "inserted": false,
+      "name": "Transform Light",
+      "reactor": "TransformLight",
+      "roundTrip": true
+    },
+    {
+      "code": 357,
+      "editor": "lightCommandEditor",
+      "inserted": false,
+      "name": "Change Ambient Light",
+      "reactor": "AmbientLight",
+      "roundTrip": true
+    },
+    {
+      "code": 357,
+      "editor": "waitForModel3DEditor",
+      "inserted": false,
+      "name": "Scoped Wait",
+      "reactor": "ScopedWait",
+      "roundTrip": true
+    },
+    {
+      "code": 357,
+      "editor": "questCommandEditor",
+      "inserted": false,
+      "name": "Quest",
+      "reactor": "QuestSet",
+      "roundTrip": true
+    },
+    {
+      "code": 357,
+      "editor": "questCommandEditor",
+      "inserted": false,
+      "name": "Quest Objective",
+      "reactor": "QuestObjective",
+      "roundTrip": true
+    },
+    {
+      "code": 357,
+      "editor": "questCommandEditor",
+      "inserted": false,
+      "name": "Quest Reward",
+      "reactor": "QuestReward",
+      "roundTrip": true
+    },
+    {
+      "code": 357,
+      "editor": "questCommandEditor",
+      "inserted": false,
+      "name": "Open Quest Log",
+      "reactor": "OpenQuestLog",
+      "roundTrip": true
+    },
+    {
+      "code": 357,
+      "editor": "videoSurfaceEditor",
+      "inserted": false,
+      "name": "Show Media Surface",
+      "reactor": "ShowVideoSurface",
+      "roundTrip": true
+    },
+    {
+      "code": 357,
+      "editor": "videoSurfaceEditor",
+      "inserted": false,
+      "name": "Transform Media Surface",
+      "reactor": "TransformVideoSurface",
+      "roundTrip": true
+    },
+    {
+      "code": 357,
+      "editor": "videoSurfaceEditor",
+      "inserted": false,
+      "name": "Stop Media Surface",
+      "reactor": "StopVideoSurface",
+      "roundTrip": true
+    },
+    {
+      "code": 357,
+      "editor": "callUserInterfaceEditor",
+      "inserted": false,
+      "name": "Call User Interface",
+      "reactor": "CallUserInterface",
+      "roundTrip": true
+    }
+  ],
+  "databaseSections": [
+    {
+      "type": "actors",
+      "controls": 16,
+      "diagnostics": [
+        "Demo actor graphic img/sv_actors/Actor2_2.png is missing; the panel shows Image not found."
+      ]
+    },
+    {
+      "type": "classes",
+      "controls": 3,
+      "diagnostics": []
+    },
+    {
+      "type": "skills",
+      "controls": 27,
+      "diagnostics": []
+    },
+    {
+      "type": "items",
+      "controls": 21,
+      "diagnostics": []
+    },
+    {
+      "type": "weapons",
+      "controls": 17,
+      "diagnostics": []
+    },
+    {
+      "type": "armors",
+      "controls": 17,
+      "diagnostics": []
+    },
+    {
+      "type": "enemies",
+      "controls": 26,
+      "diagnostics": []
+    },
+    {
+      "type": "troops",
+      "controls": 6,
+      "diagnostics": []
+    },
+    {
+      "type": "states",
+      "controls": 21,
+      "diagnostics": []
+    },
+    {
+      "type": "animations",
+      "controls": 26,
+      "diagnostics": []
+    },
+    {
+      "type": "tilesets",
+      "controls": 1,
+      "diagnostics": []
+    },
+    {
+      "type": "commonEvents",
+      "controls": 3,
+      "diagnostics": []
+    },
+    {
+      "type": "userInterfaces",
+      "controls": 36,
+      "diagnostics": []
+    },
+    {
+      "type": "quests",
+      "controls": 21,
+      "diagnostics": []
+    },
+    {
+      "type": "system1",
+      "controls": 41,
+      "diagnostics": []
+    },
+    {
+      "type": "system2",
+      "controls": 47,
+      "diagnostics": []
+    },
+    {
+      "type": "types",
+      "controls": 5,
+      "diagnostics": []
+    },
+    {
+      "type": "terms",
+      "controls": 99,
+      "diagnostics": []
+    },
+    {
+      "type": "reactor3d",
+      "controls": 2,
+      "diagnostics": []
+    }
+  ],
+  "subdialogs": [
+    {
+      "name": "Trait 11",
+      "saved": true
+    },
+    {
+      "name": "Trait 12",
+      "saved": true
+    },
+    {
+      "name": "Trait 13",
+      "saved": true
+    },
+    {
+      "name": "Trait 14",
+      "saved": true
+    },
+    {
+      "name": "Trait 21",
+      "saved": true
+    },
+    {
+      "name": "Trait 22",
+      "saved": true
+    },
+    {
+      "name": "Trait 23",
+      "saved": true
+    },
+    {
+      "name": "Trait 31",
+      "saved": true
+    },
+    {
+      "name": "Trait 32",
+      "saved": true
+    },
+    {
+      "name": "Trait 33",
+      "saved": true
+    },
+    {
+      "name": "Trait 34",
+      "saved": true
+    },
+    {
+      "name": "Trait 41",
+      "saved": true
+    },
+    {
+      "name": "Trait 42",
+      "saved": true
+    },
+    {
+      "name": "Trait 43",
+      "saved": true
+    },
+    {
+      "name": "Trait 44",
+      "saved": true
+    },
+    {
+      "name": "Trait 51",
+      "saved": true
+    },
+    {
+      "name": "Trait 52",
+      "saved": true
+    },
+    {
+      "name": "Trait 53",
+      "saved": true
+    },
+    {
+      "name": "Trait 54",
+      "saved": true
+    },
+    {
+      "name": "Trait 55",
+      "saved": true
+    },
+    {
+      "name": "Trait 61",
+      "saved": true
+    },
+    {
+      "name": "Trait 62",
+      "saved": true
+    },
+    {
+      "name": "Trait 63",
+      "saved": true
+    },
+    {
+      "name": "Trait 64",
+      "saved": true
+    },
+    {
+      "name": "Effect 11",
+      "saved": true
+    },
+    {
+      "name": "Effect 12",
+      "saved": true
+    },
+    {
+      "name": "Effect 13",
+      "saved": true
+    },
+    {
+      "name": "Effect 21",
+      "saved": true
+    },
+    {
+      "name": "Effect 22",
+      "saved": true
+    },
+    {
+      "name": "Effect 31",
+      "saved": true
+    },
+    {
+      "name": "Effect 32",
+      "saved": true
+    },
+    {
+      "name": "Effect 33",
+      "saved": true
+    },
+    {
+      "name": "Effect 34",
+      "saved": true
+    },
+    {
+      "name": "Effect 41",
+      "saved": true
+    },
+    {
+      "name": "Effect 42",
+      "saved": true
+    },
+    {
+      "name": "Effect 43",
+      "saved": true
+    },
+    {
+      "name": "Effect 44",
+      "saved": true
+    },
+    {
+      "cancelPreserved": true,
+      "name": "Parameter curve 0"
+    },
+    {
+      "cancelPreserved": true,
+      "name": "Parameter curve 1"
+    },
+    {
+      "cancelPreserved": true,
+      "name": "Parameter curve 2"
+    },
+    {
+      "cancelPreserved": true,
+      "name": "Parameter curve 3"
+    },
+    {
+      "cancelPreserved": true,
+      "name": "Parameter curve 4"
+    },
+    {
+      "cancelPreserved": true,
+      "name": "Parameter curve 5"
+    },
+    {
+      "cancelPreserved": true,
+      "name": "Parameter curve 6"
+    },
+    {
+      "cancelPreserved": true,
+      "name": "Parameter curve 7"
+    },
+    {
+      "cancelPreserved": true,
+      "name": "EXP curve"
+    },
+    {
+      "cancelPreserved": true,
+      "name": "Class learning"
+    },
+    {
+      "cancelPreserved": true,
+      "name": "Enemy action condition 0"
+    },
+    {
+      "cancelPreserved": true,
+      "name": "Enemy action condition 1"
+    },
+    {
+      "cancelPreserved": true,
+      "name": "Enemy action condition 2"
+    },
+    {
+      "cancelPreserved": true,
+      "name": "Enemy action condition 3"
+    },
+    {
+      "cancelPreserved": true,
+      "name": "Enemy action condition 4"
+    },
+    {
+      "cancelPreserved": true,
+      "name": "Enemy action condition 5"
+    },
+    {
+      "cancelPreserved": true,
+      "name": "Enemy action condition 6"
+    },
+    {
+      "cancelPreserved": true,
+      "name": "Troop conditions"
+    },
+    {
+      "cancelPreserved": true,
+      "name": "Animation cell"
+    }
+  ]
+}

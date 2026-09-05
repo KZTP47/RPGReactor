@@ -3974,6 +3974,39 @@
             min-width: 0;
             margin: 0;
         }
+        /* Every slider on the panel: a sunken rail that reads against the
+           card, filled with the accent up to the value, and a ringed thumb. */
+        .lighting-panel input[type="range"] {
+            appearance: none;
+            -webkit-appearance: none;
+            height: 14px;
+            padding: 0;
+            background: transparent;
+            outline: none;
+            cursor: pointer;
+        }
+        .lighting-panel input[type="range"]::-webkit-slider-runnable-track {
+            height: 6px;
+            border-radius: 3px;
+            border: 1px solid var(--color-border-input);
+            background: linear-gradient(to right, var(--color-accent) 0, var(--color-accent) var(--rr-fill, 0%), var(--color-bg-input) var(--rr-fill, 0%), var(--color-bg-input) 100%);
+            box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35);
+        }
+        .lighting-panel input[type="range"]::-webkit-slider-thumb {
+            appearance: none;
+            -webkit-appearance: none;
+            width: 14px;
+            height: 14px;
+            margin-top: -5px;
+            border-radius: 50%;
+            background: var(--color-accent-bright);
+            border: 2px solid var(--color-bg-input);
+            box-shadow: 0 0 0 1px var(--color-accent-border-strong), 0 1px 3px rgba(0, 0, 0, 0.5);
+        }
+        .lighting-panel input[type="range"]:hover::-webkit-slider-thumb,
+        .lighting-panel input[type="range"]:focus-visible::-webkit-slider-thumb {
+            background: var(--color-accent-hover);
+        }
         .lit-flags {
             display: flex;
             flex-wrap: wrap;

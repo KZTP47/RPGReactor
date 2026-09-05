@@ -4,11 +4,13 @@
  * Profile the game runtime in NW.js: boots a project as the game (not the
  * editor), starts a new game onto its start map, then records rAF frame
  * deltas, a CDP CPU profile aggregated by self time, GPU time per frame on
- * the shared three/PIXI context, and the 3D pass layout. Never saves.
+ * the shared three/PIXI context, and the 3D pass layout. Does not request a
+ * save; project plugins can autosave, so profile a disposable project copy.
  * Not part of `npm test`.
  *
  *   node tests/perf/nw-game-profile.cjs [--project=<dir>] [--seconds=6]
  *        [--nw-root=<dir>] [--shot=<png>] [--setup=<script.js>] [--pixel-ratio=<n>]
+ *        [--render-node=/dev/dri/renderD129]
  *
  * --pixel-ratio sets Graphics.maxCanvasPixelRatio before the map loads, to
  * compare the stretched-window cost. --setup runs an async WebDriver script
@@ -28,6 +30,7 @@ const nwRoot = path.resolve(option("nw-root", process.env.NWJS_SDK_ROOT || path.
 const outDir = path.resolve(option("out", os.tmpdir()));
 const SECONDS = Number(option("seconds", 6));
 const PIXEL_RATIO = option("pixel-ratio", null);
+const RENDER_NODE = option("render-node", null);
 const exe = process.platform === "win32" ? ".exe" : "";
 
 async function cdp(driver, cmd, params = {}) {
@@ -44,7 +47,8 @@ async function main() {
             "goog:chromeOptions": {
                 args: [`nwapp=${projectRoot}`, `user-data-dir=${path.join(tempRoot, "profile")}`, "no-first-run", "no-default-browser-check",
                     // An occluded window stops getting animation frames, and the owner's editor is usually in front of this one.
-                    "disable-backgrounding-occluded-windows", "disable-renderer-backgrounding", "disable-background-timer-throttling"],
+                    "disable-backgrounding-occluded-windows", "disable-renderer-backgrounding", "disable-background-timer-throttling",
+                    ...(RENDER_NODE ? ["render-node-override=" + RENDER_NODE] : [])],
             },
         });
         await driver.setScriptTimeout(120000);
@@ -75,6 +79,7 @@ async function main() {
                     width: Graphics.width, height: Graphics.height, realScale: Graphics._realScale, canvasPixelRatio: Graphics.canvasPixelRatio ? Graphics.canvasPixelRatio() : null,
                     stretch: Graphics._stretchEnabled, lights: typeof Reactor3D !== "undefined" && Reactor3D.lights ? Reactor3D.lights().length : null,
                     lightMode: typeof Reactor3D !== "undefined" && Reactor3D.lightModeFor ? Reactor3D.lightModeFor($dataMap) : null,
+                    gpu: Graphics.gpuDescription, tier: Graphics.gpuTier,
                     revision: globalThis.RPG_REACTOR_RUNTIME_REVISION, fps: Graphics._fpsCounter ? Graphics._fpsCounter.fps : null,
                     canvas: [Graphics._canvas.width, Graphics._canvas.height] });
             })().catch(e => done({ error: String(e && e.stack || e) }));
@@ -82,7 +87,12 @@ async function main() {
         console.log("opened", JSON.stringify(opened));
         if (opened.error) throw new Error(opened.error);
         const setupPath = option("setup", null);
-        if (setupPath) console.log("setup", JSON.stringify(await driver.executeAsync(fs.readFileSync(setupPath, "utf8"), [])));
+        if (setupPath) {
+            const setup = await driver.executeAsync(fs.readFileSync(setupPath, "utf8"), []);
+            console.log("setup", JSON.stringify(setup));
+            if (setup && setup.error) throw new Error(setup.error);
+            if (setup && setup.passed === false) throw new Error("Setup validation failed; see comparison report above");
+        }
         const shotPath = option("shot", null);
         if (shotPath) {
             const shot = await driver.sessionRequest("GET", "/screenshot");
@@ -96,17 +106,32 @@ async function main() {
         const frames = await driver.executeAsync(`
             const seconds = arguments[0]; const done = arguments[arguments.length - 1];
             const deltas = []; let last = performance.now(); const start = last;
-            // GPU time around the whole PIXI render (three passes included) on the shared context
+            // Three draws during the tick handler; PIXI composites afterwards. Keep
+            // the query open across both, otherwise the expensive 3D work is omitted.
             const renderer = Graphics._app && Graphics._app.renderer; const gl = renderer && renderer.gl; const ext = gl && gl.getExtension("EXT_disjoint_timer_query_webgl2");
             const gpu = []; let pending = []; let tickMs = 0, ticks = 0; let renderMs = 0;
+            let activeQuery = null;
+            const endGpuFrame = () => { if (activeQuery) { gl.endQuery(ext.TIME_ELAPSED_EXT); pending.push(activeQuery); activeQuery = null; } };
+            const beginGpuFrame = () => { if (ext && !activeQuery) { activeQuery = gl.createQuery(); gl.beginQuery(ext.TIME_ELAPSED_EXT, activeQuery); } };
             const origRender = Graphics._app && Graphics._app.render ? Graphics._app.render.bind(Graphics._app) : null;
-            if (origRender) Graphics._app.render = function () { let q = null; if (ext) { q = gl.createQuery(); gl.beginQuery(ext.TIME_ELAPSED_EXT, q); } const t = performance.now(); const r = origRender(); renderMs += performance.now() - t; if (q) { gl.endQuery(ext.TIME_ELAPSED_EXT); pending.push(q); } return r; };
-            const origTick = Graphics._tickHandler; Graphics._tickHandler = function (dt) { const t = performance.now(); const r = origTick.apply(this, arguments); tickMs += performance.now() - t; ticks++; return r; };
+            if (origRender) Graphics._app.render = function () {
+                beginGpuFrame(); const t = performance.now();
+                try { return origRender(); } finally { renderMs += performance.now() - t; endGpuFrame(); }
+            };
+            const origTick = Graphics._tickHandler; Graphics._tickHandler = function (dt) {
+                endGpuFrame(); beginGpuFrame(); const t = performance.now();
+                try { return origTick.apply(this, arguments); }
+                catch (error) { endGpuFrame(); throw error; }
+                finally { tickMs += performance.now() - t; ticks++; }
+            };
             const tick = now => { deltas.push(now - last); last = now;
                 if (ext) pending = pending.filter(q => { if (gl.getQueryParameter(q, gl.QUERY_RESULT_AVAILABLE)) { if (!gl.getParameter(ext.GPU_DISJOINT_EXT)) gpu.push(gl.getQueryParameter(q, gl.QUERY_RESULT) / 1e6); gl.deleteQuery(q); return false; } return true; });
                 if (now - start < seconds * 1000) requestAnimationFrame(tick); else finish(); };
             const finish = () => {
+                endGpuFrame();
                 if (origRender) Graphics._app.render = origRender; Graphics._tickHandler = origTick;
+                // Outstanding queries need not block this report; release them.
+                for (const q of pending) gl.deleteQuery(q); pending = [];
                 const med = a => { const s = a.slice().sort((x, y) => x - y); return s.length ? +s[Math.floor(s.length / 2)].toFixed(2) : null; };
                 const p = (a, q) => { const s = a.slice().sort((x, y) => x - y); return s.length ? +s[Math.min(s.length - 1, Math.floor(q * s.length))].toFixed(1) : null; };
                 done({ frames: deltas.length, meanMs: +(deltas.reduce((a, b) => a + b, 0) / deltas.length).toFixed(2), p50: p(deltas, .5), p95: p(deltas, .95), max: p(deltas, 1), over33: deltas.filter(d => d > 33).length,

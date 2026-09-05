@@ -154,8 +154,9 @@ class PlayModelAnimationEditor {
         return { names: this.actionNames(), models, all: true };
     }
 
-    show(command, callback) {
+    show(command, callback, commandName) {
         const args = (command && command.parameters && command.parameters[3]) || {};
+        const speedOnly = (command?.parameters?.[1] || commandName) === 'SetModelAnimationSpeed';
         const target = String(args.target != null ? args.target : '0');
         const animation = String(args.animation || '');
         const wait = String(args.wait) === 'true';
@@ -164,12 +165,13 @@ class PlayModelAnimationEditor {
         const modal = document.createElement('div');
         modal.className = 'rr-modal-overlay';
         modal.style.zIndex = '21000';
-        const events = this.mapEvents();
+        const events = this.mapEvents().concat((this.currentMap()?.reactor3d?.props || []).map(prop => ({ id: 10000 + prop.id, name: `Prop ${prop.id}: ${prop.name}` })));
         const targetOptions = [
             ['0', this._t('This Event')],
             ['-1', this._t('Player')]
         ].concat(events.map(event => [String(event.id),
             String(event.id).padStart(3, '0') + (event.name ? ': ' + event.name : '')]));
+        if (!targetOptions.some(([id]) => id === target)) targetOptions.push([target, `Target ${target}`]);
         const control = 'flex:1;min-width:0;padding:4px 6px;background:var(--color-bg-surface);color:var(--color-text);border:1px solid var(--color-border-input);';
         modal.innerHTML = `
             <div class="rr-modal" style="width:min(440px,90vw);display:flex;flex-direction:column;">
@@ -208,9 +210,21 @@ class PlayModelAnimationEditor {
         document.body.appendChild(modal);
         const q = selector => modal.querySelector(selector);
         const CUSTOM = ' custom';
+        if (speedOnly) {
+            q('.rr-modal-title').textContent = this._t('Set Model Animation Speed');
+            q('.pma-animation').parentElement.style.display = 'none';
+            q('.pma-wait').closest('label').style.display = 'none';
+            q('.pma-model').style.display = 'none';
+            const row = document.createElement('label');
+            row.textContent = this._t('Animation speed (%)');
+            const input = document.createElement('input');
+            input.className = 'pma-speed'; input.type = 'number'; input.min = '1'; input.max = '1000'; input.step = '5';
+            input.value = String(Math.max(1, Math.min(1000, Number(args.speed) || 100)));
+            row.appendChild(input); q('.rr-modal-body').appendChild(row);
+        }
 
         const syncCustom = () => {
-            const custom = q('.pma-animation').value === CUSTOM;
+            const custom = !speedOnly && q('.pma-animation').value === CUSTOM;
             q('.pma-custom-row').style.display = custom ? 'flex' : 'none';
             if (custom) q('.pma-custom').focus();
         };
@@ -263,6 +277,9 @@ class PlayModelAnimationEditor {
                     }
                 ]
             };
+            if (speedOnly) result.parameters = ['RPGReactor', 'SetModelAnimationSpeed', 'Set Model Animation Speed', {
+                target: q('.pma-target').value, speed: String(Math.max(1, Math.min(1000, Number(q('.pma-speed').value) || 100)))
+            }];
             close();
             callback(result);
         });

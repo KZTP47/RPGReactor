@@ -1,5 +1,8 @@
 RPG Reactor 0.96.0.
 
+Historical release/cycle notes. Features, limitations, and counts below describe
+that period; see [current project status](../STATUS.md) for today's behavior.
+
 Full write-up: [docs/devlogs/2026-07-25-rpg-reactor-0.96.0.md](https://github.com/Psychronic-Games/RPGReactor/blob/v0.96.0/docs/devlogs/2026-07-25-rpg-reactor-0.96.0.md)
 
 0.95.1 was an internal development version and was never published; its changes ship in 0.96.0.

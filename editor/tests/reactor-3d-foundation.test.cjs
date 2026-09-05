@@ -240,8 +240,8 @@ test('the 3D subsystem stays one runtime module', () => {
     const threeD = roots.filter(name => name.startsWith('reactor_3d'));
     assert.deepEqual(threeD, ['reactor_3d.js'],
         'scene, camera and billboards belong in reactor_3d.js, not new files');
-    // Fourteen: the quest system (reactor_quests.js) is a concern of its own.
-    assert.ok(roots.length <= 14, `runtime js/ root has grown to ${roots.length} files`);
+    // Speech/audio integration and quests each have their own module.
+    assert.ok(roots.length <= 15, `runtime js/ root has grown to ${roots.length} files`);
 });
 
 //-----------------------------------------------------------------------------

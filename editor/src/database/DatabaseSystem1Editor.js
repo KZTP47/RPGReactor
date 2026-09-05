@@ -327,7 +327,7 @@ class DatabaseSystem1Editor {
                 <span style="color: var(--color-text); flex: 1; font-size: 12px;">${rrEscapeHtml(actor ? actor.name : tt('Actor') + ' #' + actorId)}</span>
                 <button class="party-move-up" data-idx="${idx}" style="padding: 2px 6px; background: var(--color-bg-menubar); color: var(--color-text); border: 1px solid var(--color-border-input); border-radius: 3px; cursor: pointer; font-size: 10px;" title="${tt('Move up')}">\u25B2</button>
                 <button class="party-move-down" data-idx="${idx}" style="padding: 2px 6px; background: var(--color-bg-menubar); color: var(--color-text); border: 1px solid var(--color-border-input); border-radius: 3px; cursor: pointer; font-size: 10px;" title="${tt('Move down')}">\u25BC</button>
-                <button class="party-remove" data-idx="${idx}" style="padding: 2px 6px; background: var(--color-bg-menubar); color: #f44; border: 1px solid var(--color-border-input); border-radius: 3px; cursor: pointer; font-size: 10px;" title="${tt('Remove')}">\u2715</button>
+                <button class="party-remove" data-idx="${idx}" style="padding: 2px 6px; background: var(--color-bg-menubar); color: var(--color-danger-bright); border: 1px solid var(--color-border-input); border-radius: 3px; cursor: pointer; font-size: 10px;" title="${tt('Remove')}">\u2715</button>
             </div>`;
         });
         if (partyMembers.length === 0) {
@@ -923,6 +923,7 @@ class DatabaseSystem1Editor {
 
         overlay.appendChild(modal);
         document.body.appendChild(overlay);
+        this.commonUI?.databaseEditor?.registerDetailModal(overlay);
     }
 
     updateSystemField(fieldName, value) {
@@ -1205,6 +1206,7 @@ class DatabaseSystem1Editor {
 
         overlay.appendChild(modal);
         document.body.appendChild(overlay);
+        this.commonUI?.databaseEditor?.registerDetailModal(overlay);
     }
 
     showMusicPicker(system, musicType) {

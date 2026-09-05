@@ -1,6 +1,8 @@
 # Procedural Outfit Generator - Technical Notes
 
-This file summarizes the generator architecture, current implementation, and future extension points.
+This file summarizes the generator architecture and extension points. Reviewed
+against the source on 2026-09-04; visual observations below are historical, not
+a fresh visual acceptance pass.
 
 ## Current State
 
@@ -15,8 +17,8 @@ What exists now:
   silhouette (`--overlay`). THIS is how you actually *see* parts, use it, don't
   read raw 144×144 JS. Usage: `node procgen/view_part.js <part.js> --all --overlay`
 - `procgen/analysis/*.md`, per-category pattern analysis covering all 124 parts,
-  synthesized into `PATTERN_LANGUAGE.md`.
-  PATTERN_LANGUAGE.md is the spec the engine implements; read it before changing
+  synthesized into `analysis/PATTERN_LANGUAGE.md`.
+  `analysis/PATTERN_LANGUAGE.md` is the spec the engine implements; read it before changing
   painters.
 - `procgen/outfit_engine.js`, the engine (UMD: runs in Node AND the browser).
   FAMILIES (luminance ramps) + ACCENTS (off-ramp glows) + a palette BUILDER that
@@ -29,15 +31,16 @@ What exists now:
   Psychronic-specific anatomy, classifiers, painters, and extensions.
 - `procgen/outfits/nova_sentinel.js`, the shared Nova Sentinel recipe. It
   provides matching Outfit Forge part sets and default configs for both
-  `looseleaf` and `psychronic`.
-- `procgen/gen_outfit.js`, thin Node CLI: loads body templates, runs configured
-  outfits through the engine, writes part `.js` files.
+  `looseleaf` and `psychronic`, including the Mini Skirt Legs preset.
+- `procgen/gen_outfit.js`, a legacy Looseleaf-only Node CLI: loads the fixed
+  Looseleaf body and writes configured outfits into the Looseleaf library. Use
+  the editor or engine API with the matching body for Psychronic output.
 - `procgen/render_png.js` - Node smoke/render utility for generated outfits.
 - `procgen/outfit_configs.js`, legacy/simple config entry point still present
   for direct CLI generation. The current editor default comes from
   `procgen/outfits/nova_sentinel.js`.
 - **In-editor "Outfit Forge" tab** (CharacterGenerator.js, methods grouped under
-  the `TAB - OUTFIT FORGE` banner). A third tab beside Procedural/Parts. Per-zone
+  the `TAB - OUTFIT FORGE` banner), alongside Procedural, Hair Forge, and Parts. Per-zone
   material+accent dropdowns and param toggles, extension enable+params, live 4-dir
   preview (CharacterRenderer), walk toggle, and "Generate & Save to Library" which
   writes the part `.js` into `styles/<style>/parts/full outfits/` and registers it.
@@ -48,8 +51,8 @@ What exists now:
 
 Resume points / polish ideas: visually validate Psychronic Nova Sentinel, tune
 Psychronic-specific painter proportions, add more recipes beyond Nova Sentinel,
-add more zone styles (cloth robe, open-face helmet), and add small Node tests for
-palette/config/sheet generation. New zone styles slot in as new `style` entries
+add more zone styles (cloth robe, open-face helmet), and extend the existing
+`editor/tests/outfit-engine.test.cjs` coverage when changing generation behavior. New zone styles slot in as new `style` entries
 in PAINTERS/PSYCHRONIC_PAINTERS + UI_SCHEMA. The history below is kept for context.
 
 ## The goal
@@ -58,7 +61,7 @@ A procedural outfit generator for the Character Generator that:
 
 1. Produces **endless outfits** as Character Generator parts (category `full outfits`), driven by a config object so adding a new outfit means adding a config, NOT new generator code.
 2. Outputs follow the same conventions as the artist's hand-drawn parts under `src/forge/CharacterGenerator/styles/looseleaf/parts/{torso,headwear,shoulderwear,armwear,handwear,waistwear,legwear,footwear}/`.
-3. Eventually exposes the config-object structure to the user as sliders/dropdowns in an in-editor UI so users can generate their own outfits.
+3. Exposes recipe controls through the implemented Outfit Forge UI so users can generate their own outfits.
 4. Currently targets the **Nova Sentinel** outfit as the shared first recipe, used to validate that the system produces output that visually matches the artist's quality across Looseleaf and Psychronic styles.
 
 ## Where the code lives
@@ -72,7 +75,9 @@ A procedural outfit generator for the Character Generator that:
 - Output goes to `src/forge/CharacterGenerator/styles/<style>/parts/full outfits/full-outfits-<style>-<id>.js`
 - Body reference: `src/forge/CharacterGenerator/styles/looseleaf/parts/body/male/body-looseleaf-looseleaf-male-body-01.js`
 - Psychronic body reference: `src/forge/CharacterGenerator/styles/psychronic/parts/body/male/body-psychronic-psychronic-body-male-01.js`
-- Run with: `node src/forge/CharacterGenerator/procgen/gen_outfit.js`
+- From `editor/`, run `node src/forge/CharacterGenerator/procgen/gen_outfit.js`
+  to write the legacy Looseleaf outputs. This command writes library files; use
+  `node --test tests/outfit-engine.test.cjs` for a non-generating check.
 
 ## Architectural history (what we've tried)
 
@@ -126,8 +131,8 @@ large painter changes.
    rather than a recolored body suit.
 4. Add new recipes as recipe modules under `procgen/outfits/` instead of growing
    ad-hoc config branches in the editor.
-5. Add small Node tests for palette building, recipe defaults, style selection,
-   and generated sheet dimensions.
+5. Run and extend `editor/tests/outfit-engine.test.cjs`, which already covers
+   recipe defaults, both styles, Mini Skirt behavior, and generated frames.
 
 ## Body geometry quick reference
 
@@ -153,10 +158,11 @@ large painter changes.
 ## How to resume in a fresh session
 
 1. Read this file.
-2. Read `PATTERN_LANGUAGE.md`, `outfit_engine.js`, `procgen/styles/*.js`, and
-   `procgen/outfits/nova_sentinel.js`.
-3. Run `node src/forge/CharacterGenerator/procgen/gen_outfit.js` to see current
-   generated output. Inspect the generated file to see what gets produced.
+2. Read `analysis/PATTERN_LANGUAGE.md`, `outfit_engine.js`, `styles/*.js`, and
+   `outfits/nova_sentinel.js` relative to this directory.
+3. From `editor/`, run `node --test tests/outfit-engine.test.cjs`. To regenerate
+   the legacy Looseleaf library files intentionally, run
+   `node src/forge/CharacterGenerator/procgen/gen_outfit.js` and inspect the diff.
 4. For UI behavior, open the editor, open Forge -> Character Generator -> Outfit
    Forge, and check Looseleaf/Psychronic style output across all directions and
    walk frames.

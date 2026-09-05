@@ -539,6 +539,7 @@ class DatabaseSystem2Editor {
 
         overlay.appendChild(modal);
         document.body.appendChild(overlay);
+        this.commonUI?.databaseEditor?.registerDetailModal(overlay);
     }
 }
 

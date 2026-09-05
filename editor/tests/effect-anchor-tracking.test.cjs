@@ -79,6 +79,43 @@ test('a whole-model pose carries an unanchored effect with it', () => {
     assert.equal(at.y, 1);
 });
 
+test('effect anchors see fresh ancestor transforms with one update per node', () => {
+    const parent = new THREE.Group();
+    const object = new THREE.Group();
+    const part = new THREE.Group();
+    part.name = 'Lamp';
+    parent.add(object);
+    object.add(part);
+    parent.updateMatrixWorld(true);
+    // Change transforms after the previous frame, without a scene update.
+    parent.position.set(10, 2, 0);
+    parent.rotation.z = Math.PI / 2;
+    object.scale.set(2, 3, 1);
+    part.position.set(1, 0, 0);
+    const calls = new Map();
+    for (const node of [parent, object, part]) {
+        const update = node.updateWorldMatrix;
+        node.updateWorldMatrix = function(...args) {
+            calls.set(this, (calls.get(this) || 0) + 1);
+            return update.apply(this, args);
+        };
+    }
+    const out = new THREE.Vector3();
+    const result = R.effectAnchorWorld(object, { anchor: { part: 'Lamp', offset: [0, 1, 0] } }, out);
+    assert.equal(result, out, 'the caller can reuse its vector');
+    assert.ok(result.distanceTo(new THREE.Vector3(7, 4, 0)) < 1e-10,
+        'offset, part position, model scale and parent turn are all current');
+    for (const node of [parent, object, part]) assert.equal(calls.get(node), 1);
+    calls.clear();
+    parent.position.x = 20;
+    const origin = R.effectAnchorWorld(object, { anchor: { offset: [0, 0, 0] } }, out);
+    assert.ok(origin.distanceTo(new THREE.Vector3(20, 2, 0)) < 1e-10,
+        'an origin anchor also sees the next parent movement');
+    assert.equal(calls.get(parent), 1);
+    assert.equal(calls.get(object), 1);
+    assert.equal(calls.has(part), false, 'an origin anchor does not update unrelated children');
+});
+
 test('the parts list opens with the whole model as its first entry', () => {
     const editor = fs.readFileSync(path.join(repoRoot, 'editor', 'src', 'database', 'Database3DEditor.js'), 'utf8');
     const at = editor.indexOf('renderPartList() {');

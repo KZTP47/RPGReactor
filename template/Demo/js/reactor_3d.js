@@ -685,7 +685,7 @@ Reactor3D.Viewport.prototype.renderer = function() {
 /** A render target PIXI can sample as if it were an uploaded canvas. */
 Reactor3D.Viewport.prototype.createTarget = function(width, height, scale, options) {
     const gl = this._pixi.gl;
-    let samples = Reactor3D.samplesForScale(scale === undefined ? 1 : scale);
+    let samples = options?.samples ?? Reactor3D.samplesForScale(scale === undefined ? 1 : scale);
     try { samples = Math.min(samples, gl.getParameter(gl.MAX_SAMPLES) || 0); } catch (e) { samples = 0; }
     // The sampling filter has to be set HERE, on three's side: PIXI samples
     // this texture through the GL object three created and never applies
@@ -813,13 +813,15 @@ Reactor3D._paintBattlerShared = function(viewport, state, sprite) {
     const base = state.bitmap && state.bitmap.baseTexture;
     const source = base && base.source;
     if (!source || typeof PIXI === "undefined" || !PIXI.groupD8) return false;
-    const scale = viewport.scale();
+    const scale = state.flat ? 1 : viewport.scale();
     const pixels = Math.max(16, Math.round(state.size * scale));
     if (!state.target || state.targetPixels !== pixels) {
         if (state.target) {
             try { state.target.dispose(); } catch (e) { /* already gone */ }
         }
-        state.target = viewport.createTarget(pixels, pixels, scale);
+        viewport.renderer().resetState();
+        Reactor3D.clearUnpackState(viewport.pixi().gl);
+        state.target = viewport.createTarget(pixels, pixels, scale, state.flat ? { samples: 4 } : undefined);
         state.targetPixels = pixels;
         state.adoptedSource = null;
     }
@@ -850,12 +852,16 @@ Reactor3D.releaseBattlerState = function(state) {
 
 /**
  * Paint a model sprite through its bitmap's canvas on the standalone
- * renderer. Flat maps have no 3D viewport and must not acquire one for
- * this: sharing PIXI's context resets its GL state under 2D plugins and
- * trips three's own state setup. The adopted-target path the battlers use
- * also needs repainting every frame, which a map sprite does not do.
+ * renderer when context sharing is unavailable. Normally the sprite samples
+ * a GPU target directly; only a changed, visible pose asks for a repaint.
  */
 Reactor3D.paintModelSpriteCanvas = function(state) {
+    // Model sprites can sample a shared GPU target just like battlers. Reset
+    // both renderers around allocation too; target initialization touches GL.
+    if (!this.forceMapModelCanvas && state.sprite && this.sharedContextAvailable()) {
+        const viewport = this.acquireViewport();
+        if (viewport?.isShared() && this._paintBattlerShared(viewport, state, state.sprite)) return;
+    }
     const renderer = this._battlerRenderer || (this._battlerRenderer =
         new THREE.WebGLRenderer({ antialias: true, alpha: true }));
     renderer.setSize(state.size, state.size, false);
@@ -5683,6 +5689,30 @@ Reactor3D.roundLightCanvas = function() {
     return canvas;
 };
 
+/** A flat sprite is rectangular, so its texture must supply the cone shape. */
+Reactor3D.flatConeLightCanvas = function() {
+    if (this._flatConeLightCanvas) return this._flatConeLightCanvas;
+    const size = 512, canvas = document.createElement("canvas");
+    canvas.width = canvas.height = size;
+    const context = canvas.getContext("2d"), image = context.createImageData(size, size);
+    for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+        const along = 1 - (y + 0.5) / size;
+        const across = Math.abs((x + 0.5) / size - 0.5) * 2 / Math.max(along, 1 / size);
+        const rim = across >= 1 ? 0 : Math.pow(0.5 * (1 + Math.cos(across * Math.PI)), 2);
+        const at = (y * size + x) * 4;
+        image.data[at] = image.data[at + 1] = image.data[at + 2] = 255;
+        image.data[at + 3] = Math.round(rim * Math.pow(1 - along, 2) * 255);
+    }
+    context.putImageData(image, 0, 0);
+    return this._flatConeLightCanvas = canvas;
+};
+
+/** Keep flat haze translucent, using the volume renderer's body strengths. */
+Reactor3D.flatLightOpacity = function(light) {
+    const factor = light.type === this.LIGHT_BEAM ? 1.2 : light.type === this.LIGHT_SPOT ? 0.5 : 0.6;
+    return Math.max(0, Math.min(0.85, this.VOLUME_GLOW * factor * (light.intensity ?? 1)));
+};
+
 /**
  * The same, for a cone.
  *
@@ -6200,11 +6230,13 @@ Reactor3D.MapScene.prototype.syncVolumeLights = function(declared, focus) {
                 id: light.id !== undefined && light.id !== null ? String(light.id) : "#" + count,
                 x, y: y + Math.max(0, Reactor3D.SHADOW_LIFT - height), z, radius,
                 gap,
-                // Rows go first to the lights whose reach covers the focus,
-                // nearest first — a torch in the player's hand before a
-                // screen glow across the hall, however far that one reaches
-                // — and only then to the ones that stop short of it.
-                rank: gap <= 0 ? gap + radius : 1e4 + gap
+                // What `Shadows._incident` needs to say how much of this
+                // light lands on the player: where it really is, its shape
+                // and aim, and how bright it is.
+                lightY: y, spot, beam, ax, ay, az, cosHalf, width,
+                priorityRadius: light.priorityRadius === undefined ? radius : light.priorityRadius,
+                strength: (light.priorityIntensity === undefined ? (light.intensity === undefined ? 1 : light.intensity) : light.priorityIntensity) * (r + g + b) / 3,
+                carrier: light.carrier || null
             });
         }
         count++;
@@ -6990,6 +7022,9 @@ Reactor3D.lightGlsl = function(shadows, taps) {
         // Soft at the rim rather than a cut-out cone: full inside the inner
         // third of the spread, fading to nothing at the authored edge.
         "\t\t\tfall *= smoothstep(aim.w, mix(aim.w, 1.0, 0.35), c);",
+        // Outside the cone the contribution is exactly zero; avoid fetching
+        // both shadow atlases for a light that cannot affect this fragment.
+        "\t\t\tif (fall <= 0.0) continue;",
         "\t\t}",
         shadows ? "\t\tfloat sh = rrLightShadow[i];\n\t\tif (sh >= 0.0) fall *= rrShadowAt(int(sh + 0.5), p);" : "",
         "\t\tsum += lc.rgb * fall;",
@@ -7262,20 +7297,21 @@ Reactor3D.SHADOW_SLOTS = 8;
  * first, and keep their last rendering meanwhile.
  *
  * `dynamicTriangles` is the ceiling on the geometry the moving casters may
- * put into ONE row. It is a real ceiling, not a hint: a row is six faces,
- * so every triangle a character casts is drawn six times per row it enters.
- * The Demo's start map made that concrete — ten dynamic casters totalling
- * 1.93M triangles (two characters of 595k each, two of 255k, all skinned)
- * cost 289 ms of a 392 ms frame on an integrated Radeon, and dropping them
- * to the cheapest five took the frame to 107 ms with everything else
- * untouched. The full tier's budget is sized for a party: two characters
- * reduced the way the import optimizer reduces them (about 150k each) both
- * cast, on a GPU that can redraw a strip of that in the time a frame has
- * to spare.
+ * put into ONE row, and `dynamicInterval` the fewest frames between two
+ * renderings of the same row. The ceiling is real: a character is drawn
+ * once per face it stands in, per row it stands in, every time it moves.
+ * When the cube maps redrew every character six faces a frame into every
+ * slot, ten casters totalling 1.93M triangles cost 289 ms of a 392 ms
+ * frame on an integrated Radeon, and that GPU set the old budget of 30k.
+ * A row now redraws only the faces a caster occupies (one or two), only
+ * when it has moved, one row a frame on that tier, at half rate: the same
+ * GPU draws a reduced character (about 150k, what the import optimizer
+ * makes of one) in a few milliseconds on the frames it moves. The weak
+ * budget takes one such character, the full tier a party of them.
  */
 Reactor3D.SHADOW_QUALITY = {
-    full: { slots: 8, dynamicSlots: 3, size: 512, taps: 5, dynamicTriangles: 320000, staticPerFrame: 2, dynamicPerFrame: 2 },
-    weak: { slots: 4, dynamicSlots: 1, size: 256, taps: 1, dynamicTriangles: 30000, staticPerFrame: 1, dynamicPerFrame: 1 }
+    full: { slots: 8, dynamicSlots: 3, size: 512, taps: 5, dynamicTriangles: 600000, staticPerFrame: 2, dynamicPerFrame: 2, dynamicInterval: 1 },
+    weak: { slots: 4, dynamicSlots: 2, size: 256, taps: 1, dynamicTriangles: 200000, staticPerFrame: 1, dynamicPerFrame: 1, dynamicInterval: 2 }
 };
 /**
  * The six faces of a row, in atlas order: the direction each camera looks
@@ -7308,6 +7344,8 @@ Reactor3D.SHADOW_STATIC_MOVE = 0.25;
  * rendering meanwhile.
  */
 Reactor3D.SHADOW_STATIC_INTERVAL = 10;
+/** A challenger must beat a held row's priority by this fraction to replace it. */
+Reactor3D.SHADOW_PRIORITY_HYSTERESIS = 0.25;
 /**
  * How far a casting character, or one of its bones, must move before the
  * rows it stands in are drawn again, in tiles. An idle animation breathes
@@ -7474,11 +7512,17 @@ Reactor3D.Shadows = {
     /**
      * Which candidate takes which row: the best-ranked `count` (nearest to
      * the focus, by `gap` when nothing ranked them), each kept in the row
-     * it already had so its rendering survives.
+     * it already had so its rendering survives. An incumbent gets a small
+     * priority margin: flicker and near ties must not trade shadows each frame.
      */
     assign(candidates, count, previous) {
-        const rankOf = c => (c.rank !== undefined ? c.rank : c.gap);
-        const chosen = (candidates || []).slice().sort((a, b) => rankOf(a) - rankOf(b)).slice(0, count);
+        const held = new Set((previous || []).slice(0, count).filter(Boolean).map(p => p.id));
+        const rankOf = c => {
+            const rank = c.rank !== undefined ? c.rank : c.gap;
+            return held.has(c.id) ? rank - Math.max(Math.abs(rank), 0.001) * Reactor3D.SHADOW_PRIORITY_HYSTERESIS : rank;
+        };
+        const chosen = (candidates || []).slice().sort((a, b) => rankOf(a) - rankOf(b)
+            || String(a.id).localeCompare(String(b.id))).slice(0, count);
         const result = [];
         for (let k = 0; k < count; k++) result.push(null);
         const pending = [];
@@ -7752,6 +7796,55 @@ Reactor3D.Shadows = {
         return { all: false, points };
     },
 
+    /**
+     * How much of a light lands on a point: its brightness through its
+     * falloff, and for a spot or a beam, whether the point is inside the
+     * cone or the beam at all (a little outside still counts for a tenth,
+     * so a character on the edge of a screen's glow is not forgotten).
+     * Measured a little above the feet, where a character's body is.
+     */
+    _incident(candidate, focus) {
+        if (!focus) return 0;
+        const dx = focus.x - candidate.x;
+        const dy = focus.y + 0.7 - (candidate.lightY !== undefined ? candidate.lightY : candidate.y);
+        const dz = focus.z - candidate.z;
+        const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        const radius = Math.max(0, candidate.priorityRadius === undefined ? candidate.radius : candidate.priorityRadius);
+        let fall = 1 - dist / Math.max(radius, 0.001);
+        if (fall <= 0) return 0;
+        fall *= fall;
+        if (candidate.spot && dist > 0.001) {
+            const along = (dx * candidate.ax + dy * candidate.ay + dz * candidate.az);
+            let inside;
+            if (candidate.beam) {
+                const off = Math.sqrt(Math.max(0, dist * dist - along * along));
+                inside = along > 0 && off <= (candidate.width || 0.08) + 0.5;
+                if (!inside) fall *= 0.1;
+            } else {
+                // Match the cone's soft edge in the priority too. The old
+                // inside/outside test jumped tenfold at a single angle.
+                const edge = candidate.cosHalf === undefined ? -1 : candidate.cosHalf;
+                const inner = edge + (1 - edge) * 0.35;
+                const t = Math.max(0, Math.min(1, (along / dist - (edge - 0.08)) / (inner - edge + 0.08)));
+                fall *= 0.1 + 0.9 * t * t * (3 - 2 * t);
+            }
+        }
+        return fall * (candidate.strength === undefined ? 1 : candidate.strength);
+    },
+
+    /**
+     * A row's priority, lower first: the lights that land on the player,
+     * brightest first — the screen shining on them before the torch in
+     * their hand lighting the floor — then the ones that reach the player
+     * without landing, nearest first, then the rest by how far they stop
+     * short.
+     */
+    _rankFor(candidate, focus) {
+        const incident = this._incident(candidate, focus);
+        if (incident > 0) return -incident;
+        return candidate.gap <= 0 ? 1e4 + candidate.gap + candidate.radius : 2e4 + candidate.gap;
+    },
+
     /** Whether any of the reported places lies within a row's reach. */
     _touches(points, origin, far) {
         for (const p of points) {
@@ -7922,7 +8015,7 @@ Reactor3D.Shadows = {
         const reachBase = far || candidate.radius;
         for (const root of this._dynamic) {
             if (!root.parent) { this._dynamic.delete(root); continue; }
-            if (!root.visible || root.userData.rrShadowCasts === false) continue;
+            if (!root.visible || root.userData.rrShadowCasts === false || root === candidate.carrier) continue;
             const e = root.matrixWorld.elements;
             const span = Reactor3D.instanceSpan(root) || 1;
             const reach = reachBase + span;
@@ -7939,7 +8032,7 @@ Reactor3D.Shadows = {
         const reachBase = far || candidate.radius;
         for (const root of this._static) {
             if (!root.parent) { this._static.delete(root); continue; }
-            if (!root.visible) continue;
+            if (!root.visible || root === candidate.carrier) continue;
             const e = root.matrixWorld.elements;
             const reach = reachBase + (Reactor3D.instanceSpan(root) || 1);
             const dx = e[12] - candidate.x;
@@ -8017,15 +8110,18 @@ Reactor3D.Shadows = {
         // Which characters can afford to cast, and whether any of them has
         // moved or animated since the rows were drawn. Both must run before
         // the row loop: the budget decides what the change list even holds.
-        this.lastBudget = this._budgetDynamic(this._focusPoint(scene));
+        const focus = this._focusPoint(scene);
+        this.lastBudget = this._budgetDynamic(focus);
         const dynamicChange = this._changedDynamics();
 
-        // Only a light with something in reach wants a row.
+        // Only a light with something in reach wants a row, and the rows go
+        // first to the lights that actually land on the player.
         const farById = new Map();
         for (const tile of tiles) if (tile.id !== null) farById.set(tile.id, tile.far);
         const wanted = [];
         for (const candidate of this._candidates) {
             candidate.far = this.farFor(candidate.radius, farById.get(candidate.id) || 0);
+            candidate.rank = this._rankFor(candidate, focus);
             if (this._castersWithin(candidate, candidate.far)) wanted.push(candidate);
         }
         const assigned = this.assign(wanted, tiles.length, tiles.map(t => (t.id === null ? null : { id: t.id })));
@@ -8076,7 +8172,7 @@ Reactor3D.Shadows = {
             }
             if (this._dynamicWithin(candidate, far)) dynWanted.push({ id: candidate.id, gap: candidate.gap, rank: candidate.rank, tile: k });
         }
-        // The dynamic rows go to the nearest of those lights with a
+        // The dynamic rows go to the best-ranked of those lights with a
         // character in reach, and follow their light's static row.
         const dynAssigned = this.assign(dynWanted, dynTiles.length, dynTiles.map(d => (d.id === null ? null : { id: d.id })));
         for (let j = 0; j < dynTiles.length; j++) {
@@ -8108,12 +8204,24 @@ Reactor3D.Shadows = {
         // animated part, or a torch in the player's hand, redraws the props
         // around it a few times a second rather than every frame.
         const interval = Reactor3D.SHADOW_STATIC_INTERVAL;
-        const staticJobs = tiles.filter(t => t.id !== null && t.dirty && (!t.valid || this._frame - t.stamp >= interval))
+        let staticJobs = tiles.filter(t => t.id !== null && t.dirty && (!t.valid || this._frame - t.stamp >= interval))
             .sort((a, b) => (a.valid - b.valid) || (a.gap - b.gap))
             .slice(0, quality.staticPerFrame || 1);
-        const dynJobs = dynTiles.filter(d => d.id !== null && d.dirty)
+        // A new origin/far plane changes how BOTH atlases are sampled. Queue
+        // its dynamic partner too, even if the characters stood still.
+        for (const row of dynTiles) {
+            const tile = tiles[row.tile];
+            if (row.id !== null && tile && tile.id === row.id && tile.want && staticJobs.includes(tile)) row.dirty = true;
+        }
+        const dynInterval = quality.dynamicInterval || 1;
+        const dynJobs = dynTiles.filter(d => d.id !== null && d.dirty && (!d.valid || this._frame - d.stamp >= dynInterval))
             .sort((a, b) => (a.valid - b.valid) || (a.stamp - b.stamp))
             .slice(0, quality.dynamicPerFrame || 1);
+        // Keep the old, matching pair until both rows fit this frame's
+        // budgets. Publishing just the new static origin would hide the old
+        // dynamic shadow for a frame (or longer on the weak tier).
+        staticJobs = staticJobs.filter(tile => !tile.want || !dynTiles.some(row =>
+            row.id === tile.id && row.valid && !dynJobs.includes(row)));
         this.backlog = tiles.filter(t => t.id !== null && t.dirty).length - staticJobs.length
             + dynTiles.filter(d => d.id !== null && d.dirty).length - dynJobs.length;
         this._publish(uniforms);
@@ -8175,11 +8283,11 @@ Reactor3D.Shadows = {
      * The test is the caster's centre against the face's 90-degree frustum
      * with the caster's span as slack.
      */
-    _faceMask(origin, far, roots) {
+    _faceMask(origin, far, roots, exclude) {
         let mask = 0;
         const p = [0, 0, 0];
         for (const root of roots) {
-            if (!root.parent || !root.visible || root.userData.rrShadowCasts === false) continue;
+            if (!root.parent || !root.visible || root.userData.rrShadowCasts === false || root === exclude) continue;
             const e = root.matrixWorld.elements;
             const r = Reactor3D.instanceSpan(root) || 1;
             p[0] = e[12] - origin.x;
@@ -8240,9 +8348,11 @@ Reactor3D.Shadows = {
      * camera's layers set to the casters' layer — so it culls to the face,
      * skins, and honours cut-outs as the main pass does. The scene's world
      * matrices are already this frame's; the nested renders must not walk
-     * them six times over.
+     * them six times over. `exclude` is the light's own carrier: a model
+     * whose surface the light sits on would otherwise shadow the whole
+     * room from a hand's width away.
      */
-    _renderTile(renderer, scene, atlas, row, origin, far, layer, roots) {
+    _renderTile(renderer, scene, atlas, row, origin, far, layer, roots, exclude) {
         const size = atlas.size;
         const target = atlas.target;
         const camera = this._camera;
@@ -8251,7 +8361,17 @@ Reactor3D.Shadows = {
         camera.far = far;
         camera.updateProjectionMatrix();
         camera.position.set(origin.x, origin.y, origin.z);
-        const mask = this._faceMask(origin, far, roots);
+        const mask = this._faceMask(origin, far, roots, exclude);
+        const hide = exclude && exclude.parent && exclude.visible ? exclude : null;
+        if (hide) hide.visible = false;
+        try {
+            this._renderFaces(renderer, scene, target, size, row, origin, camera, mask);
+        } finally {
+            if (hide) hide.visible = true;
+        }
+    },
+
+    _renderFaces(renderer, scene, target, size, row, origin, camera, mask) {
         for (let face = 0; face < 6; face++) {
             target.viewport.set(face * size, row * size, size, size);
             target.scissor.set(face * size, row * size, size, size);
@@ -8294,7 +8414,7 @@ Reactor3D.Shadows = {
                             for (const tile of statics) {
                                 const to = tile.want || tile;
                                 this._renderTile(renderer, scene, this._atlas, this._tiles.indexOf(tile), to.origin, to.far,
-                                    Reactor3D.SHADOW_LAYER_STATIC, this._static);
+                                    Reactor3D.SHADOW_LAYER_STATIC, this._static, tile.candidate && tile.candidate.carrier);
                             }
                         });
                     } finally {
@@ -8320,7 +8440,7 @@ Reactor3D.Shadows = {
                             const tile = this._tiles[row.tile];
                             if (!tile || tile.id !== row.id) continue;
                             this._renderTile(renderer, scene, this._dynAtlas, this._dynTiles.indexOf(row), tile.origin, tile.far,
-                                Reactor3D.SHADOW_LAYER_DYNAMIC, roots);
+                                Reactor3D.SHADOW_LAYER_DYNAMIC, roots, tile.candidate && tile.candidate.carrier);
                         }
                     } finally {
                         this._unswap(swapped);
@@ -8957,6 +9077,17 @@ Reactor3D.ambientFor = function(mapData) {
     };
 };
 
+/** Display-space ambient tint for the flat multiply overlay. */
+Reactor3D.flatAmbientTint = function(ambient) {
+    const level = Math.max(0, Number(ambient.intensity) || 0);
+    const channel = shift => {
+        const linear = Math.min(1, ((ambient.colour >> shift) & 255) / 255 * level);
+        const display = linear <= 0.0031308 ? linear * 12.92 : 1.055 * Math.pow(linear, 1 / 2.4) - 0.055;
+        return Math.round(display * 255);
+    };
+    return (channel(16) << 16) | (channel(8) << 8) | channel(0);
+};
+
 /**
  * Collect this frame's lights from whichever lighting plugin is present.
  *
@@ -9106,7 +9237,7 @@ Reactor3D.lightingEnabled = function(mapData) {
     }
     if (this.readMapLights(mapData).length) return true;
     const meta = mapData && mapData.meta;
-    return !!(meta && (meta["3d lights"] || meta.lighting));
+    return !!(meta && (meta["3d lights"] || meta.lighting)) || this.hasLiveEffectLights();
 };
 
 /**
@@ -9335,6 +9466,10 @@ Reactor3D.animateLight = function(spec, frame, seedIndex, radius, intensity) {
         const breathe = 0.5 - 0.5 * Math.cos(t * Math.PI * 2);
         radius *= spec.pulse.min + (spec.pulse.max - spec.pulse.min) * breathe;
     }
+    // Flicker changes the light, not who owns a cached shadow row. Keep the
+    // pre-flicker values for ranking; deliberate fades/pulses still apply.
+    scratch.priorityRadius = radius;
+    scratch.priorityIntensity = intensity;
     if (spec.flicker) {
         const seed = (seedIndex || 0) * 13.7;
         const jitter = Math.sin(frame * 0.31 + seed) * Math.sin(frame * 0.127 + seed * 1.7);
@@ -9403,6 +9538,7 @@ Reactor3D.nativeLights = function(mapData) {
         out.push({
             id: light.id, type: light.type, x: x, y: y, height: height,
             radius: radius, colour: colour, intensity: intensity,
+            priorityRadius: animated.priorityRadius, priorityIntensity: animated.priorityIntensity,
             angle: angle, width: width, yaw: -(yaw + facing), pitch: pitch, occlude: light.occlude,
             shadow: light.shadow, body: light.body
         });
@@ -13369,6 +13505,7 @@ Reactor3D.applyModelAnimation = function(binding, rules, state) {
                     next.clampWhenFinished = once;
                     next.fadeIn(0.2);
                     next.play();
+                    if (once && state.action) next.time = Math.max(0, (state.frame - state.action.frame) / 60 * rate);
                 }
             }
             if (previous && previous !== next) previous.fadeOut(0.2);
@@ -13380,7 +13517,7 @@ Reactor3D.applyModelAnimation = function(binding, rules, state) {
         // fixed 1/60 step there played every clip at 120Hz-monitor speed.
         const step = binding.clipFrame == null
             ? 1
-            : Math.max(0, Math.min(10, state.frame - binding.clipFrame));
+            : Math.max(0, Math.min(10 * Math.max(1, state.playbackRate || 1), state.frame - binding.clipFrame));
         binding.clipFrame = state.frame;
         binding.mixer.update(step / 60);
     }
@@ -13582,6 +13719,13 @@ Reactor3D.updateEnemyModelSprite = function(sprite) {
         return;
     }
     if (!state.ready) return;
+    const spriteset = typeof SceneManager !== "undefined" && SceneManager._scene?._spriteset;
+    if (spriteset) {
+        if (!spriteset._reactorFlatModelInstances) spriteset._reactorFlatModelInstances = new Map();
+        spriteset._reactorFlatModelInstances.set(this.modelInstanceKey(character), state);
+    }
+    this.resumeModelPlayback(state, character, this.currentFrame());
+    sprite._reactorSortY = this.flatModelSortY(character);
     if (sprite.bitmap !== state.bitmap) {
         sprite.bitmap = state.bitmap;
     }
@@ -13831,6 +13975,118 @@ Reactor3D.frameModelSprite = function(object, unit, camera, pitchDegrees) {
     return { pixels, radius, anchorX: 0.5, anchorY: 0.5 };
 };
 
+/** Cache conservative skin bounds in each influencing bone's bind space.
+ * Vertex data is read once per geometry/bind; moving frames only transform
+ * these small boxes. Weighted skin positions stay inside their union. */
+Reactor3D.prepareFlatModelBounds = function(object) {
+    const entries = [];
+    const cache = this._flatSkinBounds || (this._flatSkinBounds = new WeakMap());
+    object.traverse(mesh => {
+        if (!mesh.isMesh || !mesh.geometry || mesh.userData.__reactorOverlay) return;
+        const geometry = mesh.geometry, positions = geometry.getAttribute("position");
+        if (!positions) return;
+        const indices = geometry.getAttribute("skinIndex"), weights = geometry.getAttribute("skinWeight");
+        if (mesh.isSkinnedMesh && mesh.skeleton && indices && weights) {
+            const signature = mesh.bindMatrix.elements.join(",") + ":" + mesh.skeleton.boneInverses.map(m => m.elements.join(",")).join(";");
+            const versions = cache.get(geometry) || [];
+            let cached = versions.find(entry => entry.signature === signature);
+            if (!cached) {
+                const boxes = mesh.skeleton.bones.map(() => new THREE.Box3());
+                const transforms = mesh.skeleton.boneInverses.map(m => new THREE.Matrix4().multiplyMatrices(m, mesh.bindMatrix));
+                const vertex = new THREE.Vector3(), local = new THREE.Vector3();
+                for (let i = 0; i < positions.count; i++) {
+                    vertex.fromBufferAttribute(positions, i);
+                    for (let j = 0; j < 4; j++) {
+                        if (!(weights.getComponent(i, j) > 0)) continue;
+                        const index = indices.getComponent(i, j);
+                        if (boxes[index]) boxes[index].expandByPoint(local.copy(vertex).applyMatrix4(transforms[index]));
+                    }
+                }
+                cached = { signature, boxes }; versions.push(cached); cache.set(geometry, versions);
+            }
+            entries.push({ mesh, bones: cached.boxes });
+        } else {
+            if (!geometry.boundingBox) geometry.computeBoundingBox();
+            if (geometry.boundingBox) entries.push({ mesh, box: geometry.boundingBox });
+        }
+    });
+    return entries;
+};
+
+/** Grow a flat sprite only when its posed parts leave the current frame.
+ * The ground anchor and pixels per model unit stay fixed, so growth neither
+ * shifts the sprite nor shrinks its art. Frames never oscillate in size. */
+Reactor3D.expandModelSpriteFrame = function(state) {
+    if (!state.bounds) state.bounds = this.prepareFlatModelBounds(state.object);
+    state.object.updateMatrixWorld(true);
+    const box = this._flatBoundsBox || (this._flatBoundsBox = new THREE.Box3());
+    const piece = this._flatBoundsPiece || (this._flatBoundsPiece = new THREE.Box3());
+    const transform = this._flatBoundsTransform || (this._flatBoundsTransform = new THREE.Matrix4());
+    const skinRoot = this._flatBoundsSkinRoot || (this._flatBoundsSkinRoot = new THREE.Matrix4());
+    box.makeEmpty();
+    for (const entry of state.bounds) {
+        const mesh = entry.mesh;
+        if (entry.bones) {
+            skinRoot.multiplyMatrices(mesh.matrixWorld, mesh.bindMatrixInverse);
+            for (let i = 0; i < entry.bones.length; i++) {
+                if (entry.bones[i].isEmpty()) continue;
+                transform.multiplyMatrices(skinRoot, mesh.skeleton.bones[i].matrixWorld);
+                box.union(piece.copy(entry.bones[i]).applyMatrix4(transform));
+            }
+        } else box.union(piece.copy(entry.box).applyMatrix4(mesh.matrixWorld));
+    }
+    if (box.isEmpty()) return false;
+    const reach = Math.hypot(Math.max(Math.abs(box.min.x), Math.abs(box.max.x)),
+        Math.max(Math.abs(box.min.y), Math.abs(box.max.y)), Math.max(Math.abs(box.min.z), Math.abs(box.max.z)));
+    if (reach <= state.radius) return false;
+    // A small reserve avoids repeated target allocations as an arm extends.
+    const radius = reach * 1.1;
+    if (!state.maxPixels) {
+        const gl = typeof Graphics !== "undefined" && Graphics._app?.renderer?.gl;
+        state.maxPixels = gl ? Math.min(4096, gl.getParameter(gl.MAX_TEXTURE_SIZE) || 2048) : 2048;
+    }
+    const size = Math.max(8, Math.min(state.maxPixels, Math.ceil(radius * 2 * state.pixelsPerUnit)));
+    const camera = state.camera;
+    camera.position.normalize().multiplyScalar(radius * 4 + 10);
+    camera.left = camera.bottom = -radius; camera.right = camera.top = radius;
+    camera.far = radius * 10 + 20;
+    camera.updateProjectionMatrix(); camera.updateMatrixWorld(true);
+    state.radius = radius;
+    state.pixelsPerUnit = size / (radius * 2);
+    if (size !== state.size) {
+        this.releaseBattlerState(state);
+        const previous = state.bitmap;
+        state.size = size; state.bitmap = new Bitmap(size, size);
+        const sprite = state.sprite;
+        sprite.bitmap = state.bitmap; sprite.setFrame(0, 0, size, size);
+        const tile = typeof $gameMap !== "undefined" ? $gameMap.tileHeight() : 48;
+        sprite.anchor.y = state.anchorY + tile / 2 / size;
+        if (previous && previous.destroy) previous.destroy();
+    }
+    return true;
+};
+
+/** Lift brings a model toward the pitched camera even as it moves upward
+ * on screen. Never use that lifted screen Y as its drawing depth. */
+Reactor3D.flatModelLift = function(character) {
+    const lifted = typeof character.eventId !== "function"
+        || character.eventId() >= this.PROP_EVENT_BASE || this.isEventProp(character.eventId());
+    return lifted ? (character._reactorLift || 0) : 0;
+};
+Reactor3D.flatModelSortY = function(character) {
+    const tile = typeof $gameMap !== "undefined" ? $gameMap.tileHeight() : 48;
+    const height = this.flatModelLift(character);
+    return character.screenY() + height * tile * Math.tan(this.MODEL_SPRITE_PITCH * Math.PI / 180);
+};
+
+/** Unregister a replaced flat holder before its replacement loads. */
+Reactor3D.releaseMapModelState = function(state) {
+    if (!state) return;
+    const key = this.modelInstanceKey(state.character);
+    if (state.registry?.get(key) === state) state.registry.delete(key);
+    this.releaseBattlerState(state);
+};
+
 /**
  * A model-bound character on a map that is not rendered in 3D is still a
  * sprite: an orthographic render of the model from the map's pitch, its
@@ -13846,7 +14102,7 @@ Reactor3D.updateMapModelSprite = function(sprite) {
     const inScene = typeof $dataMap !== "undefined" && this.shouldRender3D($dataMap);
     if (!spec || inScene) {
         if (state) {
-            this.releaseBattlerState(state);
+            this.releaseMapModelState(state);
             sprite._reactorMapModel = null;
         }
         return;
@@ -13855,14 +14111,14 @@ Reactor3D.updateMapModelSprite = function(sprite) {
     if (!this.isLoaded()) return;
     const key = this.modelCacheKey(spec.name, spec.ext, spec.file);
     if (state && state.key !== key) {
-        this.releaseBattlerState(state);
+        this.releaseMapModelState(state);
         sprite._reactorMapModel = state = null;
     }
     if (!state) {
         const tw = typeof $gameMap !== "undefined" && $gameMap.tileWidth ? $gameMap.tileWidth() : 48;
         const size = Math.max(8, Math.min(2048, Math.round(
             (spec.size > 0 ? spec.size : 2) * (spec.scale > 0 ? spec.scale : 1) * Math.max.apply(null, spec.stretch || [1]) * tw)));
-        state = sprite._reactorMapModel = { key, size, frame: 0, ready: false, direction: 0, dirty: true };
+        state = sprite._reactorMapModel = { key, character, sprite, flat: true, size, frame: 0, ready: false, direction: 0, dirty: true };
         Promise.all([
             this.loadModel(spec.name, spec.ext, spec.file, spec.texture),
             this.loadModelSidecar(spec.name)
@@ -13894,8 +14150,13 @@ Reactor3D.updateMapModelSprite = function(sprite) {
             state.scale = 1 / span;
             state.binding = this.prepareModelInstance(object, object.__reactorClips);
             state.rules = sidecar ? this.readModelAnimationRules(sidecar) : [];
+            state.effects = sidecar ? this.readModelEffects(sidecar) : [];
+            object.userData.glbSize = extent;
+            this.bindModelLandmarks(object, this.readModelLandmarks(sidecar));
             state.unit = state.size;
             state.size = framing.pixels;
+            state.radius = framing.radius;
+            state.pixelsPerUnit = framing.pixels / (2 * framing.radius);
             state.anchorX = framing.anchorX;
             state.anchorY = framing.anchorY;
             state.bitmap = new Bitmap(state.size, state.size);
@@ -13905,8 +14166,20 @@ Reactor3D.updateMapModelSprite = function(sprite) {
         return;
     }
     if (!state.ready) return;
+    const spriteset = typeof SceneManager !== "undefined" && SceneManager._scene?._spriteset;
+    if (spriteset) {
+        if (!spriteset._reactorFlatModelInstances) spriteset._reactorFlatModelInstances = new Map();
+        state.registry = spriteset._reactorFlatModelInstances;
+        state.registry.set(this.modelInstanceKey(character), state);
+    }
+    this.resumeModelPlayback(state, character, this.currentFrame());
+    sprite._reactorSortY = this.flatModelSortY(character);
     if (sprite.bitmap !== state.bitmap) sprite.bitmap = state.bitmap;
     sprite.setFrame(0, 0, state.size, state.size);
+    if (state.target && sprite.texture && typeof PIXI !== "undefined") {
+        sprite.texture.rotate = PIXI.groupD8.MIRROR_VERTICAL;
+        sprite.texture.updateUvs?.();
+    }
     // The sprite sits at the character's feet (the tile's bottom edge); the
     // model's ground origin belongs on the tile centre, half a tile up.
     const th = typeof $gameMap !== "undefined" && $gameMap.tileHeight ? $gameMap.tileHeight() : 48;
@@ -13931,34 +14204,15 @@ Reactor3D.updateMapModelSprite = function(sprite) {
     // Same as the 3D path: a carried light follows the drawn heading.
     this.noteModelFacing(character, state.smoothYaw - (spec.yaw || 0));
     // Same animation driver as the scene: walk/idle by movement, actions
-    // from Play Model Animation. Scene-side effects are not fired here.
+    // from Play Model Animation, including placement sequences and repeats.
     if (state.binding && state.rules.length) {
-        const frame = typeof Graphics !== "undefined" ? Graphics.frameCount : ++state.frame;
+        let frame = typeof Graphics !== "undefined" ? Graphics.frameCount : ++state.frame;
         const distance = state.lastX === undefined
             ? 0
             : Math.hypot(character._realX - state.lastX, character._realY - state.lastY);
         state.lastX = character._realX;
         state.lastY = character._realY;
-        const key = this.modelInstanceKey(character);
-        const queue = this._modelActions && this._modelActions[key];
-        if (queue && queue.length) {
-            const pending = queue[0];
-            if (!pending.name) {
-                // A stop ends the play and everything queued behind it.
-                queue.length = 0;
-                state.action = null;
-            } else if (!state.action) {
-                queue.shift();
-                let until = frame;
-                for (const rule of state.rules) {
-                    if (rule.trigger !== "action" || rule.name !== pending.name) continue;
-                    until = Math.max(until, frame + this.modelRuleDuration(rule, state.binding.clips));
-                }
-                state.action = until > frame ? { name: pending.name, frame, until } : null;
-            }
-            if (!queue.length) delete this._modelActions[key];
-        }
-        if (state.action && frame >= state.action.until) state.action = null;
+        frame = this.advanceModelAction(state, character, frame);
         this.applyModelAnimation(state.binding, state.rules, {
             frame,
             moving: !!(character.isMoving && character.isMoving()) || distance > 0.0001,
@@ -13967,11 +14221,24 @@ Reactor3D.updateMapModelSprite = function(sprite) {
                 : !!(character.isDashing && character.isDashing()),
             distance,
             scale: state.scale,
+            playbackRate: state.playbackRate,
             action: state.action || null
         });
         state.dirty = true;
     }
-    if (!state.dirty) return;
+    for (const name of this.takeModelEffects(character)) {
+        const effect = this.modelEffectByName(state.effects, name);
+        if (effect && effect.trigger === "action") this.fireNamedEffect(effect, character, state);
+    }
+    this.updateTriggeredEffects(state, character, {
+        moving: !!character.isMoving?.(), dashing: !!character.isDashing?.()
+    });
+    this.updateAnchoredAnimations(state);
+    if (this.updateModelFlash(state)) state.dirty = true;
+    if (!state.dirty || sprite._rrCulled) return;
+    if (typeof SceneManager !== "undefined" && SceneManager.isFinalUpdateOfFrame
+        && !SceneManager.isFinalUpdateOfFrame()) return;
+    this.expandModelSpriteFrame(state);
     state.dirty = false;
     this.paintModelSpriteCanvas(state);
 };
@@ -14245,7 +14512,11 @@ Reactor3D.effectLight = function(object, effect, key) {
         x: world.x - 0.5, y: world.z - 1, height: world.y, groundY: 0,
         radius: spec.radius * grow, colour: spec.colour, intensity: spec.intensity,
         angle: spec.angle, width: spec.width * grow, yaw, pitch,
-        occlude: spec.occlude, shadow: spec.shadow, body: spec.body
+        occlude: spec.occlude, shadow: spec.shadow, body: spec.body,
+        // The model the light rides. Its own geometry stands at the light's
+        // origin — a screen glow sits on the screen — and must not shadow
+        // the light it carries.
+        carrier: object
     };
 };
 
@@ -14317,8 +14588,73 @@ Reactor3D.effectAnchorWorld = function(object, effect, out) {
     const offset = effect && effect.anchor ? effect.anchor.offset : [0, 0, 0];
     target.set(offset[0] || 0, offset[1] || 0, offset[2] || 0);
     const part = this.effectAnchorNode(object, effect && effect.anchor ? effect.anchor.part : "");
-    (part || object).updateWorldMatrix(true, false);
+    // localToWorld updates this node and its ancestors itself.
     return (part || object).localToWorld(target);
+};
+
+/** Optional semantic points, authored in the same bone/part frame as effects. */
+Reactor3D.readModelLandmarks = function(json) {
+    const source = json && json.landmarks;
+    const points = {};
+    for (const name of ["eyes", "mouth", "upperLip", "lowerLip"]) {
+        const point = source && source[name];
+        if (!point || !Array.isArray(point.offset) || point.offset.length !== 3
+            || !point.offset.every(value => typeof value === "number" && Number.isFinite(value))) continue;
+        points[name] = { part: typeof point.part === "string" ? point.part : "", offset: point.offset.slice() };
+    }
+    return points;
+};
+
+/** Resolve named nodes once when the instance is built, never scan meshes per frame. */
+Reactor3D.landmarkNode = function(object, name) {
+    if (!name) return this.effectAnchorNode(object, "") || object;
+    // Rebinding an imported mesh can leave the original export's same-named
+    // nodes in the tree. Follow the skeleton that actually deforms the mesh.
+    let bone = null;
+    object.traverse(node => {
+        if (!bone && node.isSkinnedMesh && node.skeleton) {
+            bone = node.skeleton.bones.find(entry => entry.name === name) || null;
+        }
+    });
+    return bone || this.effectAnchorNode(object, name);
+};
+
+Reactor3D.bindModelLandmarks = function(object, points) {
+    object.__reactorEyeRoot = this.effectAnchorNode(object, "") || object;
+    const bound = object.__reactorLandmarks = {};
+    for (const name of Object.keys(points || {})) {
+        const point = points[name];
+        const node = this.landmarkNode(object, point.part);
+        // A removed/renamed bone must not reinterpret its local offset at the feet.
+        if (point.part && !node) continue;
+        bound[name] = { node: node || object, offset: point.offset.slice() };
+    }
+    // Rest-space landmarks and mesh transforms are captured once for optional
+    // procedural lip morphs; animated vertices are never scanned per frame.
+    const rest = object.__reactorLandmarkRest = { points: {}, meshes: [] };
+    object.updateWorldMatrix(true, true);
+    const inverse = new THREE.Matrix4().copy(object.matrixWorld).invert();
+    for (const name of Object.keys(bound)) {
+        const point = this.modelLandmarkWorld(object, name, new THREE.Vector3());
+        rest.points[name] = point.applyMatrix4(inverse);
+    }
+    if (bound.mouth) object.traverse(mesh => {
+        if (mesh.isMesh && !mesh.userData.__reactorOverlay) {
+            const entry = { mesh, matrix: new THREE.Matrix4().multiplyMatrices(inverse, mesh.matrixWorld) };
+            if (mesh.isSkinnedMesh && mesh.skeleton) entry.skin = {
+                bind: mesh.bindMatrix.clone(), inverse: mesh.bindMatrixInverse.clone(),
+                matrices: mesh.skeleton.bones.map((bone, i) => new THREE.Matrix4()
+                    .multiplyMatrices(bone.matrixWorld, mesh.skeleton.boneInverses[i]))
+            };
+            rest.meshes.push(entry);
+        }
+    });
+};
+
+Reactor3D.modelLandmarkWorld = function(object, name, out) {
+    const point = object && object.__reactorLandmarks && object.__reactorLandmarks[name];
+    if (!point) return null;
+    return point.node.localToWorld((out || new THREE.Vector3()).fromArray(point.offset));
 };
 
 /** Queue a named effect on a character's model, played on its next frame. */
@@ -14504,7 +14840,7 @@ Reactor3D.modelInstances = function() {
     const spriteset = typeof SceneManager !== "undefined" && SceneManager._scene
         ? SceneManager._scene._spriteset : null;
     const scene = spriteset && spriteset._reactor3d && spriteset._reactor3d.scene;
-    return scene && scene._modelInstances ? scene._modelInstances : null;
+    return scene && scene._modelInstances ? scene._modelInstances : (spriteset?._reactorFlatModelInstances || null);
 };
 
 /** Whether any placed model has a light effect burning right now. Allocation-free. */
@@ -14539,9 +14875,20 @@ Reactor3D.modelEffectLights = function() {
             if (entry.until > 0 && frame >= entry.until) continue;
             const light = this.effectLight(holder.object, entry.effect, key + ":" + name);
             if (!light) continue;
+            if (holder.flat) {
+                const point = this.flatModelAnchor(holder, entry.effect, this._flatLightPoint || (this._flatLightPoint = {}));
+                if (!point) continue;
+                const tile = $gameMap.tileWidth(), grow = holder.unit / tile;
+                light.x = point.x / tile + $gameMap.displayX();
+                light.y = point.y / $gameMap.tileHeight() + $gameMap.displayY();
+                light.height = 0;
+                light.radius *= grow; light.width *= grow;
+            }
             const animated = this.animateLight(entry.effect.light, frame, seed, light.radius, light.intensity);
             light.radius = animated.radius;
             light.intensity = animated.intensity;
+            light.priorityRadius = animated.priorityRadius;
+            light.priorityIntensity = animated.priorityIntensity;
             out.push(light);
         }
     }
@@ -14553,8 +14900,8 @@ Reactor3D.modelHolderFor = function(character) {
     const spriteset = typeof SceneManager !== "undefined" && SceneManager._scene
         ? SceneManager._scene._spriteset : null;
     const scene = spriteset && spriteset._reactor3d && spriteset._reactor3d.scene;
-    if (!scene || !scene._modelInstances || !character) return null;
-    return scene._modelInstances.get(this.modelInstanceKey(character)) || null;
+    const instances = scene?._modelInstances || spriteset?._reactorFlatModelInstances;
+    return character && instances ? instances.get(this.modelInstanceKey(character)) || null : null;
 };
 
 /**
@@ -15355,6 +15702,19 @@ Reactor3D.effectFacesCamera = function(holder, effect, entry) {
     return show;
 };
 
+/** Project a model anchor into its flat sprite's bitmap, without a readback. */
+Reactor3D.flatModelAnchor = function(holder, effect, out) {
+    const world = this.effectAnchorWorld(holder.object, effect,
+        this._flatAnchorScratch || (this._flatAnchorScratch = new THREE.Vector3()));
+    if (!world) return null;
+    world.project(holder.camera);
+    const sprite = holder.sprite;
+    out = out || {};
+    out.x = sprite.x + ((world.x + 1) * 0.5 - sprite.anchor.x) * holder.size;
+    out.y = sprite.y + ((1 - world.y) * 0.5 - sprite.anchor.y) * holder.size;
+    return out;
+};
+
 /**
  * Put a stand-in on its anchor's screen position, at the scale the world is
  * drawn there. The animation sprite asks its target for `reactor3DScale`,
@@ -15366,6 +15726,15 @@ Reactor3D.placeStandIn = function(holder, effect, standIn) {
     const spriteset = typeof SceneManager !== "undefined" && SceneManager._scene
         ? SceneManager._scene._spriteset : null;
     const camera = spriteset && spriteset._reactor3d ? spriteset._reactor3d.camera : null;
+    if (holder?.flat && holder.object) {
+        const point = this.flatModelAnchor(holder, effect, this._flatStandPoint || (this._flatStandPoint = {}));
+        if (!point) return false;
+        standIn.x = point.x; standIn.y = point.y;
+        const tile = $gameMap.tileWidth();
+        standIn._reactorStand = { x: holder.unit / tile * (standIn._reactorExtra || 1), y: holder.unit / tile * (standIn._reactorExtra || 1) };
+        if (!standIn.reactor3DScale) standIn.reactor3DScale = function() { return this._reactorStand; };
+        return true;
+    }
     if (!camera || !holder || !holder.object || typeof THREE === "undefined") return false;
     const scratch = this._anchorScratch || (this._anchorScratch = new THREE.Vector3());
     const point = this._anchorPoint || (this._anchorPoint = {});
@@ -15504,6 +15873,119 @@ Reactor3D.applyLookLean = function(object, character) {
     } else {
         object.rotation.x += lean;
     }
+};
+
+/** Placement and event overrides are percentages; old maps default to 100. */
+Reactor3D.modelAnimationSpeed = function(character) {
+    const value = character?._reactorAnimationSpeed ?? character?.event?.()?.reactorProp?.animationSpeed ?? 100;
+    return Math.max(1, Math.min(1000, Number(value) || 100));
+};
+Reactor3D.setModelAnimationSpeed = function(character, percent) {
+    if (!character) return;
+    character._reactorAnimationSpeed = Math.max(1, Math.min(1000, Number(percent) || 100));
+};
+Reactor3D.modelPlaybackFrame = function(holder, character, frame) {
+    const delta = holder.animationRealFrame === undefined ? 0 : Math.max(0, frame - holder.animationRealFrame);
+    holder.playbackRate = this.modelAnimationSpeed(character) / 100;
+    holder.animationFrame = (holder.animationFrame ?? frame) + delta * holder.playbackRate;
+    holder.animationRealFrame = frame;
+    return holder.animationFrame;
+};
+
+/** The same action clock drives map models in both renderers. */
+Reactor3D.advanceModelAction = function(holder, character, frame) {
+    this.resumeModelPlayback(holder, character, frame);
+    frame = this.modelPlaybackFrame(holder, character, frame);
+    const key = this.modelInstanceKey(character);
+    const queue = Reactor3D._modelActions && Reactor3D._modelActions[key];
+    if (queue && queue.length) {
+        const pending = queue[0];
+        if (!pending.name) {
+            // A stop: ends the play and everything queued behind it.
+            queue.length = 0;
+            holder.action = null;
+        } else if (!holder.action) {
+            queue.shift();
+            // The placement chose this animation: it plays on demand
+            // for this instance whatever trigger it was authored
+            // with, and the placement's Repeat loops it.
+            holder.rules = Reactor3D.rulesForPlacement(holder.rules, pending.name, pending.repeat);
+            let until = frame;
+            for (const rule of holder.rules) {
+                if (rule.trigger !== "action" || rule.name !== pending.name) continue;
+                until = Math.max(until,
+                    frame + Reactor3D.modelRuleDuration(rule, holder.binding.clips));
+            }
+            holder.action = until > frame
+                ? { name: pending.name, frame, until, repeat: !!pending.repeat, sequence: pending.sequence || null }
+                : null;
+        }
+        if (!queue.length) delete Reactor3D._modelActions[key];
+    }
+    if (holder.action && frame >= holder.action.until) {
+        // A repeating animation starts over — unless something is
+        // queued behind it, which takes the stage after this cycle.
+        const queued = Reactor3D._modelActions && Reactor3D._modelActions[key];
+        const rule = holder.rules.find(entry => entry.trigger === "action" && entry.name === holder.action.name);
+        const ended = holder.action;
+        holder.action = !ended.sequence && rule && (rule.repeat || holder.action.repeat) && !(queued && queued.length)
+            ? { name: holder.action.name, frame, until: frame + Reactor3D.modelRuleDuration(rule, holder.binding.clips), repeat: holder.action.repeat }
+            : null;
+        // The last play of a looping list: the list goes round again.
+        if (!holder.action && ended.sequence && !(queued && queued.length)) {
+            Reactor3D.playModelSequence(character, ended.sequence, true);
+        }
+    }
+    // Timed effects ride the action clock, each firing once.
+    const fxKey = holder.action ? holder.action.name + ":" + holder.action.frame : "";
+    if (holder.fxKey !== fxKey) {
+        holder.fxKey = fxKey;
+        holder.fxT = -1;
+    }
+    if (holder.action) {
+        const fxNow = frame - holder.action.frame;
+        for (const rule of holder.rules) {
+            if (rule.trigger !== "action" || rule.name !== holder.action.name) continue;
+            const duration = Reactor3D.modelRuleDuration(rule, holder.binding.clips);
+            for (const effect of Reactor3D.modelEffectsToFire(rule, duration, holder.fxT, fxNow)) {
+                Reactor3D.fireModelEffect(effect, character, holder);
+            }
+        }
+        holder.fxT = fxNow;
+    }
+    return frame;
+};
+
+// Hold only playback data across a spriteset rebuild, never meshes or textures.
+// Weak character keys keep an old map from retaining its events after transfer.
+Reactor3D._pausedModelPlayback = new WeakMap();
+Reactor3D.pauseModelPlayback = function(holder) {
+    if (!holder || !holder.character || !holder.object) return;
+    this._pausedModelPlayback.set(holder.character, {
+        spec: holder.spec || holder.key, frame: this.currentFrame(),
+        action: holder.action && { ...holder.action }, rules: holder.rules,
+        fxT: holder.fxT, animationFrame: holder.animationFrame, lights: holder.lights && Object.fromEntries(
+            Object.entries(holder.lights).map(([name, entry]) => [name, { ...entry }]))
+    });
+};
+Reactor3D.resumeModelPlayback = function(holder, character, frame) {
+    const saved = this._pausedModelPlayback.get(character);
+    if (!saved) return;
+    this._pausedModelPlayback.delete(character);
+    if (saved.spec !== (holder.spec || holder.key)) return;
+    const elapsed = frame - saved.frame;
+    holder.animationFrame = (saved.animationFrame ?? saved.frame) + elapsed;
+    holder.animationRealFrame = frame;
+    holder.rules = saved.rules || holder.rules;
+    holder.action = saved.action;
+    if (holder.action) {
+        holder.action.frame += elapsed;
+        holder.action.until += elapsed;
+        holder.fxKey = holder.action.name + ":" + holder.action.frame;
+        holder.fxT = saved.fxT;
+    }
+    holder.lights = saved.lights;
+    for (const entry of Object.values(holder.lights || {})) if (entry.until > 0) entry.until += elapsed;
 };
 
 /** Queue a named action animation on a character's model. */
@@ -15663,6 +16145,11 @@ Reactor3D.registerPluginCommands = function() {
         }
         Reactor3D.setMapAmbient(args || {}, duration);
         if (args && String(args.wait) === "true" && duration > 0 && this.wait) this.wait(duration);
+    });
+    PluginManager.registerCommand("RPGReactor", "SetModelAnimationSpeed", function(args) {
+        const target = Number(args?.target) || 0;
+        const character = target < -1 ? $gamePlayer.followers().follower(-target - 2) : this.character?.(target);
+        Reactor3D.setModelAnimationSpeed(character, args?.speed);
     });
     PluginManager.registerCommand("RPGReactor", "PlayModelAnimation", function(args) {
         const target = Number((args && args.target) || 0);
@@ -15896,7 +16383,7 @@ Reactor3D.MapScene.prototype.syncCharacterModels = function(characters) {
         live.add(key);
         let holder = this._modelInstances.get(key);
         if (!holder) {
-            holder = { spec: Reactor3D.modelCacheKey(spec.name, spec.ext, spec.file), object: null };
+            holder = { character, spec: Reactor3D.modelCacheKey(spec.name, spec.ext, spec.file), object: null };
             this._modelInstances.set(key, holder);
             Promise.all([
                 Reactor3D.loadModel(spec.name, spec.ext, spec.file, spec.texture),
@@ -15904,7 +16391,7 @@ Reactor3D.MapScene.prototype.syncCharacterModels = function(characters) {
             ]).then(([template, sidecar]) => {
                 if (!template || !this._modelsGroup) return;
                 const current = this._modelInstances.get(key);
-                if (!current || current.spec !== Reactor3D.modelCacheKey(spec.name, spec.ext, spec.file)) return;
+                if (current !== holder || current.spec !== Reactor3D.modelCacheKey(spec.name, spec.ext, spec.file)) return;
                 const object = Reactor3D.cloneModelTemplate(template);
                 Reactor3D.applyModelTransform(object, Reactor3D.readModelTransform(sidecar));
                 object.userData.glbSize = template.userData.glbSize;
@@ -15921,6 +16408,7 @@ Reactor3D.MapScene.prototype.syncCharacterModels = function(characters) {
                 }
                 current.object = object;
                 current.binding = Reactor3D.prepareModelInstance(object, object.__reactorClips);
+                Reactor3D.bindModelLandmarks(object, Reactor3D.readModelLandmarks(sidecar));
                 current.rules = sidecar ? Reactor3D.readModelAnimationRules(sidecar) : [];
                 current.effects = sidecar ? Reactor3D.readModelEffects(sidecar) : [];
                 group.add(object);
@@ -15948,6 +16436,7 @@ Reactor3D.MapScene.prototype.syncCharacterModels = function(characters) {
         }
         const object = holder.object;
         if (!object) continue;
+        Reactor3D.resumeModelPlayback(holder, character, Reactor3D.currentFrame());
         const extent = object.userData.glbSize || { x: 1, y: 1, z: 1 };
         // Largest dimension, matching the collision footprint's rule.
         const span = Math.max(extent.x, extent.y, extent.z, 0.0001);
@@ -15987,6 +16476,9 @@ Reactor3D.MapScene.prototype.syncCharacterModels = function(characters) {
         // looks, so it comes back off.
         Reactor3D.noteModelFacing(character, holder.smoothYaw - (spec.yaw || 0));
         object.position.set(character._realX + 0.5, ground + (character._reactorLift || 0), character._realY + 0.5);
+        holder.cameraBaseX = character._realX;
+        holder.cameraBaseY = ground + (character._reactorLift || 0);
+        holder.cameraBaseZ = character._realY;
         Reactor3D.applyLiveTransform(object, character);
         // Face Ceiling / Face Ground and Rotate route steps. Local axes,
         // after the facing yaw: a model falls onto its own back or face
@@ -15996,71 +16488,16 @@ Reactor3D.MapScene.prototype.syncCharacterModels = function(characters) {
         if (posePitch) object.rotateX(-posePitch * Math.PI / 2);
         if (poseSpin) object.rotateZ(-poseSpin * Math.PI / 180);
         object.visible = !(character.isTransparent && character.isTransparent())
-            && !Reactor3D.characterHiddenByCamera(character);
+            && !Reactor3D.characterHiddenByCamera(character, true);
         Reactor3D.registerPluginCommands();
         if (holder.binding && holder.rules && holder.rules.length) {
-            const frame = typeof Graphics !== "undefined" ? Graphics.frameCount : 0;
+            let frame = typeof Graphics !== "undefined" ? Graphics.frameCount : 0;
             const distance = holder.lastX === undefined
                 ? 0
                 : Math.hypot(character._realX - holder.lastX, character._realY - holder.lastY);
             holder.lastX = character._realX;
             holder.lastY = character._realY;
-            const queue = Reactor3D._modelActions && Reactor3D._modelActions[key];
-            if (queue && queue.length) {
-                const pending = queue[0];
-                if (!pending.name) {
-                    // A stop: ends the play and everything queued behind it.
-                    queue.length = 0;
-                    holder.action = null;
-                } else if (!holder.action) {
-                    queue.shift();
-                    // The placement chose this animation: it plays on demand
-                    // for this instance whatever trigger it was authored
-                    // with, and the placement's Repeat loops it.
-                    holder.rules = Reactor3D.rulesForPlacement(holder.rules, pending.name, pending.repeat);
-                    let until = frame;
-                    for (const rule of holder.rules) {
-                        if (rule.trigger !== "action" || rule.name !== pending.name) continue;
-                        until = Math.max(until,
-                            frame + Reactor3D.modelRuleDuration(rule, holder.binding.clips));
-                    }
-                    holder.action = until > frame
-                        ? { name: pending.name, frame, until, repeat: !!pending.repeat, sequence: pending.sequence || null }
-                        : null;
-                }
-                if (!queue.length) delete Reactor3D._modelActions[key];
-            }
-            if (holder.action && frame >= holder.action.until) {
-                // A repeating animation starts over — unless something is
-                // queued behind it, which takes the stage after this cycle.
-                const queued = Reactor3D._modelActions && Reactor3D._modelActions[key];
-                const rule = holder.rules.find(entry => entry.trigger === "action" && entry.name === holder.action.name);
-                const ended = holder.action;
-                holder.action = rule && (rule.repeat || holder.action.repeat) && !(queued && queued.length)
-                    ? { name: holder.action.name, frame, until: frame + Reactor3D.modelRuleDuration(rule, holder.binding.clips), repeat: holder.action.repeat }
-                    : null;
-                // The last play of a looping list: the list goes round again.
-                if (!holder.action && ended.sequence && !(queued && queued.length)) {
-                    Reactor3D.playModelSequence(character, ended.sequence, true);
-                }
-            }
-            // Timed effects ride the action clock, each firing once.
-            const fxKey = holder.action ? holder.action.name + ":" + holder.action.frame : "";
-            if (holder.fxKey !== fxKey) {
-                holder.fxKey = fxKey;
-                holder.fxT = -1;
-            }
-            if (holder.action) {
-                const fxNow = frame - holder.action.frame;
-                for (const rule of holder.rules) {
-                    if (rule.trigger !== "action" || rule.name !== holder.action.name) continue;
-                    const duration = Reactor3D.modelRuleDuration(rule, holder.binding.clips);
-                    for (const effect of Reactor3D.modelEffectsToFire(rule, duration, holder.fxT, fxNow)) {
-                        Reactor3D.fireModelEffect(effect, character, holder);
-                    }
-                }
-                holder.fxT = fxNow;
-            }
+            frame = Reactor3D.advanceModelAction(holder, character, frame);
             if (Reactor3D.updateModelFlash(holder)) this._ambientLevel = undefined;
             Reactor3D.applyModelAnimation(holder.binding, holder.rules, {
                 frame,
@@ -16072,6 +16509,7 @@ Reactor3D.MapScene.prototype.syncCharacterModels = function(characters) {
                     : !!(character.isDashing && character.isDashing()),
                 distance,
                 scale,
+                playbackRate: holder.playbackRate,
                 action: holder.action || null
             });
         }
@@ -16405,6 +16843,7 @@ const _reactorClearModels = Reactor3D.MapScene.prototype.clear;
 Reactor3D.MapScene.prototype.clear = function() {
     if (this._modelInstances) {
         for (const holder of this._modelInstances.values()) {
+            Reactor3D.pauseModelPlayback(holder);
             if (holder.object && holder.object.parent) holder.object.parent.remove(holder.object);
         }
         this._modelInstances.clear();
@@ -16458,6 +16897,7 @@ Reactor3D.normalizeProp = function(raw, mapData) {
     const direction = Number(raw.direction);
     const size = number(raw.size, 2);
     const scale = number(raw.scale, 1);
+    const animations = this.propAnimationList(raw), effects = this.propEffectList(raw);
     return {
         id: Math.max(1, Math.floor(number(raw.id, 1))),
         name: String(raw.name),
@@ -16475,9 +16915,10 @@ Reactor3D.normalizeProp = function(raw, mapData) {
         scale: scale > 0 ? scale : 1,
         passable: raw.passable === true || raw.passable === "true",
         // An action rule and an effect the prop starts with, by name.
-        animation: raw.animation ? String(raw.animation) : "",
+        animations, animation: animations[0] || "",
+        animationSpeed: Math.max(1, Math.min(1000, number(raw.animationSpeed, 100))),
         repeat: raw.repeat === true || raw.repeat === "true",
-        effect: raw.effect ? String(raw.effect) : ""
+        effects, effect: effects[0] || ""
     };
 };
 
@@ -16773,8 +17214,8 @@ Reactor3D.installPropHooks = function() {
  *   isometric    Pitched 35.26 degrees, turned 45, with a narrow field of view
  *                so the picture is nearly parallel-projected.
  *   thirdPerson  Behind the player, turning with them.
- *   firstPerson  At the player's eyes, looking where they face; the player
- *                and followers are hidden.
+ *   firstPerson  At the player's authored eyes (or fitted model height),
+ *                with their 3D body and followers visible.
  *
  * Any mode takes pitch/yaw/distance/fov overrides; a null field means "the
  * mode's own number". The camera state lives on `Game_Map`, so it is saved
@@ -17057,7 +17498,8 @@ Reactor3D.installPropHooks = function() {
             : (normal.pitch !== null ? normal.pitch : defaults.pitch);
         let distance = normal.distance !== null ? normal.distance : defaults.distance;
         if (distance === null) distance = frameDistance(fov);
-        const y = (anchor.elevation || 0) + (defaults.lift || 0);
+        const eyePoint = eye && anchor.eyes;
+        const y = eyePoint ? eyePoint.y : (anchor.elevation || 0) + (defaults.lift || 0);
         if (playerRelative && !eye && pitch < 0) {
             const t = Math.min(1, pitch / (LOOK_PITCH.thirdPerson[0] || -1));
             distance = Math.max(MIN_THIRD_PERSON_DISTANCE, distance * (1 - LOOK_UP_CLOSE * t));
@@ -17071,10 +17513,10 @@ Reactor3D.installPropHooks = function() {
             yaw: yaw,
             distance: distance,
             fov: fov,
-            x: anchor.x,
+            x: eyePoint ? eyePoint.x - 0.5 : anchor.x,
             // Player-relative modes look at the figure, not at its feet.
             y: y,
-            z: anchor.y
+            z: eyePoint ? eyePoint.z - 0.5 : anchor.y
         };
     }
 
@@ -17193,7 +17635,9 @@ Reactor3D.installPropHooks = function() {
             playerPosition: () => {
                 if (typeof $gamePlayer === "undefined" || !$gamePlayer) return null;
                 const x = $gamePlayer._realX, y = $gamePlayer._realY;
-                return { x: x, y: y, elevation: elevationAt(x, y), direction: $gamePlayer.direction() };
+                const elevation = elevationAt(x, y) + ($gamePlayer._reactorLift || 0);
+                return { x: x, y: y, elevation: elevation, direction: $gamePlayer.direction(),
+                    eyes: currentState().mode === "firstPerson" ? playerEyes($gamePlayer, elevation) : null };
             },
             playerDirection: () => (typeof $gamePlayer !== "undefined" && $gamePlayer
                 ? $gamePlayer.direction() : 2),
@@ -17205,6 +17649,28 @@ Reactor3D.installPropHooks = function() {
                 return { x: x, y: y, elevation: elevationAt(x, y), direction: event.direction() };
             }
         };
+    }
+
+    /** Authored eye points scale and ride their bone; old models use cached dimensions. */
+    function playerEyes(character, elevation) {
+        const holder = Reactor3D.modelHolderFor(character);
+        const object = holder && holder.object;
+        if (!object || typeof THREE === "undefined") return null;
+        const target = playerEyes.scratch || (playerEyes.scratch = new THREE.Vector3());
+        if (!Reactor3D.modelLandmarkWorld(object, "eyes", target)) {
+            const size = object.userData.glbSize;
+            if (!size || !(size.y > 0)) return null;
+            // Put unconfigured eyes near the front of the head, rather than
+            // inside a double-sided face. No posed vertex/bounds scan needed.
+            target.set(0, size.y * 0.92, (size.z || 0) * 0.45);
+            (object.__reactorEyeRoot || object).localToWorld(target);
+        }
+        // The camera also runs before this frame's model sync, so compensate
+        // for character movement without waiting a frame for the mesh root.
+        if (Number.isFinite(holder.cameraBaseX)) target.x += character._realX - holder.cameraBaseX;
+        if (Number.isFinite(holder.cameraBaseZ)) target.z += character._realY - holder.cameraBaseZ;
+        if (Number.isFinite(holder.cameraBaseY)) target.y += elevation - holder.cameraBaseY;
+        return target;
     }
 
     /** The state in force on the current map. */
@@ -17405,14 +17871,11 @@ Reactor3D.installPropHooks = function() {
             const baseUpdateVisibility = Sprite_Character.prototype.updateVisibility;
             Sprite_Character.prototype.updateVisibility = function() {
                 baseUpdateVisibility.apply(this, arguments);
-                // In first person the camera is the player: neither they nor
-                // the party walking through the lens are drawn.
+                // A flat player sprite would cover the lens. Followers stay
+                // visible, and the player's actual 3D body is drawn separately.
                 if (this.visible && hidesPlayer()) {
                     const character = this._character;
-                    const isParty = typeof $gamePlayer !== "undefined" && character
-                        && (character === $gamePlayer
-                            || (typeof Game_Follower !== "undefined" && character instanceof Game_Follower));
-                    if (isParty) this.visible = false;
+                    if (typeof $gamePlayer !== "undefined" && character === $gamePlayer) this.visible = false;
                 }
             };
             Sprite_Character.prototype.updateVisibility.__reactorCamera3d = true;
@@ -17438,6 +17901,7 @@ Reactor3D.installPropHooks = function() {
         step: step,
         place: place,
         frameDistance: frameDistance,
+        playerEyes: playerEyes,
         currentState: currentState,
         look: look,
         held: held,
@@ -17454,12 +17918,12 @@ Reactor3D.installPropHooks = function() {
 
     root.RPGReactorCamera3D = api;
     Reactor3D.Camera = api;
-    /** Whether the camera itself hides this character (first person: the party). */
-    Reactor3D.characterHiddenByCamera = function(character) {
+    /** First person hides only the player's flat sprite, never party models. */
+    Reactor3D.characterHiddenByCamera = function(character, model) {
+        if (model) return false;
         if (!character || !hidesPlayer()) return false;
         if (typeof $gamePlayer === "undefined" || !$gamePlayer) return false;
-        return character === $gamePlayer
-            || (typeof Game_Follower !== "undefined" && character instanceof Game_Follower);
+        return character === $gamePlayer;
     };
     registerCommands();
     installHooks();

@@ -280,7 +280,7 @@ class AudioPlayer {
             // Show a message in the track list
             const trackList = document.getElementById('audio-track-list');
             if (trackList) {
-                trackList.innerHTML = `<p style="color: #ff9800; padding: 20px; text-align: center;">${tt('No project loaded.')}<br>${tt('Please open or create a project first.')}</p>`;
+                trackList.innerHTML = `<p style="color: var(--color-warning-text); padding: 20px; text-align: center;">${tt('No project loaded.')}<br>${tt('Please open or create a project first.')}</p>`;
             }
             // Clear alphabet tabs
             const alphTabs = document.getElementById('audio-alphabet-tabs');

@@ -211,7 +211,7 @@ class CharacterGraphicPicker {
 
         } catch (error) {
             console.error('Error loading character files:', error);
-            fileList.innerHTML = `<div style="color: #f88; padding: 12px;">${this._t('Error loading files')}</div>`;
+            fileList.innerHTML = `<div style="color: var(--color-danger-bright); padding: 12px;">${this._t('Error loading files')}</div>`;
         }
     }
 
@@ -314,7 +314,7 @@ class CharacterGraphicPicker {
             console.error('Failed to load character sprite:', imagePath);
             previewArea.replaceChildren();
             const error = document.createElement('div');
-            error.style.cssText = 'color: #f88; padding: 20px; text-align: center;';
+            error.style.cssText = 'color: var(--color-danger-bright); padding: 20px; text-align: center;';
             error.append(this._t('Failed to load image:'), document.createElement('br'), fullFilename,
                 document.createElement('br'), document.createElement('br'));
             const detail = document.createElement('small');
@@ -500,7 +500,7 @@ class CharacterGraphicPicker {
 
             // Mark as selected
             canvas.classList.add('selected');
-            canvas.style.borderColor = '#00ff00';
+            canvas.style.borderColor = 'var(--color-accent)';
         });
 
         return canvas;

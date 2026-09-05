@@ -242,7 +242,9 @@ class EventCommandPicker {
                                 title: '3D',
                                 commands: [
                                     { name: 'Play Model Animation', code: 357, reactor: 'PlayModelAnimation' },
+                                    { name: 'Set Model Animation Speed', code: 357, reactor: 'SetModelAnimationSpeed' },
                                     { name: 'Play 3D Effect', code: 357, reactor: 'PlayModelEffect' },
+                                    { name: 'Speak 3D Dialogue', code: 357, reactor: 'SpeakModel3D' },
                                     { name: 'Change 3D Camera', code: 357, reactor: 'ChangeCamera3D' },
                                     { name: 'Transform 3D Model', code: 357, reactor: 'TransformModel3D' }
                                 ]

@@ -55,6 +55,9 @@ class DatabaseTraitEditor {
      * @param {Function} onSave - Callback when trait is saved
      */
     showTraitEditorModal(entry, traitIndex = -1, onSave = null) {
+        this._modal?.remove();
+        const modalGeneration = this._modalGeneration = (this._modalGeneration || 0) + 1;
+        const isCurrent = this.commonUI?.databaseEditor?.captureDetailContext?.() || (() => true);
         this.currentEntry = entry;
         this.currentTraitIndex = traitIndex;
         this.onSaveCallback = onSave;
@@ -65,6 +68,7 @@ class DatabaseTraitEditor {
         // Create modal overlay
         const overlay = document.createElement('div');
         overlay.className = 'rr-modal-overlay';
+        this._modal = overlay;
 
         // Create modal
         const modal = document.createElement('div');
@@ -149,6 +153,7 @@ class DatabaseTraitEditor {
         header.querySelector('.close-btn').addEventListener('click', () => overlay.remove());
         footer.querySelector('.cancel-btn').addEventListener('click', () => overlay.remove());
         footer.querySelector('.ok-btn').addEventListener('click', () => {
+            if (!isCurrent() || modalGeneration !== this._modalGeneration || !overlay.isConnected) return;
             const saved = this.saveTrait(trait);
             if (saved) {
                 overlay.remove();
@@ -163,6 +168,7 @@ class DatabaseTraitEditor {
         this.loadTabContent(activeTab, tabContent, trait);
 
         document.body.appendChild(overlay);
+        this.commonUI?.databaseEditor?.registerDetailModal(overlay);
         if (window.I18n) window.I18n.applyText(overlay);
     }
 

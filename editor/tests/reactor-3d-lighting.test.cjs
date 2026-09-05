@@ -916,7 +916,7 @@ test('the flat compositor multiplies ambient and adds lights, never punches hole
     assert.doesNotMatch(sprites, /destination-out/, 'no hole punching anywhere');
     // Shared falloff pictures, pooled sprites, both parented to the spriteset
     // so screen tone cannot dim the lights.
-    assert.match(sprites, /coneLightCanvas\(\) : Reactor3D\.roundLightCanvas\(\)/);
+    assert.match(sprites, /flatConeLightCanvas\(\) : Reactor3D\.roundLightCanvas\(\)/);
     assert.match(sprites, /destroyReactorLighting2D\(\);\n    if \(this\._rrCullHolder\)/);
     // The 3D pass owns the lights when it exists; the flat pass stands down.
     assert.match(sprites, /!this\._reactor3dLights\n(.*\n)?.*lightingEnabled\(\$dataMap\)/);

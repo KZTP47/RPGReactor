@@ -550,7 +550,7 @@ test('previews show scanlines, stand on their anchor like the game, clamp typed 
     assert.match(runtime, /y -= descriptor\.height \* Math\.abs\(descriptor\.scaleY\) \/ 2;/);
     assert.doesNotMatch(runtime, /descriptor\.z \* th/);
     assert.equal(VideoSurfacePreviewManager.standingLift({ target: 'screen', height: 180, scaleY: 1 }), 0);
-    assert.match(fs.readFileSync(path.join(editorRoot, '..', 'runtime', 'reactor_main.js'), 'utf8'), /runtime revision: 20260904.13/);
+    assert.match(fs.readFileSync(path.join(editorRoot, '..', 'runtime', 'reactor_main.js'), 'utf8'), /runtime revision: 20260904.17/);
     assert.match(editor, /if \(options\.max !== undefined && next > options\.max\) next = options\.max;/);
     assert.match(editor, /if \(final && options\.min !== undefined && next < options\.min\) next = options\.min;/);
     assert.match(manager, /setEnabled\(enabled\) \{/);
@@ -615,7 +615,7 @@ test('Preview Event animates stepping pages and previews 3D-model pages in both 
     assert.match(map3d, /this\.animateEventPreviews\(now\);/);
     assert.match(html, /src="src\/utils\/EventPreviewModels\.js"/);
     const models = require(path.join(editorRoot, 'src', 'utils', 'EventPreviewModels.js'));
-    assert.deepEqual(Object.keys(models).sort(), ['animate', 'clear', 'instance', 'templateFor', 'texturesDecoded', 'thumbnail']);
+    assert.deepEqual(Object.keys(models).sort(), ['animate', 'clear', 'instance', 'revision', 'templateFor', 'texturesDecoded', 'thumbnail']);
 });
 
 test('model-bound characters on flat maps render as sprites, the view the editor previews', () => {

@@ -5,7 +5,7 @@
  * a position, a lift, a pose (yaw/pitch/roll), a facing for the flat map, a
  * size in tiles and a scale, kept in the map's sidecar (`reactor3d.props`,
  * see `RRMapElevation`). On the 2D canvas a prop is drawn as the same
- * thumbnail Preview Event uses and moved a tile at a time; in the 3D view
+ * live orthographic preview and moved a tile at a time; in the 3D view
  * (`MapEditor3D`) it is the model itself, placed freely and turned with pose
  * rings. In the running game the runtime stands each prop in the map as a
  * model-bound event, which is what gives it collision.
@@ -22,7 +22,7 @@ class ModelPropsManager {
         this.fields = { size: 2, scale: 1, direction: 2, z: 0, passable: false, yaw: 0, pitch: 0, roll: 0, animations: [], repeat: false, effects: [] };
         this._undo = [];
         this._redo = [];
-        this._textures = new Map();
+        this.preview2D = new ModelPropsPreview2D(this);
         this._sprites = new Map();
         this._listeners = [];
         this._onKeyDown = event => this._handleKeyDown(event);
@@ -65,6 +65,7 @@ class ModelPropsManager {
         this.currentMap = mapData || null;
         this.selectedId = null;
         this._ensureContainer();
+        this.preview2D.bind();
         this.render();
         this._syncPanel();
     }
@@ -74,7 +75,7 @@ class ModelPropsManager {
         if (!parent || typeof PIXI === 'undefined') return null;
         if (this.container && this.container.parent !== parent) {
             this.container.parent?.removeChild(this.container);
-            this.container.destroy({ children: true });
+            if (!this.container.destroyed) this.container.destroy({ children: true });
             this.container = null;
             this._sprites.clear();
         }
@@ -93,23 +94,41 @@ class ModelPropsManager {
     render() {
         const container = this._ensureContainer();
         if (!container) return;
-        for (const child of container.removeChildren()) child.destroy({ children: false });
+        for (const child of container.removeChildren()) {
+            if (!child.__livePropPreview && !child.__livePropLight) child.destroy({ children: false });
+        }
+        this.preview2D.sync(this.props());
+        this._footprintGeneration = (this._footprintGeneration || 0) + 1;
         this._ghost = null;
         this._sprites.clear();
         const tw = this.tilemapManager?.TILE_WIDTH || 48;
         const th = this.tilemapManager?.TILE_HEIGHT || tw;
         this._drawFootprint(container, tw, th);
-        const props = this.props().slice().sort((a, b) => a.y - b.y || a.id - b.id);
+        const depth = prop => prop.y + (prop.z || 0) * (Math.tan(55 * Math.PI / 180) - 1);
+        const props = this.props().slice().sort((a, b) => depth(a) - depth(b) || a.id - b.id);
         for (const prop of props) {
             const sprite = this._spriteFor(prop, tw, th);
             if (!sprite) continue;
             sprite.x = (prop.x + 0.5) * tw;
             sprite.y = (prop.y + 0.5) * th - prop.z * th;
             sprite.eventMode = 'none';
-            if (prop.id === this.selectedId) sprite.tint = 0xffe08a;
+            sprite.tint = this.previewTint(prop.id);
             this._sprites.set(prop.id, sprite);
             container.addChild(sprite);
         }
+    }
+
+    previewTint(id) {
+        const ambient = this._ambientTint ?? 0xffffff;
+        const selection = id === this.selectedId ? 0xffe08a : 0xffffff;
+        const channel = shift => Math.round(((ambient >> shift) & 255) * ((selection >> shift) & 255) / 255);
+        return (channel(16) << 16) | (channel(8) << 8) | channel(0);
+    }
+
+    setAmbientTint(tint) {
+        if (this._ambientTint === tint) return;
+        this._ambientTint = tint;
+        for (const [id, sprite] of this._sprites) sprite.tint = this.previewTint(id);
     }
 
     /**
@@ -150,34 +169,10 @@ class ModelPropsManager {
             }
             return this._placeholder(prop, tw, th);
         }
-        const spec = Reactor3D.normalizeModelSpec(ModelPropsManager.specOf(prop));
-        if (!spec) return null;
-        const pixels = Math.round(spec.size * spec.scale * Math.max.apply(null, spec.stretch || [1]) * tw);
-        const key = `${spec.name}|${spec.ext || ''}|${spec.file || ''}@${pixels}:${prop.direction}:${prop.yaw}:${prop.pitch}:${prop.roll}:${(spec.stretch || []).join(',')}`;
-        let texture = this._textures.get(key);
-        if (texture === undefined) {
-            this._textures.set(key, null);
-            RREventPreviewModels.thumbnail(this.project(), spec, this.mapEditor3D(), pixels, prop.direction).then(result => {
-                if (!result) {
-                    this._textures.delete(key);
-                    setTimeout(() => this.render(), 2000);
-                    return;
-                }
-                const image = new Image();
-                image.onload = () => {
-                    this._textures.set(key, { texture: PIXI.Texture.from(image), anchorX: result.anchorX, anchorY: result.anchorY });
-                    this.render();
-                };
-                image.src = result.url;
-            });
-        }
-        if (!texture) return this._placeholder(prop, tw, th);
-        const sprite = new PIXI.Sprite(texture.texture);
-        sprite.anchor.set(texture.anchorX, texture.anchorY);
-        return sprite;
+        return this.preview2D.spriteFor(prop, tw) || this._placeholder(prop, tw, th);
     }
 
-    /** A footprint outline while the thumbnail renders, so the prop can still be found and moved. */
+    /** A footprint outline while the live model loads, so the prop can still be found and moved. */
     _placeholder(prop, tw, th) {
         const graphics = new PIXI.Graphics();
         const span = Math.max(1, prop.size * prop.scale);
@@ -336,7 +331,7 @@ class ModelPropsManager {
             // placement repeats it unless something is changed first.
             this.fields = { size: prop.size, scale: prop.scale, direction: prop.direction, z: prop.z, passable: prop.passable,
                 yaw: prop.yaw, pitch: prop.pitch, roll: prop.roll,
-                animations: (prop.animations || (prop.animation ? [prop.animation] : [])).slice(), repeat: !!prop.repeat,
+                animations: (prop.animations || (prop.animation ? [prop.animation] : [])).slice(), repeat: !!prop.repeat, animationSpeed: prop.animationSpeed ?? 100,
                 effects: (prop.effects || (prop.effect ? [prop.effect] : [])).slice() };
             this.model = { name: prop.name, ext: prop.ext, file: prop.file, texture: prop.texture };
         }
@@ -516,6 +511,7 @@ class ModelPropsManager {
                             <div id="model-props-animations" class="mp-choice-list"></div>
                             <label style="display: flex; align-items: center; gap: 4px; margin-top: 3px; color: var(--color-text); cursor: pointer;"><input type="checkbox" id="model-props-repeat"> ${escape(t('props.repeat'))}</label>
                         </div>
+                        <label>Animation speed (%)${stepper('model-props-speed', 1, 1000, 5, 100)}</label>
                         <div style="grid-column: 1 / -1;">${escape(t('props.effects'))}
                             <div id="model-props-effects" class="mp-choice-list"></div>
                         </div>
@@ -553,11 +549,12 @@ class ModelPropsManager {
                 yaw: this.fields.yaw || 0, pitch: this.fields.pitch || 0, roll: this.fields.roll || 0,
                 animations: this._checkedNames('model-props-animations'),
                 repeat: !!byId('model-props-repeat')?.checked,
+                animationSpeed: Math.max(1, Math.min(1000, number('model-props-speed', 100))),
                 effects: this._checkedNames('model-props-effects')
             };
             if (this.selectedId) this.update(this.selectedId, this.fields);
         };
-        for (const id of ['model-props-size', 'model-props-z']) byId(id)?.addEventListener('change', readFields);
+        for (const id of ['model-props-size', 'model-props-z', 'model-props-speed']) byId(id)?.addEventListener('change', readFields);
         byId('model-props-direction')?.addEventListener('change', readFields);
         byId('model-props-passable')?.addEventListener('change', readFields);
         byId('model-props-animation')?.addEventListener('change', readFields);
@@ -689,6 +686,8 @@ class ModelPropsManager {
         };
         fill('model-props-animations', actions, this.fields.animations || []);
         fill('model-props-effects', effects, this.fields.effects || []);
+        const speed = panel.querySelector('#model-props-speed');
+        if (speed) { speed.value = this.fields.animationSpeed ?? 100; speed.disabled = !this.model; }
         const repeat = panel.querySelector('#model-props-repeat');
         if (repeat) { repeat.checked = !!this.fields.repeat; repeat.disabled = !this.model; }
     }

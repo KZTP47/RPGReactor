@@ -5103,8 +5103,19 @@ Tilemap.prototype._sortChildren = function() {
     // is sorted — and then its order has changed by definition, so v8's
     // render group is told without copying the list to find out.
     const children = this.children;
-    const compare = this._boundCompareChildOrder
+    const baseCompare = this._boundCompareChildOrder
         || (this._boundCompareChildOrder = this._compareChildOrder.bind(this));
+    // Plugins can replace the comparator. Preserve their layer rules while
+    // giving model sprites their physical depth within the same layer.
+    const compare = this._reactorDepthCompare || (this._reactorDepthCompare = (a, b) => {
+        if ((a.z || 0) === (b.z || 0)
+            && (Number.isFinite(a._reactorSortY) || Number.isFinite(b._reactorSortY))) {
+            const ay = Number.isFinite(a._reactorSortY) ? a._reactorSortY : (a.y || 0);
+            const by = Number.isFinite(b._reactorSortY) ? b._reactorSortY : (b.y || 0);
+            if (ay !== by) return ay - by;
+        }
+        return baseCompare(a, b);
+    });
     let sorted = true;
     for (let i = 1; i < children.length; i++) {
         if (compare(children[i - 1], children[i]) > 0) { sorted = false; break; }
@@ -5126,8 +5137,8 @@ Tilemap.prototype._compareChildOrder = function(a, b) {
     if (az !== bz) {
         return az - bz;
     }
-    const ay = a.y || 0;
-    const by = b.y || 0;
+    const ay = Number.isFinite(a._reactorSortY) ? a._reactorSortY : (a.y || 0);
+    const by = Number.isFinite(b._reactorSortY) ? b._reactorSortY : (b.y || 0);
     if (ay !== by) {
         return ay - by;
     }

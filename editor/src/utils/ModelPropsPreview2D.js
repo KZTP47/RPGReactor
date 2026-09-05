@@ -1,0 +1,309 @@
+/** Live, retained flat prop renders. One Three renderer borrows the editor's
+ * PIXI context; each visible model keeps its own multisampled GPU texture. */
+class ModelPropsPreview2D {
+    constructor(manager) {
+        this.manager = manager;
+        this.entries = new Map();
+        this.animatedModels = [];
+        this.lights = [];
+        this.shadows = new ModelPropShadows2D(this);
+        this._tick = () => this.tick(performance.now());
+        this._visibilityChange = () => { if (document.hidden) this.suspend(); };
+    }
+
+    bind() {
+        const app = this.manager.tilemapManager?.app;
+        const project = this.manager.project()?.path;
+        const map = this.manager.currentMap;
+        if (this.app === app && this.project === project && this.map === map) return;
+        this.clear();
+        if (this.app !== app) {
+            this.app?.ticker.remove(this._tick, this);
+            this.viewport?._renderer.dispose();
+            this.viewport = null;
+            this.app = app;
+            app?.ticker.add(this._tick, this, PIXI.UPDATE_PRIORITY.HIGH);
+        }
+        document.addEventListener('visibilitychange', this._visibilityChange);
+        this.project = project;
+        this.map = map;
+        this._lastModelTick = 0;
+        this.revision = RREventPreviewModels.revision;
+    }
+
+    clear() {
+        this.shadows.clear();
+        for (const entry of this.entries.values()) this.dispose(entry);
+        this.entries.clear();
+        this.animatedModels = [];
+        this.lights = [];
+    }
+
+    destroy() {
+        document.removeEventListener('visibilitychange', this._visibilityChange);
+        this.clear();
+        this.app?.ticker.remove(this._tick, this);
+        this.viewport?._renderer.dispose();
+        this.viewport = null;
+        this.app = null;
+        this.map = null;
+        this.project = null;
+    }
+
+    dispose(entry) {
+        entry.media?.dispose();
+        entry.sprite?.parent?.removeChild(entry.sprite);
+        if (entry.sprite && !entry.sprite.destroyed) entry.sprite.destroy();
+        this.releaseTexture(entry);
+        entry.object?.removeFromParent();
+        entry.ownedGeometry?.forEach(geometry => geometry.dispose());
+        entry.object?.traverse(node => {
+            for (const material of [node.material].flat().filter(Boolean)) material.dispose();
+            node.skeleton?.dispose();
+        });
+    }
+
+    releaseTexture(entry) {
+        // Three owns the handle; do not let PIXI delete it a second time.
+        if (entry.texture) {
+            delete entry.texture.source._gpuData[this.app.renderer.uid];
+            entry.texture.destroy(true);
+        }
+        entry.target?.dispose();
+        entry.texture = entry.target = null;
+    }
+
+    sync(props) {
+        this.bind();
+        const ids = new Set(props.map(prop => prop.id));
+        for (const [id, entry] of this.entries) {
+            if (!ids.has(id)) { this.dispose(entry); this.entries.delete(id); }
+        }
+    }
+
+    spriteFor(prop, tw) {
+        // Position/lift/selection changes retain the animation's clock.
+        const key = JSON.stringify([ModelPropsManager.specOf(prop), prop.direction,
+            prop.animations, prop.animation, prop.repeat, prop.animationSpeed, prop.effects, prop.effect]);
+        let entry = this.entries.get(prop.id);
+        if (entry?.key !== key) {
+            if (entry) this.dispose(entry);
+            entry = { key, prop, tw };
+            this.entries.set(prop.id, entry);
+            this.load(entry);
+        }
+        entry.prop = prop;
+        return entry.sprite || null;
+    }
+
+    async load(entry) {
+        try {
+            const spec = Reactor3D.normalizeModelSpec(ModelPropsManager.specOf(entry.prop));
+            const template = await RREventPreviewModels.templateFor(this.manager.project(), spec, this.manager.mapEditor3D());
+            if (!template || this.entries.get(entry.prop.id) !== entry) return;
+            entry.object = RREventPreviewModels.instance(template, spec, entry.prop.direction);
+            entry.scene = new THREE.Scene();
+            entry.scene.add(entry.object);
+            entry.scene.add(new THREE.HemisphereLight(0xffffff, 0x445566, 1.1));
+            const sun = new THREE.DirectionalLight(0xffffff, 0.9);
+            sun.position.set(3, 6, 4); entry.scene.add(sun);
+            MapEditor3D.prototype.animateModel.call(this, entry.object, template, {
+                names: entry.prop.animations || (entry.prop.animation ? [entry.prop.animation] : []),
+                repeat: entry.prop.repeat, speed: entry.prop.animationSpeed
+            });
+            entry.driver = this.animatedModels.find(driver => driver.object === entry.object);
+            this.isolateLighting(entry.object);
+            const sharedGeometry = new Set();
+            template.traverse(node => { if (node.geometry) sharedGeometry.add(node.geometry); });
+            entry.ownedGeometry = new Set();
+            entry.object.traverse(node => {
+                if (node.geometry && !sharedGeometry.has(node.geometry)) entry.ownedGeometry.add(node.geometry);
+            });
+            const chosen = new Set(entry.prop.effects || (entry.prop.effect ? [entry.prop.effect] : []));
+            entry.effects = Reactor3D.readModelEffects(template.userData.reactorSidecar || {})
+                .filter(effect => effect.trigger === 'always' || chosen.has(effect.name));
+            entry.camera = new THREE.OrthographicCamera();
+            const frame = Reactor3D.frameModelSprite(entry.object, entry.tw, entry.camera);
+            entry.radius = frame.radius;
+            entry.size = frame.pixels;
+            entry.pixelsPerUnit = frame.pixels / (frame.radius * 2);
+            entry.bounds = Reactor3D.prepareFlatModelBounds(entry.object);
+            entry.sprite = new PIXI.Sprite(PIXI.Texture.EMPTY);
+            entry.sprite.anchor.set(0.5);
+            entry.sprite.__livePropPreview = true;
+            entry.media = new ModelPropEffects2D(this, entry, entry.effects);
+            entry.dirty = true;
+            this.manager.render();
+        } catch (error) {
+            console.warn('Could not build the live 2D prop preview:', error);
+        }
+    }
+
+    isolateLighting(object) {
+        // Imported materials normally read the runtime's shared map uniforms.
+        // A database/3D preview must not change the retained flat model's next
+        // frame. Flat ambient is applied once by the manager's sprite tint.
+        const uniforms = this._modelLighting || (this._modelLighting = {
+            rrLightCount: { value: 0 }, rrAmbient: { value: new Float32Array([1, 1, 1]) }
+        });
+        const materials = new Set();
+        object.traverse(node => [node.material].flat().filter(Boolean).forEach(material => materials.add(material)));
+        for (const material of materials) {
+            if (!material.__reactorLit) continue;
+            const earlier = material.onBeforeCompile, key = material.customProgramCacheKey;
+            material.onBeforeCompile = function(shader, renderer) {
+                earlier.call(this, shader, renderer);
+                Object.assign(shader.uniforms, uniforms);
+            };
+            material.customProgramCacheKey = function() { return key.call(this) + '|flat-preview-ambient'; };
+            material.needsUpdate = true;
+        }
+    }
+
+    ensureViewport() {
+        if (this.viewport) return this.viewport;
+        const pixi = this.app.renderer;
+        if (!pixi.gl || pixi.context.webGLVersion !== 2) return null;
+        // Only the context-independent target methods are used. Do not create
+        // the runtime singleton or replace its Graphics._app with the editor.
+        const viewport = Object.create(Reactor3D.Viewport.prototype);
+        viewport._pixi = pixi;
+        Reactor3D.clearUnpackState(pixi.gl);
+        viewport._renderer = new THREE.WebGLRenderer({ canvas: pixi.canvas, context: pixi.gl,
+            alpha: true, premultipliedAlpha: true });
+        viewport._renderer.setPixelRatio(1);
+        viewport._renderer.setClearColor(0, 0);
+        viewport._resetPixi();
+        this.viewport = viewport;
+        return viewport;
+    }
+
+    expand(entry) {
+        // Cached rigid/bone boxes, never a per-frame vertex scan.
+        const box = this._box || (this._box = new THREE.Box3());
+        const piece = this._piece || (this._piece = new THREE.Box3());
+        const matrix = this._matrix || (this._matrix = new THREE.Matrix4());
+        const skin = this._skin || (this._skin = new THREE.Matrix4());
+        entry.object.updateMatrixWorld(true);
+        box.makeEmpty();
+        for (const part of entry.bounds) {
+            if (part.bones) {
+                skin.multiplyMatrices(part.mesh.matrixWorld, part.mesh.bindMatrixInverse);
+                part.bones.forEach((bounds, i) => {
+                    if (bounds.isEmpty()) return;
+                    matrix.multiplyMatrices(skin, part.mesh.skeleton.bones[i].matrixWorld);
+                    box.union(piece.copy(bounds).applyMatrix4(matrix));
+                });
+            } else box.union(piece.copy(part.box).applyMatrix4(part.mesh.matrixWorld));
+        }
+        if (box.isEmpty()) return;
+        entry.casterBox = (entry.casterBox || new THREE.Box3()).copy(box);
+        const reach = Math.hypot(...['x', 'y', 'z'].map(axis => Math.max(Math.abs(box.min[axis]), Math.abs(box.max[axis]))));
+        if (reach <= entry.radius) return;
+        entry.radius = reach * 1.1;
+        entry.size = Math.min(4096, this.app.renderer.gl.getParameter(this.app.renderer.gl.MAX_TEXTURE_SIZE),
+            Math.ceil(entry.radius * 2 * entry.pixelsPerUnit));
+        const camera = entry.camera, r = entry.radius;
+        camera.left = camera.bottom = -r; camera.right = camera.top = r;
+        camera.position.normalize().multiplyScalar(r * 4 + 10); camera.far = r * 10 + 20;
+        camera.updateProjectionMatrix(); camera.updateMatrixWorld(true);
+        this.releaseTexture(entry);
+    }
+
+    paint(entry) {
+        const viewport = this.ensureViewport();
+        if (!viewport) return;
+        this.expand(entry);
+        // Keep at least one texture texel per device pixel, with 25% headroom
+        // and MSAA. Zooming out should not render invisible full-size detail.
+        const zoom = Math.abs(this.manager.container.worldTransform.a) || 1;
+        const density = Math.ceil(zoom * (this.app.renderer.resolution || 1) * 1.25 * 8) / 8;
+        const size = Math.max(8, Math.min(4096, this.app.renderer.gl.getParameter(this.app.renderer.gl.MAX_TEXTURE_SIZE),
+            Math.ceil(entry.radius * 2 * entry.tw * density)));
+        if (entry.size !== size) { this.releaseTexture(entry); entry.size = size; }
+        if (!entry.target) {
+            viewport.renderer().resetState();
+            Reactor3D.clearUnpackState(viewport.pixi().gl);
+            entry.target = viewport.createTarget(entry.size, entry.size, 1, { samples: 4 });
+            const gl = viewport.pixi().gl, handle = viewport.targetHandle(entry.target);
+            gl.bindTexture(gl.TEXTURE_2D, handle);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+            const source = new PIXI.TextureSource({ width: entry.size, height: entry.size,
+                alphaMode: 'premultiplied-alpha', scaleMode: 'linear', autoGarbageCollect: false });
+            Reactor3D.adoptGlTexture(viewport.pixi(), source, handle);
+            entry.texture = new PIXI.Texture({ source, rotate: PIXI.groupD8.MIRROR_VERTICAL });
+            entry.sprite.texture = entry.texture;
+        }
+        viewport.renderInto(entry.target, entry.scene, entry.camera);
+        entry.sprite.width = entry.sprite.height = entry.radius * 2 * entry.tw;
+        entry.dirty = false;
+        entry.paintedFrame = entry.driver?.previewFrame;
+        entry.draws = (entry.draws || 0) + 1;
+    }
+
+    suspend() { for (const entry of this.entries.values()) entry.media?.suspend(); }
+
+    updateEffectPlays() {} // The 3D animation clock is shared; lighting is projected below.
+
+    tick(now) {
+        const manager = this.manager;
+        if (!manager.currentMap || manager.container?.destroyed || this.app.stage.children.indexOf(manager.tilemapManager.container) < 0) {
+            this.clear(); return;
+        }
+        if (document.hidden || manager.mapEditor3D()?.isEnabled?.() || manager.mapEditor3D()?.suspended) {
+            this._lastModelTick = now;
+            this.suspend();
+            this.lights = [];
+            return;
+        }
+        if (this.revision !== RREventPreviewModels.revision) {
+            this.revision = RREventPreviewModels.revision;
+            this.clear();
+            manager.render();
+        }
+        // Model textures already present at 60 Hz. Higher-refresh displays
+        // need not resolve poses, media anchors and light lists three times.
+        const previewTick = Math.floor(now * 0.06);
+        if (this._previewTick === previewTick) return;
+        this._previewTick = previewTick;
+        MapEditor3D.prototype.animateModels.call(this, now);
+        const lights = [];
+        const point = this._point || (this._point = typeof THREE !== 'undefined' ? new THREE.Vector3() : null);
+        for (const entry of this.entries.values()) {
+            if (!entry.sprite) continue;
+            const sprite = entry.sprite;
+            const center = manager.container.toGlobal(sprite.position);
+            const half = (entry.radius * entry.tw + Math.abs(entry.prop.z || 0) * entry.tw) * Math.abs(manager.container.worldTransform.a);
+            const visible = center.x + half >= 0 && center.y + half >= 0 && center.x - half <= this.app.screen.width && center.y - half <= this.app.screen.height;
+            if (entry.media?.update(visible)) entry.dirty = true;
+            const decoded = entry.decoded || RREventPreviewModels.texturesDecoded(entry.object);
+            const density = Math.ceil(Math.abs(manager.container.worldTransform.a) * (this.app.renderer.resolution || 1) * 1.25 * 8) / 8;
+            if (entry.density !== density) { entry.density = density; entry.dirty = true; }
+            const moving = !!entry.driver && (!!entry.driver.action || entry.driver.rules.some(rule => ['always', 'idle'].includes(rule.trigger)));
+            if (entry.wasMoving && !moving) entry.dirty = true;
+            const paintTick = Math.floor(now * 0.06);
+            if (visible && entry.paintedTick !== paintTick && (entry.dirty || (moving && entry.paintedFrame !== entry.driver.previewFrame) || (entry.wasMoving && !moving) || !entry.decoded)) {
+                this.paint(entry); entry.paintedTick = paintTick;
+            }
+            entry.wasMoving = moving;
+            entry.decoded = decoded;
+            for (const effect of entry.effects) {
+                if (effect.type !== 'light' && !effect.light) continue;
+                const light = Reactor3D.effectLight(entry.object, effect, `prop:${entry.prop.id}:${effect.name}`);
+                if (!light) continue;
+                const animated = Reactor3D.animateLight(effect.light, now * 0.06, entry.prop.id, light.radius, light.intensity);
+                Reactor3D.effectAnchorWorld(entry.object, effect, point);
+                const shadowSource = { x: entry.prop.x + 0.5 + point.x, y: (entry.prop.z || 0) + point.y, z: entry.prop.y + 0.5 + point.z };
+                point.project(entry.camera);
+                lights.push({ ...light, sourcePropId: entry.prop.id, shadowSource, radius: animated.radius, intensity: animated.intensity, priorityRadius: animated.priorityRadius,
+                    x: (sprite.x + point.x * entry.radius * entry.tw) / entry.tw,
+                    y: (sprite.y - point.y * entry.radius * entry.tw) / entry.tw,
+                    height: 0, yaw: -light.yaw, animated: true });
+            }
+        }
+        this.shadows.update(lights.concat(this.manager.projectController?.lightingManager?.resolvedLights(now * 0.06) || []), now);
+        this.lights = lights;
+    }
+}
+if (typeof module !== 'undefined' && module.exports) module.exports = ModelPropsPreview2D;

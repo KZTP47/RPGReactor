@@ -153,7 +153,7 @@ class ScrollMapEditor {
                 });
                 btn.addEventListener('mouseenter', () => {
                     if (dir !== this.direction) {
-                        btn.style.backgroundColor = '#3d3d3d';
+                        btn.style.backgroundColor = 'var(--color-bg-hover)';
                     }
                 });
                 btn.addEventListener('mouseleave', () => {

@@ -3,10 +3,9 @@
  *
  * A toolbar mode with its own side panel: click the map to place point and
  * spot lights, drag them, pull their reach and aim handles, and tune ambient
- * darkness live - the 2D overlay composites exactly the way the runtime's
- * flat compositor does (one multiply sprite of ambient, additive falloff
- * sprites above it, the 3D pass's own pictures), and the 3D view runs the
- * real pooled light compositor, so what you place is what the game draws.
+ * darkness live. The 2D view uses the runtime's ambient tint and additive
+ * ground-plane light falloff, with all floor illumination below the props.
+ * The 3D view runs the real pooled light compositor.
  *
  * Data lives in the map sidecar through RRMapLights; placing a light is the
  * whole opt-in. Undo is whole-state snapshots, Ctrl+Z / Ctrl+Y while the
@@ -14,7 +13,7 @@
  */
 class LightingManager {
     /** Bumped with every Lighting change; shown at the panel's foot. */
-    static BUILD = 'r10 · 2026-09-04';
+    static BUILD = 'r14 · 2026-09-04';
 
     constructor(projectController) {
         this.projectController = projectController;
@@ -25,6 +24,7 @@ class LightingManager {
         this._listeners = [];
         this._overlay = null;
         this._glowSprites = [];
+        this._propGlowGroups = new Map();
         this._markers = null;
         this._panel = null;
         this._raf = null;
@@ -149,11 +149,11 @@ class LightingManager {
     _deactivate() {
         this.placing = null;
         this.drag = null;
-        this._stopTicking();
         this._unbindPointer();
         this._unbind3DPointer();
         document.removeEventListener('keydown', this._onKeyDown);
-        this._destroyOverlay();
+        this._overlay?.markers.clear();
+        if (this._ghost) this._ghost.visible = false;
         this._destroyPanel();
         this._clear3D();
         const mapEditor = window.reactor?.mapEditor;
@@ -377,6 +377,8 @@ class LightingManager {
                 radius *= light.pulse.min
                     + (light.pulse.max - light.pulse.min) * (0.5 - 0.5 * Math.cos(t * Math.PI * 2));
             }
+            const priorityRadius = radius;
+            const priorityIntensity = intensity;
             if (light.flicker) {
                 const seed = i * 13.7;
                 const jitter = Math.sin(frame * 0.31 + seed) * Math.sin(frame * 0.127 + seed * 1.7);
@@ -386,6 +388,7 @@ class LightingManager {
             out.push({
                 id: light.id, type: light.type, x, y, height: light.height,
                 radius, intensity, angle: light.angle, width: light.width, yaw: light.yaw, pitch: light.pitch,
+                priorityRadius, priorityIntensity,
                 colour: this._colourNumber(light.color), occlude: light.occlude,
                 shadow: light.shadow,
                 animated: !!(light.pulse || light.flicker),
@@ -413,23 +416,51 @@ class LightingManager {
 
     _lightTexture(kind) {
         if (typeof Reactor3D === 'undefined' || typeof PIXI === 'undefined') return null;
-        const key = kind === 'cone' ? '_editorConeLightPixi'
-            : kind === 'beam' ? '_editorBeamLightPixi' : '_editorRoundLightPixi';
-        if (!Reactor3D[key]) {
-            const canvas = kind === 'cone' ? Reactor3D.coneLightCanvas()
-                : kind === 'beam' ? (Reactor3D.beamLightCanvas ? Reactor3D.beamLightCanvas() : Reactor3D.coneLightCanvas())
-                    : Reactor3D.roundLightCanvas();
-            Reactor3D[key] = PIXI.Texture.from(canvas);
+        const textures = this._lightTextures || (this._lightTextures = new Map());
+        if (textures.has(kind)) return textures.get(kind);
+        const size = 1024, canvas = document.createElement('canvas');
+        canvas.width = canvas.height = size;
+        const context = canvas.getContext('2d'), image = context.createImageData(size, size);
+        for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+            const u = (x + 0.5) / size, v = (y + 0.5) / size;
+            const along = 1 - v;
+            let alpha;
+            if (kind === 'round') {
+                alpha = Math.pow(Math.max(0, 1 - Math.hypot(u * 2 - 1, v * 2 - 1)), 2);
+            } else {
+                const across = Math.abs(u * 2 - 1) / (kind === 'cone' ? Math.max(along, 1 / size) : 1);
+                const rim = across >= 1 ? 0 : Math.pow(0.5 * (1 + Math.cos(across * Math.PI)), 2);
+                // A continuous beam core avoids the old hard shoulder at 35%.
+                const core = kind === 'beam' ? Math.min(1, rim + 0.35 * Math.exp(-Math.pow(across / 0.3, 4))) : rim;
+                alpha = core * (kind === 'beam' ? Math.sqrt(v) : v * v);
+            }
+            // Stable sub-level dithering breaks quantization rings. This runs
+            // once per shape, never per light or animation frame.
+            let hash = Math.imul(x + 1, 374761393) ^ Math.imul(y + 1, 668265263);
+            hash = Math.imul(hash ^ (hash >>> 13), 1274126177);
+            const noise = ((hash ^ (hash >>> 16)) >>> 0) / 4294967296 - 0.5;
+            const at = (y * size + x) * 4;
+            image.data[at] = image.data[at + 1] = image.data[at + 2] = 255;
+            image.data[at + 3] = alpha > 0 ? Math.max(0, Math.min(255, Math.round(alpha * 255 + noise))) : 0;
         }
-        return Reactor3D[key];
+        context.putImageData(image, 0, 0);
+        const texture = PIXI.Texture.from(canvas);
+        // The editor's pixel-art default is nearest; light gradients need
+        // interpolation even while tiles and model art keep their own filter.
+        texture.source.scaleMode = 'linear';
+        textures.set(kind, texture);
+        return texture;
     }
 
     _buildOverlay() {
         const container = this.tilemapManager?.container;
         const map = this.map();
         if (!container || !map || typeof PIXI === 'undefined') return;
+        if (this._overlay?.root.parent === container) return;
+        this._destroyOverlay();
         const overlay = new PIXI.Container();
         overlay.label = 'lighting-overlay';
+        overlay.eventMode = 'none';
         const darkness = new PIXI.Sprite(PIXI.Texture.WHITE);
         darkness.blendMode = 'multiply';
         const glow = new PIXI.Container();
@@ -444,68 +475,110 @@ class LightingManager {
 
     _destroyOverlay() {
         if (!this._overlay) return;
+        for (const sprite of this._glowSprites) {
+            if (!sprite.destroyed) sprite.destroy({ texture: false, textureSource: false });
+        }
+        for (const group of this._propGlowGroups.values()) {
+            if (!group.destroyed) group.destroy({ children: true, texture: false, textureSource: false });
+        }
+        this._propGlowGroups.clear();
+        const darkness = this._overlay.darkness;
+        if (!darkness.destroyed && darkness.parent !== this._overlay.root) darkness.destroy();
         const root = this._overlay.root;
         if (root.parent) root.parent.removeChild(root);
-        root.destroy({ children: true, texture: false, textureSource: false });
+        if (!root.destroyed) root.destroy({ children: true, texture: false, textureSource: false });
         this._overlay = null;
         this._glowSprites = [];
         this._ghost = null;
+    }
+
+    /** Carried glows sit immediately behind their emitter in the flat depth
+     * order. A foreground prop then covers both, using ordinary alpha drawing. */
+    _glowParent(light, state, props) {
+        const source = props?._sprites.get(light.sourcePropId) || (light.shadow ? props?.container : null);
+        const groupId = light.sourcePropId ?? '$floor';
+        if (!source?.parent) return state.glow;
+        let group = this._propGlowGroups.get(groupId);
+        if (!group || group.destroyed) {
+            group = new PIXI.Container();
+            group.__livePropLight = true;
+            group.eventMode = 'none';
+            this._propGlowGroups.set(groupId, group);
+        }
+        const parent = source.parent;
+        const index = parent.getChildIndex(source);
+        if (group.parent !== parent) parent.addChildAt(group, index);
+        else if (parent.getChildIndex(group) !== index - 1) {
+            parent.setChildIndex(group, index - (parent.getChildIndex(group) < index ? 1 : 0));
+        }
+        return group;
     }
 
     /** Draw the darkness, the lights and the markers for this frame. */
     render(frame = this._frame) {
         const state = this._overlay;
         const map = this.map();
-        if (!state || !map) return;
+        if (!state || !map || typeof Reactor3D === 'undefined') return;
         const tw = this.tileSize();
 
         const ambient = this.ambient();
-        const level = Math.max(0, Math.min(1, ambient.ambient));
-        const colour = this._colourNumber(ambient.ambientColour);
-        const channel = shift =>
-            Math.round(Math.max(0, Math.min(255, ((colour >> shift) & 0xff) * level)));
-        state.darkness.tint = (channel(16) << 16) | (channel(8) << 8) | channel(0);
+        state.darkness.tint = Reactor3D.flatAmbientTint({
+            intensity: ambient.ambient, colour: this._colourNumber(ambient.ambientColour)
+        });
         state.darkness.width = map.width * tw;
         state.darkness.height = map.height * tw;
-
-        const lights = this.resolvedLights(frame);
+        const props = this.projectController?.modelPropsManager;
+        const lights = this.resolvedLights(frame).concat(props?.preview2D?.lights || []);
+        const enabled = ambient.enabled !== false && (this.active || lights.length > 0 || !!map.reactor3d?.lighting);
+        state.darkness.visible = state.glow.visible = !!enabled;
+        // Ambient must stay below the glows. Tint the retained model sprites
+        // by the same factor, so moving the darkness below props neither
+        // brightens the models nor dims a light a second time.
+        const propLayer = props?.container;
+        const mapLayer = propLayer?.parent;
+        if (mapLayer) {
+            const floor = this._propGlowGroups.get('$floor');
+            const index = mapLayer.getChildIndex(floor?.parent === mapLayer ? floor : propLayer);
+            if (state.darkness.parent !== mapLayer) mapLayer.addChildAt(state.darkness, index);
+            else if (mapLayer.getChildIndex(state.darkness) !== index - 1) {
+                mapLayer.setChildIndex(state.darkness, index - (mapLayer.getChildIndex(state.darkness) < index ? 1 : 0));
+            }
+            props.setAmbientTint(enabled ? state.darkness.tint : 0xffffff);
+        }
+        for (const [id, group] of this._propGlowGroups) {
+            if (id !== '$floor' && !props?._sprites.has(id)) {
+                if (!group.destroyed) group.destroy({ children: false });
+                this._propGlowGroups.delete(id);
+            }
+        }
+        // Props/event layers may finish loading after the overlay was built.
+        const parent = state.root.parent;
+        if (parent && parent.children[parent.children.length - 1] !== state.root) parent.setChildIndex(state.root, parent.children.length - 1);
         let used = 0;
         for (const light of lights) {
+            const bounds = FlatLightField2D.bounds(light, map);
+            if (!bounds) continue;
+            const shadow = light.shadow && props?.preview2D?.shadows?.states.get(light.id);
             let sprite = this._glowSprites[used];
-            if (!sprite) {
-                sprite = new PIXI.Sprite();
+            if (!sprite || sprite.destroyed) {
+                sprite = new FlatShadowLight2D(PIXI.Texture.WHITE);
                 sprite.blendMode = 'add';
-                state.glow.addChild(sprite);
-                this._glowSprites.push(sprite);
+                this._glowSprites[used] = sprite;
             }
-            const spot = light.type === 'spot';
-            const beam = light.type === 'beam';
-            sprite.texture = this._lightTexture(beam ? 'beam' : spot ? 'cone' : 'round');
-            sprite.visible = true;
-            const reach = Math.max(1, light.radius * tw);
-            if (spot || beam) {
-                sprite.anchor.set(0.5, 1);
-                const spread = (light.angle * Math.PI) / 360;
-                sprite.width = beam
-                    ? Math.max(2, (light.width || 0.08) * tw)
-                    : Math.max(2, 2 * Math.tan(spread) * reach);
-                sprite.height = Math.max(2, reach);
-                // Schema yaw is clockwise from south on screen; the texture
-                // points up, so south is a half turn.
-                sprite.rotation = Math.PI + (light.yaw * Math.PI) / 180;
-            } else {
-                sprite.anchor.set(0.5, 0.5);
-                sprite.rotation = 0;
-                sprite.width = sprite.height = Math.max(2, reach * 2);
-            }
-            sprite.position.set(light.x * tw, (light.y - light.height) * tw);
+            // All floor illumination shares one depth plane. Interleaving
+            // whole light fans between props made overlaps depend on sort order.
+            const glowParent = this._glowParent({ shadow: true }, state, props);
+            if (sprite.parent !== glowParent) glowParent.addChild(sprite);
+            sprite.visible = !!enabled;
             sprite.tint = light.colour;
-            sprite.alpha = Math.max(0, Math.min(1, light.intensity));
+            sprite.alpha = Reactor3D.flatLightOpacity(light);
+            sprite.syncLight(light, bounds, shadow, tw);
             used++;
         }
         for (let i = used; i < this._glowSprites.length; i++) this._glowSprites[i].visible = false;
 
-        this._renderMarkers(state.markers, tw);
+        state.markers.clear();
+        if (this.active) this._renderMarkers(state.markers, tw);
     }
 
     /** Handles: a dot per light, reach and aim handles on the selection. */
@@ -1048,10 +1121,26 @@ class LightingManager {
     _startTicking() {
         if (this._raf) return;
         const tick = () => {
-            if (!this.active) return;
             this._raf = requestAnimationFrame(tick);
+            if (document.hidden || this.mapEditor3D()?.suspended) return;
+            if (this.active && this._surface3D() !== this._bound3D) {
+                this._unbind3DPointer();
+                this._bind3DPointer();
+                this._sync3D();
+            }
+            if (this.mapEditor3D()?.isEnabled?.()) {
+                if (this._overlay) this._overlay.root.visible = false;
+                return;
+            }
             this._frame++;
-            if (this.map() !== this._boundMap) {
+            if (typeof Reactor3D === 'undefined') {
+                const sidecar = this.map()?.reactor3d;
+                if (!this.active && !sidecar?.lighting && !sidecar?.lights?.length && !sidecar?.props?.length) return;
+                if (!this._previewLibraries) this._previewLibraries = this.mapEditor3D()?.ensureLibraries?.()
+                    .catch(error => console.warn('Could not load lighting preview:', error));
+                return;
+            }
+            if (this.map() !== this._boundMap || this._overlay?.root.parent !== this.tilemapManager?.container) {
                 this._boundMap = this.map();
                 this.selectedId = null;
                 this._undo = [];
@@ -1061,15 +1150,11 @@ class LightingManager {
                 this._syncPanel();
                 this._syncDiskNotice();
             }
-            // The 3D view toggles and rebuilds its canvas underneath the
-            // open panel; follow it so placement clicks always land.
-            if (this._surface3D() !== this._bound3D) {
-                this._unbind3DPointer();
-                this._bind3DPointer();
-                this._sync3D();
-            }
-            const animated = this.resolvedLights(this._frame).some(light => light.animated);
-            if (animated || this.drag) this.render(this._frame);
+            if (this._overlay) this._overlay.root.visible = true;
+            const modelLights = this.projectController?.modelPropsManager?.preview2D?.lights || [];
+            const animated = modelLights.length > 0 || this.resolvedLights(this._frame).some(light => light.animated);
+            // Static maps need only a cheap periodic refresh for sidecar edits.
+            if (animated || this.drag || this._frame % 6 === 1) this.render(this._frame);
         };
         this._raf = requestAnimationFrame(tick);
     }
@@ -1103,7 +1188,7 @@ class LightingManager {
             Reactor3D.setAmbient(null);
             return;
         }
-        if (!this.active) this._frame++;
+        this._frame++;
         Reactor3D.setAmbient({
             intensity: ambient.ambient,
             colour: this._colourNumber(ambient.ambientColour)
@@ -1111,6 +1196,7 @@ class LightingManager {
         Reactor3D.setLights(this.resolvedLights(this._frame).map(light => ({
             id: light.id, type: light.type, x: light.x, y: light.y, height: light.height,
             radius: light.radius, colour: light.colour, intensity: light.intensity,
+            priorityRadius: light.priorityRadius, priorityIntensity: light.priorityIntensity,
             angle: light.angle, width: light.width, yaw: -light.yaw, pitch: light.pitch, occlude: light.occlude,
             shadow: light.shadow
         })).concat(modelLights));
@@ -1344,6 +1430,25 @@ class LightingManager {
      * rebuilding the panel; letting go commits and rebuilds, so the number
      * shows what the store actually kept.
      */
+    /**
+     * The rail's accent fill ends under the thumb: a CSS variable the track
+     * gradient reads, kept current from the value. (Chromium has no
+     * built-in progress fill for a styled range.)
+     */
+    _trackFill(range) {
+        const paint = () => {
+            const min = Number(range.min) || 0;
+            const max = Number(range.max);
+            const span = Number.isFinite(max) && max > min ? max - min : 1;
+            const pct = Math.max(0, Math.min(100, ((Number(range.value) - min) / span) * 100));
+            range.style.setProperty('--rr-fill', pct.toFixed(1) + '%');
+        };
+        paint();
+        range.addEventListener('input', paint);
+        range.__rrPaint = paint;
+        return range;
+    }
+
     _slider(key, value, min, max, step, options) {
         const settings = options || {};
         const wrap = this._el('div', 'lit-slider');
@@ -1353,6 +1458,7 @@ class LightingManager {
         range.max = String(max);
         range.step = String(step);
         range.value = String(value);
+        this._trackFill(range);
         const number = this._el('input', 'lit-input');
         number.type = 'number';
         number.setAttribute('data-no-stepper', '');
@@ -1433,6 +1539,7 @@ class LightingManager {
         level.min = '0';
         level.max = '100';
         level.step = '1';
+        this._trackFill(level);
         const readout = this._el('span', '', Math.round(ambient.ambient * 100) + '%');
         const levelWrap = this._el('div');
         levelWrap.style.cssText = 'display:flex;gap:6px;align-items:center;';

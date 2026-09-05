@@ -99,7 +99,7 @@ test('battlers render into an adopted target on the shared context and release i
     const paint = r3d.slice(r3d.indexOf('Reactor3D.paintBattlerFrame = function'), r3d.indexOf('Reactor3D.releaseBattlerState = function'));
     assert.match(paint, /if \(this\.sharedContextAvailable\(\)\) \{\s*const viewport = this\.acquireViewport\(\);\s*if \(viewport && viewport\.isShared\(\) && this\._paintBattlerShared\(viewport, state, sprite\)\) return;/);
     assert.match(paint, /context\.drawImage\(renderer\.domElement/, 'the copy path survives as the fallback');
-    assert.match(paint, /state\.target = viewport\.createTarget\(pixels, pixels, scale\);/);
+    assert.match(paint, /state\.target = viewport\.createTarget\(pixels, pixels, scale, state\.flat \? \{ samples: 4 \} : undefined\);/);
     assert.match(paint, /this\.adoptGlTexture\(viewport\.pixi\(\), source, handle\);/);
     assert.match(paint, /texture\.rotate = PIXI\.groupD8\.MIRROR_VERTICAL;/);
     assert.match(paint, /viewport\.renderInto\(state\.target, state\.scene, state\.camera\);/);
@@ -153,7 +153,7 @@ test('the passes render at an adaptive scale: drop fast when the game cannot hol
     const viewport = r3d.slice(r3d.indexOf('Reactor3D.Viewport.prototype._trackFrame'), r3d.indexOf('Reactor3D.Viewport.prototype._disposeTargets'));
     assert.match(viewport, /if \(next < this\._scale \|\| \(next > this\._scale && stats\.since >= 300\)\)/, 'climbing back needs five calm seconds');
     assert.match(r3d, /Reactor3D\.Viewport\.prototype\.render = function\(slot\) \{[\s\S]*?this\._trackFrame\(\);\s*this\.renderInto/);
-    assert.match(r3d, /const pixels = Math\.max\(16, Math\.round\(state\.size \* scale\)\);[\s\S]*?state\.target = viewport\.createTarget\(pixels, pixels, scale\);/, 'battler targets follow the scale');
+    assert.match(r3d, /const pixels = Math\.max\(16, Math\.round\(state\.size \* scale\)\);[\s\S]*?state\.target = viewport\.createTarget\(pixels, pixels, scale, state\.flat \? \{ samples: 4 \} : undefined\);/, 'battler targets follow the scale');
     const warm = r3d.slice(r3d.indexOf('Reactor3D.warmLoadedTemplates = function'), r3d.indexOf('Templates live outside any scene'));
     assert.ok(warm.indexOf('if (!pending.length) return;') < warm.indexOf('new THREE.Scene()'), 'the per-frame warm scan allocates nothing on the steady state');
 });

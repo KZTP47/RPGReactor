@@ -109,10 +109,16 @@ class QuestCommandEditor {
         };
         fillIndexes();
         questSelect.addEventListener('change', fillIndexes);
+        const okButton = modal.querySelector('.qc-ok');
+        const updateAvailability = () => {
+            okButton.disabled = name !== 'OpenQuestLog' && !questSelect.value;
+        };
+        questSelect.addEventListener('change', updateAvailability);
+        updateAvailability();
 
         const close = () => { if (modal.parentNode) modal.parentNode.removeChild(modal); };
         modal.querySelectorAll('.qc-cancel').forEach(button => button.addEventListener('click', () => { close(); callback(null); }));
-        modal.querySelector('.qc-ok').addEventListener('click', () => {
+        okButton.addEventListener('click', () => {
             const questId = questSelect.value;
             if (name !== 'OpenQuestLog' && !questId) return;
             const built = {};

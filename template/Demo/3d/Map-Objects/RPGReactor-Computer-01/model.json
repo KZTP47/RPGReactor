@@ -33,6 +33,50 @@
       },
       "type": "video",
       "trigger": "always"
+    },
+    {
+      "name": "Gentle Screen Glow",
+      "animation": 0,
+      "anchor": {
+        "part": "part-1",
+        "offset": [
+          -0.046,
+          1.654,
+          -0.156
+        ]
+      },
+      "scale": 1,
+      "loop": false,
+      "rotate": [
+        0,
+        0,
+        0
+      ],
+      "video": {
+        "file": "",
+        "width": 0.3,
+        "height": 0.2,
+        "loop": true,
+        "audio": false,
+        "volume": 100
+      },
+      "type": "light",
+      "light": {
+        "type": "spot",
+        "color": "#3ddc84",
+        "radius": 13,
+        "intensity": 1.25,
+        "angle": 70,
+        "width": 0.08,
+        "yaw": -2,
+        "pitch": -13,
+        "flicker": 0,
+        "duration": 0,
+        "occlude": true,
+        "shadow": true,
+        "body": true
+      },
+      "trigger": "always"
     }
   ]
 }

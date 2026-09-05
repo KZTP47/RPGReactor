@@ -238,6 +238,20 @@
 
     const MARKERS = TEMPLATES.humanoid.markers;
 
+    // Semantic points can be fitted to imported rigs without rebinding skin.
+    const FACE_MARKERS = [
+        { key: 'eyes', label: 'Eyes / camera' },
+        { key: 'mouth', label: 'Mouth' },
+        { key: 'upperLip', label: 'Upper lip' },
+        { key: 'lowerLip', label: 'Lower lip' }
+    ];
+    function defaultFaceMarkers(size) {
+        const h = Math.max(0.0001, Number(size && size.y) || 1);
+        const z = (Number(size && size.z) || 0) * 0.45;
+        return { eyes: [0, h * 0.92, z], mouth: [0, h * 0.87, z],
+            upperLip: [0, h * 0.878, z], lowerLip: [0, h * 0.862, z] };
+    }
+
     function distanceSqToSegment(px, py, pz, a, b) {
         const abx = b[0] - a[0], aby = b[1] - a[1], abz = b[2] - a[2];
         const apx = px - a[0], apy = py - a[1], apz = pz - a[2];
@@ -546,6 +560,8 @@
 
     const api = {
         MARKERS,
+        FACE_MARKERS,
+        defaultFaceMarkers,
         TEMPLATES,
         templates,
         markersFor,

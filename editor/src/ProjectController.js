@@ -433,6 +433,10 @@ class ProjectController {
 
         this.videoSurfacePreviewManager?.beforeMapChange?.();
         if (typeof this.disableMap3DView === 'function') await this.disableMap3DView();
+        this.modelPropsManager?.preview2D?.destroy();
+        this.lightingManager?.setActive(false);
+        this.lightingManager?._stopTicking();
+        this.lightingManager?._destroyOverlay();
         this.releaseProjectLock();
         if (this.tilemapManager) this.tilemapManager.destroy();
         this.tilemapManager = null;
@@ -2028,7 +2032,7 @@ class ProjectController {
             const option = document.createElement('option');
             option.value = parallaxValue;
             option.textContent = `${parallaxValue} ${this._tt('(missing)')}`;
-            option.style.color = '#ff6666';
+            option.style.color = 'var(--color-danger-bright)';
             parallaxSelect.appendChild(option);
             parallaxSelect.value = parallaxValue;
         }
@@ -2452,7 +2456,7 @@ class ProjectController {
             const option = document.createElement('option');
             option.value = value;
             option.textContent = `${value} ${this._tt('(missing)')}`;
-            option.style.color = '#ff6666';
+            option.style.color = 'var(--color-danger-bright)';
             select.appendChild(option);
             select.value = value;
         }
@@ -2582,7 +2586,7 @@ class ProjectController {
         // Delete button
         const deleteBtn = document.createElement('button');
         deleteBtn.textContent = '×';
-        deleteBtn.style.cssText = 'padding: 2px 6px; background-color: #c72e2e; border: none; color: var(--color-text-strong); border-radius: 3px; font-size: 14px; cursor: pointer; font-weight: bold; line-height: 1;';
+        deleteBtn.style.cssText = 'padding: 2px 6px; background-color: var(--color-danger); border: none; color: var(--color-text-strong); border-radius: 3px; font-size: 14px; cursor: pointer; font-weight: bold; line-height: 1;';
         deleteBtn.addEventListener('click', () => {
             row.remove();
         });

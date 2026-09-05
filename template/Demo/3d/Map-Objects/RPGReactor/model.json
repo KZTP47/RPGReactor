@@ -28,6 +28,49 @@
         "audio": false,
         "volume": 100
       }
+    },
+    {
+      "name": "effect",
+      "animation": 0,
+      "anchor": {
+        "part": "",
+        "offset": [
+          0.025,
+          0.888,
+          0.012
+        ]
+      },
+      "scale": 1,
+      "loop": false,
+      "rotate": [
+        0,
+        0,
+        0
+      ],
+      "video": {
+        "file": "",
+        "width": 0.3,
+        "height": 0.2,
+        "loop": true,
+        "audio": false,
+        "volume": 100
+      },
+      "type": "light",
+      "light": {
+        "type": "point",
+        "color": "#0087ee",
+        "radius": 3,
+        "intensity": 1,
+        "angle": 70,
+        "width": 0.08,
+        "yaw": 0,
+        "pitch": 0,
+        "flicker": 0,
+        "duration": 0,
+        "occlude": true,
+        "shadow": false,
+        "body": true
+      }
     }
   ],
   "pivots": {

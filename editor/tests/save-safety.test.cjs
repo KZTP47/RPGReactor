@@ -626,3 +626,77 @@ test('map deletion reports metadata persistence failures instead of success', as
         fs.rmSync(tempRoot, { recursive: true, force: true });
     }
 });
+
+for (const button of ['ok', 'apply']) for (const useCallback of [true, false]) {
+    test(`database ${button} reports rejected ${useCallback ? 'project' : 'database'} saves and retains edits for retry`, async () => {
+        const buttons = Object.fromEntries(['close', 'ok', 'cancel', 'apply'].map(name => [`database-${name}-btn`, { style: {} }]));
+        const alerts = [], statuses = [], locks = [];
+        const DatabaseEditorUI = loadBrowserClass('DatabaseEditorUI.js', 'DatabaseEditorUI', {
+            window: {}, document: { getElementById: id => buttons[id] }, alert: text => alerts.push(text)
+        });
+        const ui = Object.create(DatabaseEditorUI.prototype);
+        const reject = async () => { throw new Error('disk unavailable'); };
+        Object.assign(ui, {
+            currentProject: { path: '/project' }, callbacks: useCallback ? { saveProject: reject } : {},
+            databaseManager: { data: { actors: [null, { id: 1, name: 'Unsaved edit' }] }, saveAllData: reject },
+            _dataSnapshot: '{}', closeDatabaseViewer() { throw new Error('Must remain open'); },
+            updateStatus: value => statuses.push(value),
+            setDatabaseSaveInFlight(value) { this._databaseSaveInFlight = value; locks.push(value); }
+        });
+        ui.setupDatabaseControls();
+        await buttons[`database-${button}-btn`].onclick();
+        assert.deepEqual(alerts, ['One or more database files could not be saved.']);
+        assert.deepEqual(locks, [true, false]);
+        assert.deepEqual(statuses, []);
+        assert.equal(ui._dataSnapshot, JSON.stringify(ui.databaseManager.data));
+        assert.equal(ui.databaseManager.data.actors[1].name, 'Unsaved edit');
+    });
+}
+
+for (const sidecar of ['{ broken', 'null', '[]']) {
+    test(`model optimization refuses invalid settings before modifying model bytes: ${sidecar}`, async t => {
+        const project = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-optimize-safety-'));
+        t.after(() => fs.rmSync(project, { recursive: true, force: true }));
+        const model = path.join(project, 'model.glb'), settings = path.join(project, 'model.json');
+        fs.writeFileSync(model, 'original model bytes'); fs.writeFileSync(settings, sidecar);
+        let optimizations = 0;
+        const status = { textContent: '' };
+        const Editor = loadBrowserClass('database/Database3DEditor.js', 'Database3DEditor', {
+            window: { RRGlbOptimizer: { analyze: () => ({}), optimize() { optimizations++; } } }
+        });
+        const editor = Object.create(Editor.prototype);
+        Object.assign(editor, {
+            selectedName: 'model', listModels: () => [{ name: 'model', ext: '.glb' }],
+            sourcePath: () => model, rulesPath: () => settings, _t: text => text,
+            _detail: { querySelector: () => status }, projectController: { uiManager: { showModelOptimizeDialog: async () => 'balanced' } }
+        });
+        await editor.optimizeSelectedModel();
+        assert.equal(optimizations, 0);
+        assert.match(status.textContent, /Could not optimize this model/);
+        assert.equal(fs.readFileSync(model, 'utf8'), 'original model bytes');
+        assert.equal(fs.readFileSync(settings, 'utf8'), sidecar);
+        assert.ok(!fs.existsSync(model + '.orig'));
+    });
+}
+
+test('model animation and effect saves report corrupt settings and preserve the retry draft', t => {
+    const project = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-model-save-'));
+    t.after(() => fs.rmSync(project, { recursive: true, force: true }));
+    const file = path.join(project, 'model.json');fs.writeFileSync(file, '{ broken');
+    const alerts = [], status = { textContent: '' };
+    const Editor = loadBrowserClass('database/Database3DEditor.js', 'Database3DEditor', {
+        window: {}, alert: value => alerts.push(value)
+    });
+    const editor = Object.create(Editor.prototype);
+    Object.assign(editor, {
+        rulesPath: () => file, rawAnimations: [{ name: 'Draft' }], rawEffects: [],
+        _detail: { querySelector: () => status },
+        _t: (text, params) => text.replace('{error}', params?.error || ''),
+        rebuildPlayback() { throw new Error('Must not announce a successful save'); }
+    });
+    assert.throws(() => editor.saveRules(), /JSON/);
+    assert.equal(alerts.length, 1);assert.match(alerts[0], /Save failed:/);
+    assert.equal(status.textContent, alerts[0]);
+    assert.equal(fs.readFileSync(file, 'utf8'), '{ broken');
+    assert.equal(editor.rawAnimations[0].name, 'Draft');
+});

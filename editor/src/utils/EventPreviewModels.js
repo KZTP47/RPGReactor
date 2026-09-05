@@ -9,6 +9,7 @@
 (function(root) {
     const templates = new Map();
     const thumbnails = new Map();
+    let revision = 0;
     let thumbRenderer = null;
     let thumbScene = null;
     let thumbCamera = null;
@@ -28,7 +29,7 @@
     /** The parsed model, or null when the file is missing or unreadable. */
     async function templateFor(project, spec, mapEditor3D) {
         if (!project?.path || !spec?.name || typeof require !== 'function') return null;
-        const key = keyFor(spec);
+        const key = `${project.path}|${keyFor(spec)}|${spec.texture || ""}`;
         if (templates.has(key)) return templates.get(key);
         const pending = (async () => {
             if (!await ensureLibraries(mapEditor3D)) return null;
@@ -80,7 +81,7 @@
         })();
         templates.set(key, pending);
         const template = await pending;
-        templates.set(key, template);
+        if (templates.get(key) === pending) templates.set(key, template);
         return template;
     }
 
@@ -122,7 +123,9 @@
         for (const texture of textures) {
             const image = texture && texture.image;
             if (!image) return false;
-            if (typeof image.complete === 'boolean') {
+            if (typeof image.videoWidth === 'number') {
+                if (!(image.videoWidth > 0) || image.readyState < 2) return false;
+            } else if (typeof image.complete === 'boolean') {
                 if (!image.complete || !(image.naturalWidth > 0)) return false;
             } else if (!(image.width > 0)) {
                 return false;
@@ -145,7 +148,7 @@
      * Resolves to { url, size, anchorX, anchorY } or null.
      */
     async function thumbnail(project, spec, mapEditor3D, pixels, direction) {
-        const key = `${keyFor(spec)}@${pixels}:${direction || 2}`;
+        const key = `${project?.path}|${JSON.stringify(spec)}@${pixels}:${direction || 2}`;
         if (thumbnails.has(key)) return thumbnails.get(key);
         const pending = (async () => {
             const template = await templateFor(project, spec, mapEditor3D);
@@ -188,11 +191,12 @@
         })();
         thumbnails.set(key, pending);
         const url = await pending;
-        thumbnails.set(key, url);
+        if (thumbnails.get(key) === pending) thumbnails.set(key, url);
         return url;
     }
 
     function clear() {
+        revision++;
         templates.clear();
         thumbnails.clear();
     }
@@ -223,7 +227,7 @@
         }
     }
 
-    const api = { templateFor, instance, animate, thumbnail, texturesDecoded, clear };
+    const api = { templateFor, instance, animate, thumbnail, texturesDecoded, clear, get revision() { return revision; } };
     root.RREventPreviewModels = api;
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof globalThis !== 'undefined' ? globalThis : window);

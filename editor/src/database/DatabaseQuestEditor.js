@@ -455,6 +455,7 @@ class DatabaseQuestEditor {
         ok.addEventListener('click', confirm);
         document.addEventListener('keydown', onKey, true);
         document.body.appendChild(overlay);
+        this.commonUI?.databaseEditor?.registerDetailModal(overlay);
         const first = overlay.querySelector('input[name="quest-import-source"]:checked') || ok;
         if (first && first.focus) first.focus();
         return overlay;

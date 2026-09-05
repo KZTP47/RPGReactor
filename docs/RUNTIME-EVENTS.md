@@ -1,7 +1,7 @@
 # Runtime events: `ReactorEvents`
 
-A read-only, synchronous notification feed that the runtime emits into at fixed
-points of a battle, so that a plugin which only needs to *observe* combat can
+The runtime emits synchronous notifications at fixed points of a battle. This
+feed is intended for read-only observers, so a plugin that tracks combat can
 subscribe to it instead of wrapping prototype methods it never meant to change.
 
 Defined in `runtime/reactor_core.js`, which loads before every other runtime
@@ -48,9 +48,11 @@ method.
   a plugin already installs on an emitting method runs exactly as it did; the
   emit is one extra statement inside the engine's own body. The MZ plugin API
   is unchanged.
-- **Read-only.** A listener's return value is ignored. The feed cannot alter an
-  outcome — modifying a value in flight is still what the prototype chain is
-  for.
+- **Observation contract.** Listener return values are ignored; this is not an
+  outcome-replacement API. Payloads and referenced battlers/actions are ordinary
+  mutable objects, not frozen copies. Listeners must treat them as read-only;
+  mutation can affect later listeners or game state. Snapshot dispatch copies
+  the listener list, not the payload.
 - **Synchronous, in subscription order.** `emit` returns after the last
   listener returns. Listeners run in the order they subscribed.
 - **Isolated.** A listener that throws is reported with `console.error` and
@@ -355,3 +357,14 @@ number — and it never wanted to.
   nothing to re-arm on New Game or load.
 - **`emit` is public and unguarded.** A plugin can emit an engine event name
   itself. Don't — prefix your own.
+
+
+## Model speech and playback speed
+
+Runtime `20260904.17` adds `RPGReactor` plugin commands `SpeakModel3D` and
+`SetModelAnimationSpeed` (code 357). Speech accepts `target`, `operation`
+(`speak`/`stop`), `audio` (relative to audio/se), `speaker`, `text`, `volume`,
+`pitch`, `pan`, and `wait`. Speed accepts `target` and `speed` (1–1000 percent).
+Target 0 is this event, -1 the player, -2 the first follower, and positive
+values event IDs; map props use `Reactor3D.PROP_EVENT_BASE + prop.id`.
+See [the authoring guide](3D-FACE-AND-SPEECH.md) for behavior and limits.

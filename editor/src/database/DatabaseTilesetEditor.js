@@ -354,6 +354,14 @@ class DatabaseTilesetEditor {
 
     initializeCompactUI(container, tileset) {
         const tt = text => window.I18n ? window.I18n.tText(text) : text;
+        // Decoded sheets and tile dimensions belong to the active project.
+        const projectPath = this.getProjectPath();
+        if (this._cacheProjectPath !== projectPath) {
+            this.imageCache.clear();
+            this._sheetImages = new Map();
+            this._cacheProjectPath = projectPath;
+        }
+        this.tileSize = this.readTileSize();
         // Load the full tilesets list from file
         this.loadTilesets();
 
@@ -498,25 +506,23 @@ class DatabaseTilesetEditor {
             </div>
         `;
 
-        // Wait for DOM to be ready, then initialize
-        setTimeout(() => {
-            // Set up event listeners for the compact UI
-            this.setupCompactEventListeners();
+        // The detail DOM is already mounted; bind before another record can open.
+        // Set up event listeners for the compact UI
+        this.setupCompactEventListeners();
 
-            // The key and the preview belong to whatever mode is already
-            // selected, so they are drawn on open rather than on first click.
-            this.refreshFlagKey();
-            this.refreshTile3DPreview();
+        // The key and the preview belong to whatever mode is already
+        // selected, so they are drawn on open rather than on first click.
+        this.refreshFlagKey();
+        this.refreshTile3DPreview();
 
-            // Load layer list thumbnails
-            this.loadLayerListThumbnails();
+        // Load layer list thumbnails
+        this.loadLayerListThumbnails();
 
-            // Set up layer list click/double-click handlers (only once)
-            this.setupLayerListHandlers();
+        // Set up layer list click/double-click handlers (only once)
+        this.setupLayerListHandlers();
 
-            // Load initial tab (A by default)
-            this.switchTab('A');
-        }, 0);
+        // Load initial tab (A by default)
+        this.switchTab('A');
     }
 
     // Create a compact layer item for the left sidebar
@@ -852,6 +858,7 @@ class DatabaseTilesetEditor {
         document.addEventListener('keydown', onKeyDown);
 
         document.body.appendChild(overlay);
+        this.commonUI?.databaseEditor?.registerDetailModal(overlay);
     }
 
     // Browse for external tileset file (copies to project)
@@ -936,6 +943,10 @@ class DatabaseTilesetEditor {
     renderTabPreview(tab) {
         const tt = text => window.I18n ? window.I18n.tText(text) : text;
         const container = document.getElementById('compact-tileset-canvas-container');
+        if (!container) return;
+        const generation = this._canvasLoadGeneration = (this._canvasLoadGeneration || 0) + 1;
+        const detailCurrent = this.parentEditor?.captureDetailContext?.() || (() => true);
+        const isCurrent = () => generation === this._canvasLoadGeneration && detailCurrent() && container.isConnected;
         const layerIndices = this.getLayerIndicesForTab(tab);
 
         // Both render paths below rebuild these; clearing here keeps a canvas
@@ -1005,6 +1016,7 @@ class DatabaseTilesetEditor {
         images.forEach(({ index, fileName, imagePath }) => {
             const img = new Image();
             img.onload = () => {
+                if (!isCurrent()) return;
                 const isSplitSheet = RRTilesetSheets.isNormalSheetIndex(index);
 
                 // Create canvas for this layer
@@ -1094,6 +1106,7 @@ class DatabaseTilesetEditor {
             };
 
             img.onerror = () => {
+                if (!isCurrent()) return;
                 console.error(`Failed to load: ${fileName}`);
                 loadedCount++;
                 if (loadedCount === totalImages) {
@@ -1196,6 +1209,9 @@ class DatabaseTilesetEditor {
         const tt = text => window.I18n ? window.I18n.tText(text) : text;
         const container = document.getElementById('compact-tileset-canvas-container');
         if (!container) return;
+        const generation = this._canvasLoadGeneration = (this._canvasLoadGeneration || 0) + 1;
+        const detailCurrent = this.parentEditor?.captureDetailContext?.() || (() => true);
+        const isCurrent = () => generation === this._canvasLoadGeneration && detailCurrent() && container.isConnected;
 
         container.innerHTML = `<p style="color: var(--color-text-muted); font-size: 11px;">${tt('Loading tileset image...')}</p>`;
 
@@ -1205,12 +1221,13 @@ class DatabaseTilesetEditor {
 
         // Check if file exists
         if (!this.fs.existsSync(imagePath)) {
-            container.innerHTML = `<p style="color: #f44; font-size: 11px;">${tt('Image file not found:')} ${rrEscapeHtml(fileName)}</p>`;
+            container.innerHTML = `<p style="color: var(--color-danger-bright); font-size: 11px;">${tt('Image file not found:')} ${rrEscapeHtml(fileName)}</p>`;
             return;
         }
 
         const img = new Image();
         img.onload = () => {
+            if (!isCurrent()) return;
             // Determine if this is a B-E layer (indices 5-8)
             const isSplitSheet = RRTilesetSheets.isNormalSheetIndex(imageIndex);
 
@@ -1311,7 +1328,8 @@ class DatabaseTilesetEditor {
         };
 
         img.onerror = () => {
-            container.innerHTML = `<p style="color: #f44; font-size: 11px;">${tt('Failed to load image:')} ${rrEscapeHtml(fileName)}</p>`;
+            if (!isCurrent()) return;
+            container.innerHTML = `<p style="color: var(--color-danger-bright); font-size: 11px;">${tt('Failed to load image:')} ${rrEscapeHtml(fileName)}</p>`;
         };
 
         img.src = this.assetUrl(imagePath);
@@ -3015,7 +3033,8 @@ class DatabaseTilesetEditor {
         if (!this.fs.existsSync(imagePath)) return null;
         const image = new Image();
         // Repaint once it arrives; until then the preview draws placeholders.
-        image.onload = () => this.refreshTile3DPreview();
+        const isCurrent = this.parentEditor?.captureDetailContext?.() || (() => projectPath === this.getProjectPath());
+        image.onload = () => { if (isCurrent()) this.refreshTile3DPreview(); };
         image.src = this.assetUrl(imagePath);
         this._sheetImages.set(fileName, image);
         return image.complete ? image : null;
@@ -3581,7 +3600,7 @@ class DatabaseTilesetEditor {
 
         if (!this.tilesetEditor) {
             const tt = text => window.I18n ? window.I18n.tText(text) : text;
-            container.innerHTML = `<p style="color: #f44; text-align: center; margin-top: 100px;">${tt('Failed to initialize tileset editor')}</p>`;
+            container.innerHTML = `<p style="color: var(--color-danger-bright); text-align: center; margin-top: 100px;">${tt('Failed to initialize tileset editor')}</p>`;
             return;
         }
 

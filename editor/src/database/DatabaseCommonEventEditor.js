@@ -339,6 +339,7 @@ class DatabaseCommonEventEditor {
     }
 
     insertNewCommand(event, insertBeforeIndex) {
+        const isCurrent = this.parentEditor?.captureDetailContext?.() || (() => true);
         const tt = text => window.I18n ? window.I18n.tText(text) : text;
         if (!this.commandPicker) {
             this.commandPicker = new EventCommandPicker();
@@ -353,6 +354,7 @@ class DatabaseCommonEventEditor {
         const ECL = this._eventCommandListClass();
         const insertIndex = ECL.safeInsertionIndex(event.list, insertBeforeIndex);
         const insertAndRefresh = (built) => {
+            if (!isCurrent()) return;
             const commands = ECL.commandBlock(built);
             if (commands.length > 0) {
                 ECL.rebaseInsertIndent(commands, ECL.insertionIndent(event.list, insertIndex));
@@ -363,6 +365,7 @@ class DatabaseCommonEventEditor {
         };
 
         this.commandPicker.show((command) => {
+            if (!isCurrent()) return;
             const code = command.code;
 
             // Commands that need editors opened immediately on insert
@@ -396,6 +399,7 @@ class DatabaseCommonEventEditor {
             // Simple single-command editors for insert
             const singleInsert = (editor, ...extraArgs) => {
                 editor.show(null, (editedCommand) => {
+                    if (!isCurrent()) return;
                     if (editedCommand) {
                         insertAndRefresh([editedCommand]);
                     }
@@ -422,6 +426,14 @@ class DatabaseCommonEventEditor {
             }
             if (code === 357 && command.reactor === 'PlayModelEffect' && typeof PlayModelEffectEditor !== 'undefined') {
                 this.getEditor('playModelEffect', PlayModelEffectEditor).show(null, insertAndRefresh);
+                return;
+            }
+            if (code === 357 && command.reactor === 'SetModelAnimationSpeed' && typeof PlayModelAnimationEditor !== 'undefined') {
+                this.getEditor('modelAnimationSpeed', PlayModelAnimationEditor).show({ code: 357, parameters: ['RPGReactor', 'SetModelAnimationSpeed', 'Set Model Animation Speed', {}] }, insertAndRefresh);
+                return;
+            }
+            if (code === 357 && command.reactor === 'SpeakModel3D' && typeof SpeakModel3DEditor !== 'undefined') {
+                this.getEditor('speakModel3D', SpeakModel3DEditor).show(null, insertAndRefresh);
                 return;
             }
 
@@ -489,6 +501,7 @@ class DatabaseCommonEventEditor {
             if ([132, 133, 139, 241, 242, 245, 246, 249, 250, 251].includes(code)) {
                 const editor = this.getEditor('audio', AudioCommandEditor);
                 editor.show(null, code, (editedCommand) => {
+                    if (!isCurrent()) return;
                     if (editedCommand) {
                         insertAndRefresh([editedCommand]);
                     }
@@ -540,6 +553,7 @@ class DatabaseCommonEventEditor {
     }
 
     editCommand(idx, event) {
+        const isCurrent = this.parentEditor?.captureDetailContext?.() || (() => true);
         const tt = text => window.I18n ? window.I18n.tText(text) : text;
         let command = event.list[idx];
         if (!command || command.code === 0) return;
@@ -561,6 +575,7 @@ class DatabaseCommonEventEditor {
         // Helper: simple single-command replace
         const singleReplace = (editor, ...showArgs) => {
             editor.show(command, (editedCommand) => {
+                if (!isCurrent()) return;
                 if (editedCommand) {
                     editedCommand.indent = command.indent || 0;
                     event.list[idx] = editedCommand;
@@ -570,6 +585,7 @@ class DatabaseCommonEventEditor {
         };
         const audioReplace = () => {
             this.getEditor('audio', AudioCommandEditor).show(command, code, editedCommand => {
+                if (!isCurrent()) return;
                 if (!editedCommand) return;
                 editedCommand.indent = command.indent || 0;
                 event.list[idx] = editedCommand;
@@ -589,6 +605,7 @@ class DatabaseCommonEventEditor {
                 textLines.push(event.list[i].parameters[0] || '');
             }
             editor.show(command, (commands) => {
+                if (!isCurrent()) return;
                 if (commands && commands.length > 0) {
                     event.list.splice(idx, removeCount);
                     ECL.rebaseInsertIndent(commands, command.indent || 0);
@@ -607,6 +624,7 @@ class DatabaseCommonEventEditor {
             // that resolves to nothing outside battle costs less than one an
             // author needs and cannot find.
             editor.show({ boxes: run.boxes, inBattle: true }, (commands) => {
+                if (!isCurrent()) return;
                 if (commands && commands.length > 0) {
                     event.list.splice(idx, run.count);
                     ECL.rebaseInsertIndent(commands, command.indent || 0);
@@ -622,6 +640,7 @@ class DatabaseCommonEventEditor {
             const ECL = this._eventCommandListClass();
             const editor = this.getEditor('choices', ShowChoicesCommandEditor);
             editor.show(command, (commands) => {
+                if (!isCurrent()) return;
                 if (commands && commands.length > 0) {
                     // Choice bodies stay in choice order; the cancel body
                     // stays bound to the 403 marker. Nested structures ride
@@ -669,6 +688,7 @@ class DatabaseCommonEventEditor {
             }
             const editor = this.getEditor('scrollingText', ShowScrollingTextEditor);
             editor.show(command, (commands) => {
+                if (!isCurrent()) return;
                 if (commands && commands.length > 0) {
                     let removeCount = 1;
                     for (let i = idx + 1; i < event.list.length; i++) {
@@ -688,6 +708,7 @@ class DatabaseCommonEventEditor {
         if (code === 108) {
             const editor = this.getEditor('comment', CommentEditor);
             editor.show(command, event.list, idx, (commands) => {
+                if (!isCurrent()) return;
                 if (commands && commands.length > 0) {
                     let removeCount = 1;
                     for (let i = idx + 1; i < event.list.length; i++) {
@@ -718,6 +739,7 @@ class DatabaseCommonEventEditor {
 
             const editor = this.getEditor('conditionalBranch', ConditionalBranchEditor);
             editor.show(command, (commands) => {
+                if (!isCurrent()) return;
                 if (commands && commands.length > 0) {
                     event.list.splice(idx, endIndex - idx + 1);
                     ECL.rebaseInsertIndent(commands, command.indent || 0);
@@ -755,6 +777,7 @@ class DatabaseCommonEventEditor {
                 }
             }
             this.getEditor('loop', LoopEditor).show(block, commands => {
+                if (!isCurrent()) return;
                 if (!commands?.length) return;
                 event.list.splice(start, range.end - start + 1, ...commands);
                 this.selectedCommandIndices = [start + (commands[0].code === 122 ? 1 : 0)];
@@ -839,6 +862,7 @@ class DatabaseCommonEventEditor {
         if (code === 205) {
             const editor = this.getEditor('setMovementRoute', SetMovementRouteEditor);
             editor.show(command, (editedCommand) => {
+                if (!isCurrent()) return;
                 if (editedCommand) {
                     editedCommand.indent = command.indent || 0;
                     event.list[idx] = editedCommand;
@@ -916,6 +940,7 @@ class DatabaseCommonEventEditor {
         if ([241, 242, 245, 246, 249, 250, 251].includes(code)) {
             const editor = this.getEditor('audio', AudioCommandEditor);
             editor.show(command, code, (editedCommand) => {
+                if (!isCurrent()) return;
                 editedCommand.indent = command.indent || 0;
                 event.list[idx] = editedCommand;
                 refreshList();
@@ -948,6 +973,7 @@ class DatabaseCommonEventEditor {
         if (code === 302) {
             const editor = this.getEditor('shopProcessing', ShopProcessingEditor);
             editor.show(command, (commands) => {
+                if (!isCurrent()) return;
                 if (commands && commands.length > 0) {
                     let removeCount = 1;
                     for (let i = idx + 1; i < event.list.length; i++) {
@@ -1059,6 +1085,7 @@ class DatabaseCommonEventEditor {
             }
             const editor = this.getEditor('script', ScriptEditor);
             editor.show(command, event.list, idx, (commands) => {
+                if (!isCurrent()) return;
                 if (commands && commands.length > 0) {
                     let removeCount = 1;
                     for (let i = idx + 1; i < event.list.length; i++) {
@@ -1076,8 +1103,29 @@ class DatabaseCommonEventEditor {
 
         // Plugin Command (356, 357)
         if (code === 357 && command.parameters?.[0] === 'RPGReactor'
+            && command.parameters?.[1] === 'SetModelAnimationSpeed' && typeof PlayModelAnimationEditor !== 'undefined') {
+            this.getEditor('modelAnimationSpeed', PlayModelAnimationEditor).show(command, editedCommand => {
+                if (!isCurrent()) return;
+                if (!editedCommand) return;
+                ECL.replaceContiguousBlock(event.list, idx, editedCommand, 357, 657);
+                refreshList();
+            });
+            return;
+        }
+        if (code === 357 && command.parameters?.[0] === 'RPGReactor'
+            && command.parameters?.[1] === 'SpeakModel3D' && typeof SpeakModel3DEditor !== 'undefined') {
+            this.getEditor('speakModel3D', SpeakModel3DEditor).show(command, editedCommand => {
+                if (!isCurrent()) return;
+                if (!editedCommand) return;
+                ECL.replaceContiguousBlock(event.list, idx, editedCommand, 357, 657);
+                refreshList();
+            });
+            return;
+        }
+        if (code === 357 && command.parameters?.[0] === 'RPGReactor'
             && command.parameters?.[1] === 'PlayModelEffect' && typeof PlayModelEffectEditor !== 'undefined') {
             this.getEditor('playModelEffect', PlayModelEffectEditor).show(command, editedCommand => {
+                if (!isCurrent()) return;
                 if (!editedCommand) return;
                 ECL.replaceContiguousBlock(event.list, idx, editedCommand, 357, 657);
                 refreshList();
@@ -1087,6 +1135,7 @@ class DatabaseCommonEventEditor {
         if (code === 357 && command.parameters?.[0] === 'RPGReactor'
             && command.parameters?.[1] === 'ChangeCamera3D' && typeof Camera3DEditor !== 'undefined') {
             this.getEditor('camera3D', Camera3DEditor).show(command, editedCommand => {
+                if (!isCurrent()) return;
                 if (!editedCommand) return;
                 ECL.replaceContiguousBlock(event.list, idx, editedCommand, 357, 657);
                 refreshList();
@@ -1099,6 +1148,7 @@ class DatabaseCommonEventEditor {
             && typeof VideoSurfaceEditor.supports === 'function'
             && VideoSurfaceEditor.supports(command.parameters?.[1])) {
             this.getEditor('videoSurface', VideoSurfaceEditor).show(command, editedCommand => {
+                if (!isCurrent()) return;
                 if (!editedCommand) return;
                 ECL.replaceContiguousBlock(event.list, idx, editedCommand, 357, 657);
                 refreshList();
@@ -1112,6 +1162,7 @@ class DatabaseCommonEventEditor {
             const continuationCommands = range
                 ? event.list.slice(range.start + 1, range.end + 1) : [];
             this.getEditor('pluginCommand', PluginCommandEditor).show(command, commands => {
+                if (!isCurrent()) return;
                 if (!ECL.commandBlock(commands).length) return;
                 ECL.replaceContiguousBlock(event.list, idx, commands, code, 657);
                 refreshList();
@@ -1308,6 +1359,7 @@ class DatabaseCommonEventEditor {
         modal.appendChild(dialog);
         // A click on the backdrop no longer closes the dialog: close deliberately.
         document.body.appendChild(modal);
+        this.commonUI?.databaseEditor?.registerDetailModal(modal);
     }
 
     // ==========================================
@@ -1349,10 +1401,12 @@ class DatabaseCommonEventEditor {
     }
 
     async cutCommands(event, container) {
+        const isCurrent = this.parentEditor?.captureDetailContext?.() || (() => true);
         const targetEvent = this.currentEvent;
         const selected = [...this.selectedCommandIndices];
         const listSnapshot = JSON.stringify(event.list);
         const wrote = await this.copyCommands(event);
+        if (!isCurrent()) return;
         if (!wrote) {
             alert(window.I18n?.t('db.clipboardWriteFailed') || 'Could not write data to the clipboard.');
             return;
@@ -1377,12 +1431,14 @@ class DatabaseCommonEventEditor {
     }
 
     async pasteCommands(event, container) {
+        const isCurrent = this.parentEditor?.captureDetailContext?.() || (() => true);
         const targetEvent = this.currentEvent;
         const selected = [...this.selectedCommandIndices];
         const listSnapshot = JSON.stringify(event.list);
         let commands = null;
         if (typeof ReactorClipboard !== 'undefined') {
             const clipboardData = await ReactorClipboard.read('eventCommands');
+        if (!isCurrent()) return;
             commands = clipboardData?.payload?.commands || null;
         } else {
             commands = this.commandClipboard;
@@ -1541,39 +1597,41 @@ class DatabaseCommonEventEditor {
     }
 
     attachMainListeners(container) {
-        setTimeout(() => {
-            const nameInput = document.getElementById('common-event-name-input');
-            if (nameInput) {
-                nameInput.addEventListener('change', (e) => {
-                    this.currentEvent.name = e.target.value;
-                    this.persistEvent();
-                    // Update the sidebar list item if visible
-                    const sel = document.querySelector('.database-list-item.selected span');
-                    if (sel) sel.textContent = e.target.value;
-                });
-            }
+        const isCurrent = this.parentEditor?.captureDetailContext?.() || (() => true);
+        const nameInput = container.querySelector('#common-event-name-input');
+        if (nameInput) {
+            nameInput.addEventListener('change', (e) => {
+                if (!isCurrent()) return;
+                this.currentEvent.name = e.target.value;
+                this.persistEvent();
+                // Update the sidebar list item if visible
+                const sel = document.querySelector('.database-list-item.selected span');
+                if (sel) sel.textContent = e.target.value;
+            });
+        }
 
-            const triggerSelect = document.getElementById('common-event-trigger-select');
-            if (triggerSelect) {
-                triggerSelect.addEventListener('change', (e) => {
-                    this.currentEvent.trigger = parseInt(e.target.value);
-                    this.persistEvent();
-                    // Show/hide switch field based on trigger
-                    const switchLabel = document.getElementById('common-event-switch-label');
-                    const switchInput = document.getElementById('common-event-switch-input');
-                    if (switchLabel) switchLabel.style.display = this.currentEvent.trigger > 0 ? '' : 'none';
-                    if (switchInput) switchInput.style.display = this.currentEvent.trigger > 0 ? '' : 'none';
-                });
-            }
+        const triggerSelect = container.querySelector('#common-event-trigger-select');
+        if (triggerSelect) {
+            triggerSelect.addEventListener('change', (e) => {
+                if (!isCurrent()) return;
+                this.currentEvent.trigger = parseInt(e.target.value);
+                this.persistEvent();
+                // Show/hide switch field based on trigger
+                const switchLabel = container.querySelector('#common-event-switch-label');
+                const switchInput = container.querySelector('#common-event-switch-input');
+                if (switchLabel) switchLabel.style.display = this.currentEvent.trigger > 0 ? '' : 'none';
+                if (switchInput) switchInput.style.display = this.currentEvent.trigger > 0 ? '' : 'none';
+            });
+        }
 
-            const switchInput = document.getElementById('common-event-switch-input');
-            if (switchInput) {
-                switchInput.addEventListener('change', (e) => {
-                    this.currentEvent.switchId = parseInt(e.target.value) || 1;
-                    this.persistEvent();
-                });
-            }
-        }, 0);
+        const switchInput = container.querySelector('#common-event-switch-input');
+        if (switchInput) {
+            switchInput.addEventListener('change', (e) => {
+                if (!isCurrent()) return;
+                this.currentEvent.switchId = parseInt(e.target.value) || 1;
+                this.persistEvent();
+            });
+        }
     }
 
     // ==========================================

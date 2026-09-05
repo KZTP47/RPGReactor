@@ -232,3 +232,52 @@ test('a model without facing marks turns by its export convention', () => {
     assert.equal(spun(6), Math.PI / 2);
     assert.equal(spun(4), -Math.PI / 2);
 });
+
+test('failure to remove the last binding propagates and preserves the saved association', t => {
+    const project = tempProject();
+    t.after(() => fs.rmSync(project, { recursive: true, force: true }));
+    Bindings.set(project, 'enemies', 1, { name: 'Slime' });
+    const remove = fs.rmSync;
+    try {
+        fs.rmSync = () => { throw Object.assign(new Error('Permission denied'), { code: 'EACCES' }); };
+        assert.throws(() => Bindings.set(project, 'enemies', 1, null), /Permission denied/);
+        assert.equal(Bindings.get(project, 'enemies', 1).name, 'Slime');
+    } finally { fs.rmSync = remove; }
+});
+
+function bindingRowFixture(project, alerts) {
+    const vm = require('node:vm');
+    const element = () => ({ style: {}, listeners: {}, addEventListener(type, fn) { this.listeners[type] = fn; } });
+    const check = element(), name = element(), change = element();
+    const row = { style: {}, querySelector(selector) { return ({ '.rr-3d-binding-check': check, '.rr-3d-binding-name': name, '.rr-3d-binding-change': change })[selector]; } };
+    const sandbox = { require, console: { error() {} }, window: {}, document: { createElement: () => row }, alert: value => alerts.push(value) };
+    vm.runInNewContext(fs.readFileSync(path.join(repoRoot,'editor/src/database/Database3DBindings.js'),'utf8'),sandbox);
+    let changes = 0;
+    const api = sandbox.RRDatabase3DBindings.attachRow({ appendChild() {} }, {
+        projectManager: { currentProject: { path: project } }, section: 'enemies', id: 1, onChange() { changes++; }
+    });
+    return { check, name, change, api, changes: () => changes };
+}
+
+test('binding controls show corrupt sidecar errors without blanking the database panel', t => {
+    const project = tempProject(); t.after(() => fs.rmSync(project,{recursive:true,force:true}));
+    const file = path.join(project,'data/Database.r3d.json');fs.writeFileSync(file,'{ broken');
+    const ui = bindingRowFixture(project, []);
+    assert.equal(ui.check.disabled, true);assert.equal(ui.change.disabled, true);
+    assert.equal(ui.name.textContent, '(Failed to load)');assert.match(ui.name.title, /JSON/);
+    fs.writeFileSync(file, JSON.stringify({ version: 1, enemies: { 1: { name: 'Slime' } } }));
+    const repaired = bindingRowFixture(project, []);
+    assert.equal(repaired.check.disabled,false);assert.equal(repaired.name.textContent,'Slime');
+});
+
+test('a failed binding removal restores its checkbox and reports the error without success callbacks', t => {
+    const project = tempProject();t.after(() => fs.rmSync(project,{recursive:true,force:true}));
+    Bindings.set(project,'enemies',1,{name:'Slime'});
+    const alerts=[],ui=bindingRowFixture(project,alerts),remove=fs.rmSync;
+    try {
+        fs.rmSync=()=>{throw new Error('Read-only filesystem');};
+        ui.check.checked=false;ui.check.listeners.change();
+        assert.equal(ui.check.checked,true);assert.equal(ui.name.textContent,'Slime');
+        assert.equal(ui.changes(),0);assert.deepEqual(alerts,['Could not save the 3D model binding.']);
+    } finally {fs.rmSync=remove;}
+});

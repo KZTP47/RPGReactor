@@ -85,8 +85,8 @@ test('the lighting manager composites the way the runtime does', () => {
     // sharing the 3D pass's own pictures - never punched holes.
     assert.match(manager, /blendMode = 'multiply'/);
     assert.match(manager, /blendMode = 'add'/);
-    assert.match(manager, /kind === 'cone' \? Reactor3D\.coneLightCanvas\(\)/);
-    assert.match(manager, /Reactor3D\.beamLightCanvas\(\)/, 'a beam has its own bar picture');
+    assert.match(manager, /texture.source.scaleMode = 'linear'/);
+    assert.match(manager, /kind === 'beam'/, 'a beam has its own smooth bar picture');
     assert.doesNotMatch(manager, /destination-out/);
     // The 3D preview feeds the real compositor, with the schema yaw flipped
     // into the scene convention exactly as the runtime flips it.

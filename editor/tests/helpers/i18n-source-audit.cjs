@@ -82,14 +82,31 @@ function addOccurrence(inventory, phrase, sourcePath, source, index) {
     inventory.get(phrase).add(`${sourcePath}:${lineNumberAt(source, index)}`);
 }
 
+// Template interpolation is dynamic text, but it still has to be skipped
+// while finding a method's closing brace. Returning early hid entire helpers.
+function skipTemplate(source, start) {
+    for (let i = start + 1; i < source.length; i++) {
+        if (source[i] === '\\') { i++; continue; }
+        if (source[i] === '`') return i;
+        if (source[i] === '$' && source[i + 1] === '{') {
+            i = findMatchingBracket(source, i + 1, '{', '}');
+            if (i < 0) return -1;
+        }
+    }
+    return -1;
+}
+
 function findMatchingBracket(source, start, open = '[', close = ']') {
     let depth = 0;
     for (let index = start; index < source.length; index++) {
         const char = source[index];
         if (char === "'" || char === '"' || char === '`') {
             const literal = readStaticLiteral(source, index);
-            if (!literal) return -1;
-            index = literal.end - 1;
+            if (!literal) {
+                if (char !== '`') return -1;
+                index = skipTemplate(source, index);
+                if (index < 0) return -1;
+            } else index = literal.end - 1;
         } else if (source.startsWith('//', index)) {
             const end = source.indexOf('\n', index + 2);
             if (end === -1) return -1;
@@ -119,7 +136,7 @@ function aliasMapsToText(source, alias) {
 
     const method = new RegExp(`(?:\\bfunction\\s+)?\\b${name}\\s*\\([^)]*\\)\\s*\\{`, 'g');
     while ((match = method.exec(source)) !== null) {
-        const open = source.indexOf('{', match.index);
+        const open = method.lastIndex - 1;
         const close = findMatchingBracket(source, open, '{', '}');
         if (close !== -1 && /\bI18n(?:\?\.|\.)tText\s*\(/.test(source.slice(open + 1, close))) return true;
     }
@@ -231,6 +248,7 @@ function addConsumedPropertyCatalogs(inventory, source, sourcePath, aliases) {
 }
 
 function pathCatalogProperties(sourcePath) {
+    if (sourcePath === 'src/database/ModelRigger.js') return ['label'];
     if (sourcePath.startsWith('src/forge/CharacterGenerator/styles/')) return ['name', 'category'];
     if (sourcePath === 'src/forge/CharacterGenerator/CharacterGenerator.js') return ['name'];
     if (sourcePath.startsWith('src/forge/CharacterGenerator/procgen/')) return ['name', 'category', 'label'];
@@ -250,9 +268,9 @@ function addPathPropertyCatalogs(inventory, source, sourcePath) {
     }
 }
 
-function inventoryLocalizationSource(source, sourcePath = '<source>') {
+function inventoryLocalizationSource(source, sourcePath = '<source>', inheritedAliases = []) {
     const inventory = new Map();
-    const aliases = enabledAliases(source);
+    const aliases = new Set([...enabledAliases(source), ...inheritedAliases]);
     let match;
     CALL_PATTERN.lastIndex = 0;
     while ((match = CALL_PATTERN.exec(source)) !== null) {
@@ -292,13 +310,27 @@ function editorSourceFiles(editorRoot) {
 
 function inventoryEditorLocalization(editorRoot) {
     const inventory = new Map();
-    for (const file of editorSourceFiles(editorRoot)) {
-        const sourcePath = path.relative(editorRoot, file).split(path.sep).join('/');
-        mergeInventory(inventory, inventoryLocalizationSource(fs.readFileSync(file, 'utf8'), sourcePath));
+    const files = editorSourceFiles(editorRoot).map(file => ({
+        sourcePath: path.relative(editorRoot, file).split(path.sep).join('/'),
+        source: fs.readFileSync(file, 'utf8')
+    }));
+    const classes = new Map();
+    for (const file of files) {
+        const match = file.source.match(/class\s+(\w+)\s+(?:extends\s+(?:\(\s*typeof\s+)?(\w+))?/);
+        file.aliases = enabledAliases(file.source);
+        if (match) { file.parent = match[2]; classes.set(match[1], file); }
     }
+    for (let pass = 0; pass < classes.size; pass++) {
+        let changed = false;
+        for (const file of classes.values()) for (const alias of classes.get(file.parent)?.aliases || []) {
+            const overrides = new RegExp(`(?:^|\\n)\\s*${alias}\\s*\\(`).test(file.source);
+            if (!overrides && !file.aliases.has(alias)) { file.aliases.add(alias); changed = true; }
+        }
+        if (!changed) break;
+    }
+    for (const file of files) mergeInventory(inventory, inventoryLocalizationSource(file.source, file.sourcePath, file.aliases));
     return Array.from(inventory, ([phrase, locations]) => ({
-        phrase,
-        sources: Array.from(locations).sort()
+        phrase, sources: Array.from(locations).sort()
     })).sort((a, b) => compareText(a.phrase, b.phrase));
 }
 

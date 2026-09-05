@@ -25,6 +25,7 @@ class DatabaseEditorUI {
 
         // Initialize modular editors
         this.commonUI = new DatabaseCommonUI(databaseManager, { getCurrentProject: () => this.currentProject });
+        this.commonUI.databaseEditor = this;
         this.actorEditor = new DatabaseActorEditor(databaseManager, { getCurrentProject: () => this.currentProject }, this.commonUI, this);
         this.classEditor = new DatabaseClassEditor(databaseManager, { getCurrentProject: () => this.currentProject }, this.commonUI, this);
         this.skillEditor = new DatabaseSkillEditor(databaseManager, { getCurrentProject: () => this.currentProject }, this.commonUI, this);
@@ -183,6 +184,12 @@ class DatabaseEditorUI {
      * Update the current project reference
      */
     setCurrentProject(project) {
+        if (project !== this.currentProject) {
+            this.cleanupDatabaseDetail();
+            this._dataSnapshot = null;
+            this._databaseSession = (this._databaseSession || 0) + 1;
+            this.setDatabaseSaveInFlight(false);
+        }
         this.currentProject = project;
         this._detailGeneration++;
         this._listGeneration++;
@@ -226,7 +233,46 @@ class DatabaseEditorUI {
         });
     }
 
+    captureDetailContext() {
+        const generation = this._detailGeneration;
+        const project = this.currentProject;
+        const dataGeneration = this.databaseManager?.dataGeneration;
+        return () => generation === this._detailGeneration && project === this.currentProject
+            && dataGeneration === this.databaseManager?.dataGeneration;
+    }
+
+    registerDetailModal(modal) {
+        const current = this.captureDetailContext();
+        (this._detailCleanups ||= []).push(() => { modal.inert = true; modal.remove(); });
+        return () => current() && modal.isConnected;
+    }
+
+    cleanupDatabaseDetail() {
+        this._detailGeneration = (this._detailGeneration || 0) + 1;
+        this.closeDatabaseActionMenu();
+        this._textCodeDetach?.();
+        this._textCodeDetach = null;
+        const cleanups = this._detailCleanups || [];
+        this._detailCleanups = [];
+        for (const cleanup of cleanups) cleanup();
+        const animation = this.animationEditor;
+        if (animation) {
+            animation._previewSetupGeneration = (animation._previewSetupGeneration || 0) + 1;
+            animation._currentEffekseerStop?.();
+            animation._currentEffekseerStop = null;
+            animation._runDetailCleanups?.();
+        }
+        this.userInterfaceEditor?.detach?.();
+        this.reactor3dEditor?._disposePreview?.();
+        if (this.reactor3dEditor) this.reactor3dEditor._detail = null;
+        if (typeof document !== 'undefined') {
+            const detail = document.getElementById?.('database-detail');
+            if (detail) detail.innerHTML = '';
+        }
+    }
+
     prepareDatabaseSection(type, title, options = {}) {
+        this.cleanupDatabaseDetail();
         const viewer = document.getElementById('database-viewer');
         const navEl = document.getElementById('database-navigation');
         const titleEl = document.getElementById('database-viewer-title');
@@ -262,6 +308,9 @@ class DatabaseEditorUI {
     }
 
     closeDatabaseViewer() {
+        this.cleanupDatabaseDetail();
+        this._databaseSession = (this._databaseSession || 0) + 1;
+        this.setDatabaseSaveInFlight(false);
         // Whatever path closed the viewer, the Cancel baseline must not
         // leak into the next session (the once-per-session guard in
         // takeDatabaseSnapshot would keep a stale one alive).
@@ -335,15 +384,25 @@ class DatabaseEditorUI {
                 if (this._databaseSaveInFlight) return;
                 const projectPath = this.currentProject?.path;
                 if (projectPath) {
+                    const saveSession = this._databaseSession;
+                    const saveProject = this.currentProject;
+                    const isCurrent = () => this._databaseSession === saveSession && this.currentProject === saveProject;
                     this.setDatabaseSaveInFlight(true);
                     let saved = false;
                     try {
                         saved = this.callbacks.saveProject
                             ? await this.callbacks.saveProject()
                             : await this.databaseManager.saveAllData(projectPath);
+                    } catch (error) {
+                        if (!isCurrent()) return;
+                        console.error('Database save failed:', error);
+                        this._dataSnapshot = JSON.stringify(this.databaseManager.data);
+                        alert(tt('One or more database files could not be saved.'));
+                        return;
                     } finally {
-                        this.setDatabaseSaveInFlight(false);
+                        if (isCurrent()) this.setDatabaseSaveInFlight(false);
                     }
+                    if (!isCurrent()) return;
                     if (!saved) {
                         // A multi-file save may have completed some writes. Keep
                         // the live data dirty and make Cancel preserve it so the
@@ -367,15 +426,25 @@ class DatabaseEditorUI {
                 if (this._databaseSaveInFlight) return;
                 const projectPath = this.currentProject?.path;
                 if (projectPath) {
+                    const saveSession = this._databaseSession;
+                    const saveProject = this.currentProject;
+                    const isCurrent = () => this._databaseSession === saveSession && this.currentProject === saveProject;
                     this.setDatabaseSaveInFlight(true);
                     let saved = false;
                     try {
                         saved = this.callbacks.saveProject
                             ? await this.callbacks.saveProject()
                             : await this.databaseManager.saveAllData(projectPath);
+                    } catch (error) {
+                        if (!isCurrent()) return;
+                        console.error('Database save failed:', error);
+                        this._dataSnapshot = JSON.stringify(this.databaseManager.data);
+                        alert(tt('One or more database files could not be saved.'));
+                        return;
                     } finally {
-                        this.setDatabaseSaveInFlight(false);
+                        if (isCurrent()) this.setDatabaseSaveInFlight(false);
                     }
+                    if (!isCurrent()) return;
                     if (!saved) {
                         this._dataSnapshot = JSON.stringify(this.databaseManager.data);
                         if (!this.callbacks.saveProject) {
@@ -398,6 +467,8 @@ class DatabaseEditorUI {
 
     setDatabaseSaveInFlight(saving) {
         this._databaseSaveInFlight = saving === true;
+        const viewer = document.getElementById('database-viewer');
+        if (viewer) viewer.inert = this._databaseSaveInFlight;
         for (const id of ['database-close-btn', 'database-ok-btn', 'database-cancel-btn', 'database-apply-btn']) {
             const button = document.getElementById(id);
             if (button) button.disabled = this._databaseSaveInFlight;
@@ -408,11 +479,12 @@ class DatabaseEditorUI {
      * Open database viewer for a specific type
      */
     openDatabase(type) {
+        if (this._databaseSaveInFlight) return;
         if (!this.currentProject) {
             alert(this._t('alert.loadProjectFirst'));
             return;
         }
-        this._detailGeneration++;
+        this.cleanupDatabaseDetail();
         this._listGeneration++;
         this._activeDatabaseList = null;
 
@@ -582,6 +654,7 @@ class DatabaseEditorUI {
         detailEl.style.overflow = '';
         detailEl.style.overflowY = 'auto';
         if (listPanelEl) listPanelEl.style.display = '';
+        this.cleanupDatabaseDetail();
         detailEl.innerHTML = this._selectEntryMarkup(type);
         if (!detailEl.__rrFirstRunBound) {
             detailEl.__rrFirstRunBound = true;
@@ -638,7 +711,7 @@ class DatabaseEditorUI {
             if (!showDetail) return;
             const focusedEntry = data.find(entry => entry?.id === focusedId);
             if (focusedEntry) this.showDatabaseDetail(focusedEntry, type);
-            else detailEl.innerHTML = this._selectEntryMarkup(type);
+            else { this.cleanupDatabaseDetail(); detailEl.innerHTML = this._selectEntryMarkup(type); }
         };
         const selectRange = (toId) => {
             const anchorIndex = filteredData.findIndex(entry => entry.id === selectionAnchorId);
@@ -729,7 +802,7 @@ class DatabaseEditorUI {
                     applySelection();
                     const focusedEntry = this.databaseManager.data[type]?.[focusedId];
                     if (focusedEntry) this.showDatabaseDetail(focusedEntry, type);
-                    else detailEl.innerHTML = this._selectEntryMarkup(type);
+                    else { this.cleanupDatabaseDetail(); detailEl.innerHTML = this._selectEntryMarkup(type); }
                 });
                 item.addEventListener('contextmenu', event => {
                     event.preventDefault();
@@ -802,6 +875,7 @@ class DatabaseEditorUI {
             focusedId = null;
             selectionAnchorId = null;
             refreshList();
+            this.cleanupDatabaseDetail();
             detailEl.innerHTML = this._selectEntryMarkup();
             this.updateStatus(tt('Undo'));
         };
@@ -844,6 +918,7 @@ class DatabaseEditorUI {
             focusedId = null;
             selectionAnchorId = null;
             refreshList();
+            this.cleanupDatabaseDetail();
             detailEl.innerHTML = this._selectEntryMarkup();
             this.updateStatus(this._t('db.entryCleared'));
         };
@@ -867,6 +942,7 @@ class DatabaseEditorUI {
                 refreshData();
                 selectedIds.clear();
                 refreshList();
+                this.cleanupDatabaseDetail();
                 detailEl.innerHTML = this._selectEntryMarkup();
                 this.updateStatus(this._t('db.maximumChanged', { title, max: newMax }));
             });
@@ -876,6 +952,7 @@ class DatabaseEditorUI {
         searchInput.addEventListener('input', event => {
             populateList(event.target.value, false, { resetSelection: true });
             listEl.scrollTop = 0;
+            this.cleanupDatabaseDetail();
             detailEl.innerHTML = this._selectEntryMarkup();
         });
 
@@ -919,6 +996,7 @@ class DatabaseEditorUI {
                 entries.forEach(entry => this.clearDatabaseEntry(type, entry.id));
                 refreshData();
                 refreshList();
+                this.cleanupDatabaseDetail();
                 detailEl.innerHTML = this._selectEntryMarkup();
                 this.updateStatus(this._t('db.entryCleared'));
                 return;
@@ -1118,6 +1196,7 @@ class DatabaseEditorUI {
         // A click on the backdrop no longer closes the dialog: close deliberately.
         document.addEventListener('keydown', onKeyDown, true);
         document.body.appendChild(overlay);
+        (this._detailCleanups ||= []).push(close);
         closeBtn.focus();
     }
 
@@ -1447,6 +1526,7 @@ class DatabaseEditorUI {
         }
         if (session?.type === type) session.selectIds(entries.map(entry => entry.id), entries[0].id, false);
         populateList(searchInput.value, false, { preserveScroll: true });
+        this.cleanupDatabaseDetail();
         detailEl.innerHTML = this._selectEntryMarkup();
         this.updateStatus(this._t('db.entryCut'));
     }
@@ -1586,7 +1666,8 @@ class DatabaseEditorUI {
      * Show detail view for a specific database entry
      */
     showDatabaseDetail(entry, type) {
-        this._detailGeneration++;
+        if (this._databaseSaveInFlight) return;
+        this.cleanupDatabaseDetail();
         const detailEl = document.getElementById('database-detail');
         detailEl.innerHTML = '';
 
@@ -2479,7 +2560,12 @@ class DatabaseEditorUI {
 
     showIconPicker(currentIconIndex, onSelectCallback, iconSetPath) {
         // One picker for the whole editor; see src/utils/IconPicker.js.
-        return window.RRIconPicker.show(currentIconIndex, onSelectCallback, iconSetPath);
+        const isCurrent = this.captureDetailContext();
+        const modal = window.RRIconPicker.show(currentIconIndex, index => {
+            if (isCurrent()) onSelectCallback(index);
+        }, iconSetPath);
+        (this._detailCleanups ||= []).push(() => modal.closePicker());
+        return modal;
     }
 
     /**
@@ -2545,7 +2631,7 @@ class DatabaseEditorUI {
 
         // Warning message (shown when decreasing)
         const warning = document.createElement('div');
-        warning.style.cssText = 'color: #ff8800; font-size: 12px; margin-top: 8px; display: none;';
+        warning.style.cssText = 'color: var(--color-warning-text); font-size: 12px; margin-top: 8px; display: none;';
         body.appendChild(warning);
 
         input.addEventListener('input', () => {
@@ -2580,7 +2666,8 @@ class DatabaseEditorUI {
         okBtn.onmouseenter = () => { okBtn.style.backgroundColor = 'var(--color-accent-muted)'; };
         okBtn.onmouseleave = () => { okBtn.style.backgroundColor = 'var(--color-accent)'; };
 
-        const close = () => document.body.removeChild(overlay);
+        const close = () => overlay.remove();
+        const isCurrent = this.captureDetailContext();
 
         cancelBtn.onclick = close;
         header.querySelector('.modal-close').onclick = close;
@@ -2588,6 +2675,7 @@ class DatabaseEditorUI {
         // never from a stray click beside it.
 
         okBtn.onclick = () => {
+            if (!isCurrent() || !overlay.isConnected) return;
             const newMax = Number(input.value);
             if (!Number.isInteger(newMax) || newMax < 1 || newMax > maximum) {
                 input.style.borderColor = 'var(--color-danger-pressed)';
@@ -2609,6 +2697,7 @@ class DatabaseEditorUI {
 
         overlay.appendChild(modal);
         document.body.appendChild(overlay);
+        this.registerDetailModal(overlay);
 
         // Focus and select the input
         input.focus();
@@ -2616,6 +2705,11 @@ class DatabaseEditorUI {
     }
 
     showImagePicker(title, files, onSelectCallback, getImagePathCallback, currentFile, options = {}) {
+        this._closeImagePicker?.();
+        const detailCurrent = this.captureDetailContext();
+        const generation = this._imagePickerGeneration = (this._imagePickerGeneration || 0) + 1;
+        let closed = false;
+        const isCurrent = () => !closed && generation === this._imagePickerGeneration && detailCurrent();
         const tt = text => window.I18n ? window.I18n.tText(text) : text;
         const modal = document.getElementById('image-picker-modal');
         const titleEl = document.getElementById('image-picker-title');
@@ -2647,7 +2741,22 @@ class DatabaseEditorUI {
             previewEl.innerHTML = '';
         };
 
+        const close = () => {
+            if (closed) return;
+            closed = true;
+            modal.style.display = 'none';
+            clearPreview();
+        };
+        this._closeImagePicker = close;
+        (this._detailCleanups ||= []).push(close);
+        const select = (file, index) => {
+            if (!isCurrent()) return;
+            close();
+            onSelectCallback(file, index);
+        };
+
         const showPreview = file => {
+                if (!isCurrent()) return;
                 const imagePath = getImagePathCallback(file);
                 const isCharacterSheet = options.sheetType === 'character';
                 const isFaceSheet = options.sheetType === 'face';
@@ -2801,9 +2910,7 @@ class DatabaseEditorUI {
 
                 // Add select button handler
                 selectBtn.addEventListener('click', () => {
-                    modal.style.display = 'none';
-                    clearPreview();
-                    onSelectCallback(file, selectedIndex);
+                    select(file, selectedIndex);
                 });
 
                 // Add open-in-folder button handler
@@ -2829,9 +2936,7 @@ class DatabaseEditorUI {
             leadingItem: options.allowNone ? {
                 label: tt('(None)'),
                 onClick: () => {
-                    modal.style.display = 'none';
-                    clearPreview();
-                    onSelectCallback('', 0);
+                    select('', 0);
                 }
             } : null
         });
@@ -2847,10 +2952,7 @@ class DatabaseEditorUI {
         }
 
         // Close button handler
-        closeBtn.onclick = () => {
-            modal.style.display = 'none';
-            clearPreview();
-        };
+        closeBtn.onclick = close;
     }
 
     static imageBrowser(projectController) {

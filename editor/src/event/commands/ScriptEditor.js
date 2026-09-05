@@ -128,7 +128,7 @@ class ScriptEditor {
             flex: 1;
             padding: 12px;
             background-color: var(--color-bg-surface);
-            color: #d4d4d4;
+            color: var(--color-text);
             border: 1px solid var(--color-border-input);
             border-radius: 3px;
             font-family: 'Consolas', 'Monaco', 'Courier New', monospace;

@@ -1104,6 +1104,7 @@ class DatabaseEnemyEditor {
         modal.querySelector('.action-edit-close')?.addEventListener('click', () => overlay.remove());
         // A click on the backdrop no longer closes the dialog: close deliberately.
         document.body.appendChild(overlay);
+        this.commonUI?.databaseEditor?.registerDetailModal(overlay);
     }
 
     // ==========================================
@@ -1288,7 +1289,6 @@ class DatabaseEnemyEditor {
                 { label: 'Copy', action: () => this.copyTrait(enemy, traitIndex), enabled: traitIndex !== null },
                 { label: 'Paste', action: () => this.pasteTrait(enemy), enabled: true },
                 { label: 'Delete', action: () => this.deleteTrait(enemy, traitIndex), enabled: traitIndex !== null },
-                { label: 'Select All', action: () => this.selectAllTraits(enemy), enabled: true }
             ];
 
             menuItems.forEach(item => {
@@ -1385,9 +1385,6 @@ class DatabaseEnemyEditor {
         this.refreshEnemyDetail(enemy);
     }
 
-    selectAllTraits(enemy) {
-        console.log('Select all traits');
-    }
 
     // ==========================================
     // FIELD UPDATE HANDLER

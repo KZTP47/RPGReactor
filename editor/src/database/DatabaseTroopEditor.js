@@ -71,6 +71,9 @@ class DatabaseTroopEditor {
         this.battleUISetup = null;
         this.actorBattlerImages = {};
         this.actorFaceImages = {};
+        const skinProject = this.projectManager.getCurrentProject()?.path;
+        if (this._skinProject !== skinProject) this.windowSkin = null;
+        this._skinProject = skinProject;
 
         const wrapper = document.createElement('div');
         wrapper.className = 'rr-troop-editor';
@@ -92,7 +95,8 @@ class DatabaseTroopEditor {
         container.appendChild(wrapper);
 
         this.attachMainListeners(container);
-        setTimeout(() => this.loadAndRenderCanvas(), 50);
+        const isCurrent = this.parentEditor?.captureDetailContext?.() || (() => wrapper.isConnected);
+        setTimeout(() => { if (isCurrent()) this.loadAndRenderCanvas(); }, 50);
     }
 
     createNameRow() {
@@ -274,7 +278,7 @@ class DatabaseTroopEditor {
             const removeBtn = document.createElement('button');
             removeBtn.textContent = '\u00D7';
             removeBtn.title = tt('Remove');
-            removeBtn.style.cssText = 'width: 18px; height: 18px; padding: 0; border: 1px solid var(--color-border-input); background: var(--color-border-subtle); color: #f44; cursor: pointer; font-size: 13px; line-height: 1; border-radius: 3px; flex-shrink: 0;';
+            removeBtn.style.cssText = 'width: 18px; height: 18px; padding: 0; border: 1px solid var(--color-border-input); background: var(--color-border-subtle); color: var(--color-danger-bright); cursor: pointer; font-size: 13px; line-height: 1; border-radius: 3px; flex-shrink: 0;';
             removeBtn.onclick = (e) => { e.stopPropagation(); this.removeMember(idx); };
             row.appendChild(removeBtn);
 
@@ -476,6 +480,7 @@ class DatabaseTroopEditor {
 
         overlay.appendChild(dialog);
         document.body.appendChild(overlay);
+        this.commonUI?.databaseEditor?.registerDetailModal(overlay);
 
         const close = () => overlay.remove();
         const confirmAndClose = () => {
@@ -928,16 +933,19 @@ class DatabaseTroopEditor {
         if (!project) return;
 
         const path = require('path');
+        const generation = this._canvasLoadGeneration = (this._canvasLoadGeneration || 0) + 1;
+        const detailCurrent = this.parentEditor?.captureDetailContext?.() || (() => true);
+        const isCurrent = () => generation === this._canvasLoadGeneration && detailCurrent();
         let pending = 0;
 
-        const done = () => { pending--; if (pending <= 0) this.renderCanvas(); };
+        const done = () => { pending--; if (isCurrent() && pending <= 0) this.renderCanvas(); };
 
         // Battleback1
         if (this.battleback1Name) {
             pending++;
             this.battleback1Img = new Image();
             this.battleback1Img.onload = done;
-            this.battleback1Img.onerror = () => { this.battleback1Img = null; done(); };
+            this.battleback1Img.onerror = () => { if (isCurrent()) this.battleback1Img = null; done(); };
             this.battleback1Img.src = RRAssetFiles.imageUrlFor(
                 path.join(project.path, 'img', 'battlebacks1'), this.battleback1Name);
         } else { this.battleback1Img = null; }
@@ -947,7 +955,7 @@ class DatabaseTroopEditor {
             pending++;
             this.battleback2Img = new Image();
             this.battleback2Img.onload = done;
-            this.battleback2Img.onerror = () => { this.battleback2Img = null; done(); };
+            this.battleback2Img.onerror = () => { if (isCurrent()) this.battleback2Img = null; done(); };
             this.battleback2Img.src = RRAssetFiles.imageUrlFor(
                 path.join(project.path, 'img', 'battlebacks2'), this.battleback2Name);
         } else { this.battleback2Img = null; }
@@ -974,7 +982,7 @@ class DatabaseTroopEditor {
                 const battlerFile = RRAssetFiles.findImage(path.join(project.path, 'img', dir), battlerName);
                 if (battlerFile) {
                     const img = new Image();
-                    img.onload = () => { this.enemySpriteImages[battlerName] = img; done(); };
+                    img.onload = () => { if (isCurrent()) this.enemySpriteImages[battlerName] = img; done(); };
                     img.onerror = done;
                     img.src = RRAssetFiles.toUrl(battlerFile.absolutePath);
                     this.enemySpriteImages[battlerName] = img;
@@ -1404,14 +1412,19 @@ class DatabaseTroopEditor {
     }
 
     insertNewCommand(page, insertBeforeIndex) {
+        const detailCurrent = this.parentEditor?.captureDetailContext?.() || (() => true);
+        const pageIndex = this.currentBattlePageIndex;
+        const isCurrent = () => detailCurrent() && pageIndex === this.currentBattlePageIndex;
         if (!this.commandPicker) {
             this.commandPicker = new EventCommandPicker();
         }
 
         this.commandPicker.show((command) => {
+            if (!isCurrent()) return;
             const ECL = this._eventCommandListClass();
             const insertIndex = ECL.safeInsertionIndex(page.list, insertBeforeIndex);
             const insertCommands = commands => {
+                if (!isCurrent()) return;
                 if (!commands?.length) return;
                 ECL.rebaseInsertIndent(commands, ECL.insertionIndent(page.list, insertIndex));
                 commands.forEach((cmd, i) => page.list.splice(insertIndex + i, 0, cmd));
@@ -1442,6 +1455,7 @@ class DatabaseTroopEditor {
             }
             if ([132, 133, 139, 241, 242, 245, 246, 249, 250, 251].includes(command.code)) {
                 this.getCommandEditor('audio', AudioCommandEditor).show(null, command.code, edited => {
+                    if (!isCurrent()) return;
                     if (edited) insertCommands([edited]);
                 });
                 return;
@@ -1518,7 +1532,10 @@ class DatabaseTroopEditor {
     }
 
     commandDialogs() {
+        if (this._commandDialogsCurrent && !this._commandDialogsCurrent()) this._commandDialogs = null;
         if (!this._commandDialogs) {
+            const isCurrent = this.parentEditor?.captureDetailContext?.() || (() => true);
+            this._commandDialogsCurrent = isCurrent;
             const ECL = this._eventCommandListClass();
             const list = new ECL({
                 databaseManager: this.databaseManager,
@@ -1529,11 +1546,28 @@ class DatabaseTroopEditor {
             // lets EventCommandList.editCommand run against a battle page and
             // write back here instead of into the map editor's list.
             list.refreshCommandList = page => {
+                if (!isCurrent()) return;
                 this.persistTroop();
                 this.selectedCommandIndices = Array.from(list.selectedIndices || []);
                 const container = document.getElementById('battle-command-list');
                 if (container) this.renderCommandList(container, page);
             };
+            // The shared run editors also retain callbacks (choices, scripts,
+            // comments and shops). Guard them before EventCommandList mutates a page.
+            for (const [field, callbackOffset] of Object.values(DatabaseTroopEditor.RUN_COMMAND_DIALOGS)) {
+                const editor = list[field];
+                if (!editor?.show) continue;
+                const show = editor.show;
+                editor.show = (...args) => {
+                    const detailCurrent = this.parentEditor?.captureDetailContext?.() || (() => true);
+                    const pageIndex = this.currentBattlePageIndex;
+                    const callback = args[callbackOffset + 1];
+                    if (typeof callback === 'function') args[callbackOffset + 1] = (...values) => {
+                        if (detailCurrent() && pageIndex === this.currentBattlePageIndex) return callback(...values);
+                    };
+                    return show.apply(editor, args);
+                };
+            }
             this._commandDialogs = list;
         }
         return this._commandDialogs;
@@ -1699,6 +1733,9 @@ class DatabaseTroopEditor {
     }
 
     editCommandSimple(cmd, idx, page) {
+        const detailCurrent = this.parentEditor?.captureDetailContext?.() || (() => true);
+        const pageIndex = this.currentBattlePageIndex;
+        const isCurrent = () => detailCurrent() && pageIndex === this.currentBattlePageIndex;
         const tt = text => window.I18n ? window.I18n.tText(text) : text;
         if (cmd.code === 0) return;
 
@@ -1716,6 +1753,7 @@ class DatabaseTroopEditor {
         };
         const replaceSingle = (editor, context) => {
             editor.show(cmd, edited => {
+                if (!isCurrent()) return;
                 if (!edited) return;
                 edited.indent = cmd.indent || 0;
                 page.list[idx] = edited;
@@ -1727,6 +1765,7 @@ class DatabaseTroopEditor {
             const run = ECL.messageBoxes().collectRun(page.list, idx);
             const messageEditor = this.getCommandEditor('message', MessageCommandEditor);
             messageEditor.show({ boxes: run.boxes, inBattle: true, activeIndex: run.activeIndex }, commands => {
+                if (!isCurrent()) return;
                 if (!commands?.length) return;
                 page.list.splice(run.startIndex, run.count);
                 ECL.rebaseInsertIndent(commands, cmd.indent || 0);
@@ -1742,6 +1781,7 @@ class DatabaseTroopEditor {
             const elseBranch = branches.find(branch => branch.marker?.code === 411);
             const elseBody = elseBranch ? elseBranch.body : null;
             this.getCommandEditor('conditionalBranch', ConditionalBranchEditor).show(cmd, commands => {
+                if (!isCurrent()) return;
                 if (!commands?.length) return;
                 page.list.splice(idx, endIndex - idx + 1);
                 ECL.rebaseInsertIndent(commands, cmd.indent || 0);
@@ -1771,6 +1811,7 @@ class DatabaseTroopEditor {
                 }
             }
             this.getCommandEditor('loop', LoopEditor).show(block, commands => {
+                if (!isCurrent()) return;
                 if (!commands?.length) return;
                 page.list.splice(start, range.end - start + 1, ...commands);
                 this.selectedCommandIndices = [start + (commands[0].code === 122 ? 1 : 0)];
@@ -1785,6 +1826,7 @@ class DatabaseTroopEditor {
         }
         if ([132, 133, 139, 241, 242, 245, 246, 249, 250, 251].includes(cmd.code)) {
             this.getCommandEditor('audio', AudioCommandEditor).show(cmd, cmd.code, edited => {
+                if (!isCurrent()) return;
                 if (!edited) return;
                 edited.indent = cmd.indent || 0;
                 page.list[idx] = edited;
@@ -1803,6 +1845,7 @@ class DatabaseTroopEditor {
             && typeof VideoSurfaceEditor.supports === 'function'
             && VideoSurfaceEditor.supports(cmd.parameters?.[1])) {
             this.getCommandEditor('videoSurface', VideoSurfaceEditor).show(cmd, edited => {
+                if (!isCurrent()) return;
                 if (!edited) return;
                 ECL.replaceContiguousBlock(page.list, idx, edited, 357, 657);
                 refresh();
@@ -1816,6 +1859,7 @@ class DatabaseTroopEditor {
             const continuationCommands = range
                 ? page.list.slice(range.start + 1, range.end + 1) : [];
             this.getCommandEditor('pluginCommand', PluginCommandEditor).show(cmd, commands => {
+                if (!isCurrent()) return;
                 if (!ECL.commandBlock(commands).length) return;
                 ECL.replaceContiguousBlock(page.list, idx, commands, cmd.code, 657);
                 refresh();
@@ -1901,6 +1945,7 @@ class DatabaseTroopEditor {
         modal.appendChild(dialog);
         // A click on the backdrop no longer closes the dialog: close deliberately.
         document.body.appendChild(modal);
+        this.commonUI?.databaseEditor?.registerDetailModal(modal);
     }
 
     // Command clipboard operations
@@ -1926,11 +1971,13 @@ class DatabaseTroopEditor {
     }
 
     async cutCommands(page, container) {
+        const isCurrent = this.parentEditor?.captureDetailContext?.() || (() => true);
         const targetTroop = this.currentTroop;
         const targetPageIndex = this.currentBattlePageIndex;
         const selected = [...this.selectedCommandIndices];
         const listSnapshot = JSON.stringify(page.list);
         const wrote = await this.copyCommands(page);
+        if (!isCurrent()) return;
         if (!wrote) {
             alert(window.I18n?.t('db.clipboardWriteFailed') || 'Could not write data to the clipboard.');
             return;
@@ -1953,6 +2000,7 @@ class DatabaseTroopEditor {
     }
 
     async pasteCommands(page, container) {
+        const isCurrent = this.parentEditor?.captureDetailContext?.() || (() => true);
         const targetTroop = this.currentTroop;
         const targetPageIndex = this.currentBattlePageIndex;
         const selected = [...this.selectedCommandIndices];
@@ -1960,6 +2008,7 @@ class DatabaseTroopEditor {
         let commands = null;
         if (typeof ReactorClipboard !== 'undefined') {
             const clipboardData = await ReactorClipboard.read('eventCommands');
+        if (!isCurrent()) return;
             commands = clipboardData?.payload?.commands || null;
         } else {
             commands = this.commandClipboard;
@@ -2092,11 +2141,13 @@ class DatabaseTroopEditor {
     }
 
     async pasteBattlePage() {
+        const isCurrent = this.parentEditor?.captureDetailContext?.() || (() => true);
         const targetTroop = this.currentTroop;
         const targetPageIndex = this.currentBattlePageIndex;
         let pageData = null;
         if (typeof ReactorClipboard !== 'undefined') {
             const clipboardData = await ReactorClipboard.read('troopEventPage');
+        if (!isCurrent()) return;
             pageData = clipboardData?.payload?.page || null;
         } else {
             pageData = this.battlePageClipboard;
@@ -2296,6 +2347,7 @@ class DatabaseTroopEditor {
         modal.appendChild(dialog);
         // A click on the backdrop no longer closes the dialog: close deliberately.
         document.body.appendChild(modal);
+        this.commonUI?.databaseEditor?.registerDetailModal(modal);
     }
 
     // ==========================================
@@ -2326,24 +2378,26 @@ class DatabaseTroopEditor {
     }
 
     attachMainListeners(container) {
-        setTimeout(() => {
-            const nameInput = document.getElementById('troop-name-input');
-            if (nameInput) {
-                nameInput.addEventListener('change', (e) => {
-                    this.currentTroop.name = e.target.value;
-                    this.persistTroop();
-                    const sel = document.querySelector('.database-list-item.selected span');
-                    if (sel) sel.textContent = e.target.value;
-                });
-            }
-            const noteInput = document.getElementById('troop-note-input');
-            if (noteInput) {
-                noteInput.addEventListener('change', (e) => {
-                    this.currentTroop.note = e.target.value;
-                    this.persistTroop();
-                });
-            }
-        }, 0);
+        const troop = this.currentTroop;
+        const isCurrent = this.parentEditor?.captureDetailContext?.() || (() => troop === this.currentTroop);
+        const nameInput = container.querySelector('#troop-name-input');
+        if (nameInput) {
+            nameInput.addEventListener('input', (e) => {
+                if (!isCurrent()) return;
+                troop.name = e.target.value;
+                this.persistTroop();
+                const sel = document.querySelector('.database-list-item.selected span');
+                if (sel) sel.textContent = e.target.value;
+            });
+        }
+        const noteInput = container.querySelector('#troop-note-input');
+        if (noteInput) {
+            noteInput.addEventListener('input', (e) => {
+                if (!isCurrent()) return;
+                troop.note = e.target.value;
+                this.persistTroop();
+            });
+        }
     }
 
     createSmallButton(label, onclick) {
@@ -2592,6 +2646,7 @@ class DatabaseTroopEditor {
     loadBattleUIAssets(project, path, done) {
         const setup = this.refreshBattleUISetup();
         if (!setup) return 0;
+        const isCurrent = this.parentEditor?.captureDetailContext?.() || (() => true);
         let started = 0;
         const track = (cache, key, dir, reference) => {
             if (!reference || cache[key]) return;
@@ -2611,8 +2666,8 @@ class DatabaseTroopEditor {
         if (!this.windowSkin && typeof window !== 'undefined' && window.RRWindowskin) {
             started++;
             window.RRWindowskin.load(path.join(project.path, 'img', 'system', 'Window.png'))
-                .then(record => { this.windowSkin = record; })
-                .catch(() => { this.windowSkin = null; })
+                .then(record => { if (isCurrent()) this.windowSkin = record; })
+                .catch(() => { if (isCurrent()) this.windowSkin = null; })
                 .then(done);
         }
         return started;

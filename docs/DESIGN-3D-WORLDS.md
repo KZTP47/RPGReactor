@@ -1,17 +1,22 @@
 # Building 3D worlds from 2D tilesets
 
-Written 2026-08-01; status current as of 2026-08-24. **Phases 1–3 and 8 are
-built**, 4 was built and dropped, and 5–7 are still a plan. Models on events and
-database records (the last row of the table) shipped separately in 0.98.2–0.98.3. The
-diagnosis below is kept in the past tense where it has been fixed, because it
-is the reasoning the implementation rests on.
+Written 2026-08-01; implementation status reviewed 2026-09-04.
+**Phases 1–3 and 8 are built**, the height brush was built and removed, and
+Block primitives and reusable structures remain planned. Model/event transform
+gizmos exist; they only partially cover the proposed general manipulation tool.
+See [current status](STATUS.md) for validation and outstanding work.
 
-The 3D view shipped in 0.96.0 infers three dimensions from a two-dimensional
-map. That was the right way to get something on screen, and it is the wrong way
-to build a world: inference cannot be corrected, only fought. This describes
-what to replace it with.
+The proposal sections below preserve the original problem analysis and intended
+authoring model. They are not a list of currently available tools. The phasing
+table, current data contract, and lighting section state what exists now.
 
-## What is actually wrong
+## Original diagnosis and proposal (2026-08-01)
+
+The 0.96.0 renderer inferred shapes from two-dimensional tiles. The following
+problems motivated explicit shape/material authoring. Wall faces, roof pairing,
+and Panels have since been implemented; the height-brush proposal was dropped.
+
+### Problems in the original renderer
 
 Not the rendering. The rendering does what it was told; it is being told too
 little, and guessing the rest.
@@ -38,7 +43,7 @@ tall whose top is that roof tile", so there is no way to author one.
 The through-line: the tileset says what art exists, the map says where it was
 painted, and nothing anywhere says what any of it *is in three dimensions*.
 
-## The shape of the answer
+### Proposed separation of massing and dressing
 
 **Separate massing from dressing.**
 
@@ -53,7 +58,7 @@ crater stands up like a rock and a gate spins like a bush. Separating them is
 most of the fix, and it costs little because the height field is already in the
 sidecar and already read by the renderer.
 
-## The primitive set
+### Proposed primitive set
 
 Five shapes, replacing the current four classes. A tile is assigned one, once,
 per tileset.
@@ -66,8 +71,8 @@ per tileset.
 | **Panel** | a thin upright quad with a real facing and a little thickness | gates, doors, signs, fences, banners |
 | **Billboard** | a camera-facing cut-out | trees, bushes, heaps, rocks, anything amorphous |
 
-Mass and Billboard exist. Ground exists. **Block** and **Panel** are the new
-work, and Panel is what a gate has been missing.
+At proposal time, Mass, Billboard, and Ground already existed; Block and Panel
+were new work. Panel is now implemented. Block remains planned.
 
 A Panel is not a billboard with rotation disabled — that was tried before
 0.96.0 and abandoned because a fixed plane vanishes edge-on. It vanishes
@@ -133,17 +138,19 @@ a wall kind's roof is the kind eight rows above it), the tile's own art, and
 finally a shade of the tile's average colour. The wall-top problem in the
 handoff is this feature's first customer.
 
-## Authoring: how a world actually gets built
+## Authoring proposal and current disposition
 
-Four tools, in the order an author would use them.
+Four tools were proposed. The height brush was subsequently removed; reusable
+structure stamping remains unbuilt. Model/event gizmos now provide transforms,
+but do not implement the whole proposed structure workflow.
 
-**1. A height brush, in the map editor.** Paint elevation the way tiles are
+**1. A height brush, in the map editor (removed).** The proposal was to paint elevation the way tiles are
 painted: a number, a brush size, drag to raise. The 3D view updates live. This
 is the single highest-value tool in the plan — with Mass tiles and derived
 facing, painting height is enough to build a city, and it is the literal answer
 to "build in 3D using the tiles".
 
-**2. Structures: draw once, stamp anywhere.** A structure is a named,
+**2. Structures: draw once, stamp anywhere (planned).** A structure is a named,
 multi-cell 3D object defined against a tileset — footprint, height per cell,
 shape per cell, art per face. Define "guard tower" once; stamp it forty times.
 
@@ -154,61 +161,53 @@ entry into `Map###.r3d.json` recording that those cells are one structure. The
 2D map is not a lossy shadow of the 3D one; it is the same map, and the sidecar
 says how to read it in three dimensions.
 
-**3. A shape mode in the tileset editor.** Exists, and gains the two new
-shapes, the material slots and the pairing tool. This is the once-per-tileset
+**3. A shape mode in the tileset editor.** Tileset classes, Panels, per-face
+materials, and roof pairing exist; the Block primitive remains planned. This is the once-per-tileset
 setup that everything else rests on.
 
-**4. Direct manipulation in the 3D view.** Select an object, turn it, raise it,
-drop it. The 3D view is already interactive — it paints, selects and opens
-event menus — so this is an extension of a live surface, not a new one.
+**4. Direct manipulation in the 3D view (partly implemented).** Models and
+events have transform controls, including height. A generic manipulation tool
+for the planned tileset structures is still unbuilt.
 
-## Data and compatibility
+## Current data and compatibility
 
-Nothing here changes `Map###.json`, `Tilesets.json` or any other RPG Maker
-file. That is the constraint the whole design serves.
+Reactor retains RPG Maker's map grid and database organization. Its 3D geometry,
+model bindings, and poses primarily live in sidecars:
 
+```text
+Tilesets.r3d.json     tile classes, materials, and tileset object definitions
+Map###.r3d.json       room, camera, lights, props, event poses, and map 3D data
+Database.r3d.json     actor/enemy/weapon/armor/item model bindings
+3d/<folder>/model.json      model parts, animations, and named effects
+3d/<folder>/model.rig.bin   authored rig data when present
 ```
-Tilesets.r3d.json     shape + material per tile, structure definitions
-Map###.r3d.json       elevation, structure placements, per-placement facing,
-                      the room (floor/walls/ceiling parallaxes + height)
-```
 
-- A project with no 3D maps gains no files and never downloads three.js.
-- The camera is a mode plus overrides (`reactor3d.camera`): fixed (HD-2D),
-  top-down, isometric, third person, first person. Fixed follows the display
-  like the 2D map, so scroll, zoom and camera plugins keep working; the
-  player-relative modes follow the player and turn with them. The mouse
-  owns the look in those modes; the third-person camera never goes under
-  the floor (it slides in as you look up), and the character looks where
-  the camera looks.
-- Model props (`reactor3d.props`) are 3D models placed from the palette. The
-  game does not learn a second kind of thing: each becomes a model-bound
-  event at load (ids from 10000), so drawing, facing and footprint collision
-  are the event model's.
-- Model effects live in the model's own `model.json` (`effects[]`): a
-  database animation or a video surface anchored to a part or bone, scaled
-  relative to the model (1 = a frame as tall as the model's longest side, at
-  whatever size the instance is placed), played on demand or by state; an
-  effect on one face of the model hides when that face turns away. Drawn by
-  the game's ordinary animation sprites over the 3D canvas, so plugins that
-  touch animations still apply.
-- The player start's facing is the one key added to an MZ file:
-  `System.json.startDirection`, which MZ ignores and Reactor defaults to down.
-- The room is three parallax images and a height. Walls and ceiling show
-  their inside face only, so the over-the-shoulder camera looks through the
-  near wall and the ceiling into the room; a camera inside sees all of it.
-- A 3D map opened in RPG Maker MZ is an ordinary map; the sidecars are ignored.
-- Game logic — `Game_Map`, passability, regions, the interpreter — is untouched,
-  because 3D remains a *view* of the same six planes.
-- Plugins keep working: PIXI still draws every window, picture, animation and
-  plugin sprite over the 3D canvas, exactly as it does over the 2D one.
-- **One real conflict**: a plugin that replaces the tilemap itself — UltraMode7
-  is the obvious case, being a renderer of its own. A map should decline 3D
-  when such a plugin is active, rather than both fighting for the same view.
-  Detection and a clear console note; not an attempt to merge them.
+Reusable structure stamping is a proposal; the schema sketch in the original
+plan is not an implemented structure library. New sidecars do not imply that
+all stock JSON is byte-identical: the editor can store a `<3d>` note marker and
+`System.json.startDirection`, and other Reactor features have optional stock-data
+extensions. Saving a project again in RPG Maker may discard extensions it does
+not preserve.
 
-Existing 3D maps keep rendering. The current inference stays as the fallback
-for any tile whose shape is unset, so nothing regresses on the day this lands.
+- Three.js loads on demand. A plain 2D game does not need the 3D library;
+  opening a model preview in the editor can still load it.
+- Camera modes are fixed HD-2D, top-down, isometric, third person, and first
+  person, with authored overrides and event-driven transitions.
+- Model props become runtime model-bound events with generated IDs, sharing
+  character facing and model collision. Height and swept footprints extend
+  movement/passability; the game logic is no longer wholly untouched by 3D.
+- Named effects can be animations, video/image surfaces, or lights, anchored to
+  a model part or bone. In-world animation/video surfaces use scene depth and
+  model-relative placement. They are not merely sprites over the finished frame.
+- Rooms use floor, wall, and ceiling images; walls and ceiling face inward.
+- Stock RPG Maker ignores the sidecars and cannot reproduce Reactor's 3D
+  behavior. Ordinary map data remains readable.
+- PIXI still owns ordinary game windows, pictures, and plugin sprites. The
+  default Three.js viewport shares its WebGL context and must restore state
+  before PIXI draws; a canvas-copy fallback remains.
+- Renderer-replacing plugins need individual compatibility handling. Running a
+  plugin stack on one project is not a blanket guarantee that every renderer
+  override composes with a 3D map.
 
 ## Phasing
 
@@ -222,14 +221,14 @@ Ordered by payoff per unit of work, not by dependency. Each step is shippable.
 | 4 | ~~Height brush in the map editor~~ | Built, then removed: nothing on a real 3D map used it, because the massing comes from the tileset's 3D classes. | Dropped |
 | 5 | **Block shape** | Crates, plinths, furniture — the small stuff. | Open |
 | 6 | **Structures: define, stamp, place** | Building a world becomes fast rather than possible. See *Where one structure ends* below. | Open |
-| 7 | **Direct manipulation in the 3D view** | Comfort. Everything above is usable without it. | Open |
+| 7 | **Direct manipulation in the 3D view** | Model/event gizmos exist; generic tileset-structure manipulation is still planned. | Partial |
 | 8 | **Lights as 3D lights** | A lantern becomes a sphere, a torch a cone. | **Done** |
-| — | **Event and database meshes** (sidecar, not a tileset class) | An event, actor, enemy, weapon, armor, or item can carry a GLB/OBJ/… from `3d/<folder>/source`. Pose and facing live in `Map###.r3d.json` / `Database.r3d.json`; parts, pivots, rigs, and animations in the model's own `model.json`. Footprint collision, turn sweeps, and per-pixel character depth are done. | **Done (0.98.2–0.98.3)** |
+| — | **Event and database meshes** (sidecar, not a tileset class) | An event, actor, enemy, weapon, armor, or item can carry a GLB/OBJ/… from `3d/<folder>/source`. Pose and facing live in `Map###.r3d.json` / `Database.r3d.json`; parts, pivots, rigs, and animations in the model's own `model.json`. Footprint collision, turn sweeps, and per-pixel character depth are done. Weapon/armor/item bindings are stored but not rendered as equipment. | **Implemented; equipment rendering open** |
 
 Steps 1–3 are corrections to what exists and touch the runtime almost
 exclusively. Steps 4–7 are new authoring surface and are mostly editor work.
 
-A reasonable first cycle is 1, 2 and 3: they need no new UI, no new file
+The first proposed cycle was 1, 2 and 3 (now completed): they need no new UI, no new file
 format beyond the material map, and between them they fix every specific
 complaint on record — the gate that follows the camera, the building that is a
 single plane, and the wall wearing its own face as a hat.
@@ -283,63 +282,48 @@ is a *walk*: drive the camera along both axes and watch a sign's top edge
 against the wall course it should meet — a gap that changes as you move is the
 defect, and a gap that holds is not.
 
-## Lighting in three dimensions
+## Current lighting in three dimensions
 
-**Built.** What follows is the reasoning it was built on, kept because the shim
-boundary is the part that will need defending.
+The original implementation drew flat light pools. The default volume path now
+packs up to 32 volume lights (`SHADER_LIGHTS`) into shared shader uniforms. `litMaterial` patches
+basic materials to evaluate `rrLight(worldPosition)` from distance, color,
+intensity, and point/spot/beam shape. Tiles, room surfaces, models, and character
+surfaces receive this field. Surface normals and normal maps do not contribute
+an N·L lighting term. The old flat path remains an explicit alternative.
 
-**The rendering half looked small and the obvious version was wrong.** Adding a
-`THREE.PointLight` per light is a contained change and it does not survive a
-real map: three.js compiles the scene's light count into every material's
-shader, so a city with a lantern on every corner overruns the fragment uniform
-budget and nothing draws at all. Capping the count to fit is not a fix — twelve
-lights on a street of a hundred is not lighting.
+Native map lights, supported plugin adapters (MV Nova Lighting and RaveLighting),
+and model-attached light effects supply the field. `Reactor3D.setLights(lights)`
+accepts a transient external list; it does not save or author map-sidecar lights.
+The current implementation and normalization are in `runtime/reactor_3d.js`;
+use the native Lighting tool and effect editor for persistent authored lights.
 
-The way out is to notice that a 2D lighting plugin never simulated anything
-either. Its light *is* a shape — a radius, a colour, an alpha — so it can be
-drawn: a quad on the ground per light, one shared geometry and material for all
-of them, one draw call, no uniforms. A single ambient light supplies the
-darkness. Cut-outs are dimmed by the ambient level rather than shaded, because
-a billboard's normals mean nothing once the shader turns it to face the
-camera.
+Shadows use one static and one dynamic depth atlas. Each assigned light gets
+six face tiles in a row. Full quality provides 8 static and 3 dynamic rows at
+512 pixels per face; weak quality provides 4 and 2 at 256. A light's casting
+flag makes it eligible, not guaranteed: row and triangle budgets still apply.
+Rows prioritize light incident on the player, skip empty faces, and refresh
+when relevant casters or lights move within per-frame limits. Model effect
+lights exclude their carrier from their own passes to avoid blocking the light
+at its source. The two compare-mode textures are unbound before PIXI draws.
 
-**The hard half is where the lights come from.** A game's lights live in a
-third-party plugin's own data — MVNovaLighting, or whatever the project uses —
-and Reactor cannot read that without binding itself to one plugin's internals.
-The answer is to publish an API and let a shim do the binding:
+This is shared rendering infrastructure: the game, map editor, and database
+previews use related materials and light state, but own different viewport and
+resource lifecycles. A successful shader/source test alone cannot establish
+that their displayed results agree. See [current validation limits](STATUS.md).
 
-```
-Reactor3D.setLights([
-  { type: 'point', x, y, z, radius, colour, intensity },
-  { type: 'spot',  x, y, z, yaw, pitch, angle, range, colour, intensity }
-])
-```
+### Historical approach: flat pools
 
-Then a small compat shim per lighting plugin translates its light list into
-that call each frame — the same shape as the MV compat layer, and the same
-reason: the plugin stays unmodified.
-
-What was actually built follows that plan, with two decisions worth recording.
-
-**Cut-outs are dimmed, not shaded.** A billboard's normals mean nothing — the
-shader rewrites its vertices to face the camera — so lighting one by them gives
-a tree lit from whichever way its sheet happened to be wound. They take the
-ambient level as a flat multiplier, which darkens a wood in a dark place
-without pretending it catches a lantern on one side.
-
-**One material, always.** Solid geometry uses `MeshLambertMaterial` even with
-no lights, because under a full-white ambient that is pixel for pixel what
-`MeshBasicMaterial` gave. So an unlit map is unchanged and a map that acquires
-lights needs no rebuild — only different lights.
-
-Still flat: the plugin's own overlays for anything that is not a light, and
-light *sprites* do not scale with distance. Both would need the shim to reach
-further into the plugin than hiding a container.
+The first light implementation avoided creating a `THREE.PointLight` for every
+plugin lamp. It drew ground quads and applied ambient-only dimming to cut-outs;
+solid geometry used `MeshLambertMaterial`. That description explains the initial
+choice and the retained flat mode, but it does not describe today's default
+volume shader or atlas shadows.
 
 ## What this does not attempt
 
-- **Sloped or curved geometry.** Everything is axis-aligned boxes and quads.
-  Ramps are stepped. This is an HD-2D diorama, not a modelling package.
+- **Sloped or curved terrain from tile primitives.** Tile-derived terrain uses
+  boxes and quads; imported models can have arbitrary geometry. This proposal
+  does not add a general terrain modeller.
 - **3D battles.** The battle scene stays 2D. A bound enemy or actor renders as
   a live 3D battler on its sprite (0.98.3), but there is no 3D battlefield.
 - **Per-vertex authored meshes from tiles.** If a project needs a genuine model,

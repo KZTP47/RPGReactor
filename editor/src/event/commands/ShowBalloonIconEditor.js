@@ -235,7 +235,7 @@ class ShowBalloonIconEditor {
             balloonBtn.style.cssText = `
                 padding: 8px;
                 background-color: ${isSelected ? 'var(--color-accent)' : 'var(--color-bg-input)'};
-                color: var(--color-text-strong);
+                color: ${isSelected ? 'var(--color-bg-deep)' : 'var(--color-text-strong)'};
                 border: 2px solid ${isSelected ? 'var(--color-accent)' : 'var(--color-border-input)'};
                 border-radius: 3px;
                 cursor: pointer;
@@ -296,7 +296,7 @@ class ShowBalloonIconEditor {
 
             balloonBtn.addEventListener('mouseenter', () => {
                 if (!isSelected) {
-                    balloonBtn.style.backgroundColor = '#3d3d3d';
+                    balloonBtn.style.backgroundColor = 'var(--color-bg-hover)';
                     balloonBtn.style.borderColor = 'var(--color-text-dim)';
                 }
             });
@@ -427,6 +427,7 @@ class ShowBalloonIconEditor {
             const isSelected = (this.balloonId === balloonIndex);
 
             btn.style.backgroundColor = isSelected ? 'var(--color-accent)' : 'var(--color-bg-input)';
+            btn.style.color = isSelected ? 'var(--color-bg-deep)' : 'var(--color-text-strong)';
             btn.style.borderColor = isSelected ? 'var(--color-accent)' : 'var(--color-border-input)';
 
             const nameLabel = btn.querySelector('div');

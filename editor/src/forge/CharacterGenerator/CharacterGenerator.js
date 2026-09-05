@@ -3564,7 +3564,7 @@ ${sheetJs}
         const status = this.root?.querySelector?.('.rr-cgp-template-status');
         if (!status) return;
         status.textContent = message || '';
-        status.style.color = isError ? 'var(--color-danger, #ff6b6b)' : 'var(--color-text-dim)';
+        status.style.color = isError ? 'var(--color-danger-bright, #ff6b6b)' : 'var(--color-text-dim)';
     }
 
     _openTemplateImageChooser() {

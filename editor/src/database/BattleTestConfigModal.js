@@ -195,7 +195,7 @@ class BattleTestConfigModal {
             const removeBtn = document.createElement('button');
             removeBtn.textContent = '\u2212';
             removeBtn.title = this._t('Remove selected party member');
-            removeBtn.style.cssText = 'padding: 4px 10px; background-color: var(--color-bg-menubar); color: #f44; border: 1px solid var(--color-border-input); border-radius: 3px; cursor: pointer; font-size: 14px;';
+            removeBtn.style.cssText = 'padding: 4px 10px; background-color: var(--color-bg-menubar); color: var(--color-danger-bright); border: 1px solid var(--color-border-input); border-radius: 3px; cursor: pointer; font-size: 14px;';
             removeBtn.onmouseenter = () => { removeBtn.style.backgroundColor = 'rgba(255, 100, 100, 0.2)'; };
             removeBtn.onmouseleave = () => { removeBtn.style.backgroundColor = 'var(--color-bg-menubar)'; };
             removeBtn.onclick = () => this.removeBattler();

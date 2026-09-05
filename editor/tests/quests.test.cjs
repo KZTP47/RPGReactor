@@ -433,3 +433,18 @@ test("Reactor's quest file and global never shadow a plugin's", () => {
     assert.doesNotMatch(editor, /['"]Quests\.json['"]/);
     assert.match(editor, /ReactorQuests\.json/);
 });
+
+for (const name of ['QuestSet', 'QuestObjective', 'QuestReward', 'OpenQuestLog']) {
+    test(`${name} has an explicit unavailable state when the database has no quests`, () => {
+        const node = () => ({ style: {}, value: '', listeners: {}, addEventListener(type, fn) { this.listeners[type] = fn; } });
+        const quest = node(), index = node(), ok = node(), action = node();
+        const modal = { style: {}, querySelector: selector => ({ '.qc-quest': quest, '.qc-index': index, '.qc-ok': ok, '.qc-action': action })[selector], querySelectorAll: () => [] };
+        const context = { window: {}, document: { createElement: () => modal, body: { appendChild() {} } } };
+        vm.runInNewContext(read('editor/src/event/commands/QuestCommandEditor.js') + '\n;globalThis.Editor = QuestCommandEditor;', context);
+        const editor = new context.Editor({ getQuests: () => [null] });
+        editor.show(null, () => {}, name);
+        assert.equal(ok.disabled, name !== 'OpenQuestLog');
+        assert.match(modal.innerHTML, name === 'OpenQuestLog' ? /the log itself/ : /No quests in the database yet/);
+        quest.value = '1';quest.listeners.change();assert.equal(ok.disabled,false);
+    });
+}

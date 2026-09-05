@@ -47,6 +47,7 @@ function loadI18nForTest(savedSettings = null) {
     const result = vm.runInNewContext(`${source}\n({
         RR_LANGUAGES,
         RR_I18N_STRINGS,
+        dbTypes: RR_DB_TYPE_KEYS,
         reviewed: globalThis.RR_REVIEWED_TRANSLATIONS,
         catalogs: {
             text: RR_TEXT_TRANSLATIONS,
@@ -501,4 +502,49 @@ test('reviewed Polish covers every event command and section', () => {
             `reviewed Polish ${catalog} covers the complete catalog`
         );
     }
+});
+
+test('key interpolation preserves literal user filenames and does not expand inserted placeholders', () => {
+    const { manager, RR_I18N_STRINGS } = loadI18nForTest();
+    RR_I18N_STRINGS.en['audit.literal'] = 'File {name}: {count}';
+    const name = "$&-$`-$'-{count}";
+    assert.equal(manager.t('audit.literal', { name, count: 4 }), `File ${name}: 4`);
+    assert.equal(manager.t('audit.literal', { name }), `File ${name}: {count}`);
+});
+
+test('source inventory follows default-parameter helpers past interpolated templates', () => {
+    const source = 'class Editor {\n _t(text, params = {}) { return window.I18n.tText(text); }\n render() { const dynamic = `value ${this.value}`; this._t("Face points"); }\n}';
+    assert.ok(inventoryLocalizationSource(source).has('Face points'));
+    const markers = "const markers = [{ label: 'Upper lip' }, { label: 'Lower lip' }];";
+    assert.deepEqual([...inventoryLocalizationSource(markers, 'src/database/ModelRigger.js').keys()], ['Upper lip', 'Lower lip']);
+});
+
+test('source inventory follows inherited literal helpers without treating overridden key helpers as text', t => {
+    const os = require('node:os');
+    const { inventoryEditorLocalization } = require('./helpers/i18n-source-audit.cjs');
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-i18n-inherit-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    fs.mkdirSync(path.join(root, 'src')); fs.writeFileSync(path.join(root, 'index.html'), '');
+    fs.writeFileSync(path.join(root, 'src', 'Base.js'), 'class Base {\n _t(text, params = {}) { return window.I18n.tText(text); }\n}');
+    fs.writeFileSync(path.join(root, 'src', 'Child.js'), 'class Child extends Base {\n render() { this._t("Inherited phrase"); }\n}');
+    fs.writeFileSync(path.join(root, 'src', 'Keys.js'), 'class Keys extends Base {\n _t(key) { return window.I18n.t(key); }\n render() { this._t("key.only"); }\n}');
+    const phrases = inventoryEditorLocalization(root).map(row => row.phrase);
+    assert.ok(phrases.includes('Inherited phrase'));
+    assert.ok(!phrases.includes('key.only'));
+});
+
+
+test('every database navigation category has a localized keyed title', () => {
+    const { manager, RR_LANGUAGES, dbTypes, RR_I18N_STRINGS } = loadI18nForTest();
+    const source = fs.readFileSync(path.join(repoRoot,'src/DatabaseEditorUI.js'),'utf8');
+    const start=source.indexOf('const categories = [');
+    assert.ok(start>=0);
+    const catalog=source.slice(start,source.indexOf('];',start));
+    const types=[...catalog.matchAll(/type: '([^']+)'/g)].map(m=>m[1]);
+    assert.equal(types.length,19);
+    for(const type of types) {
+        const key=dbTypes[type];assert.ok(key,`${type} needs a database title key`);
+        for(const {id} of RR_LANGUAGES)assert.ok(RR_I18N_STRINGS[id][key],`${id}: ${type}`);
+    }
+    manager.language='ar';assert.equal(manager.tDbType('reactor3d','3D Models'),'نماذج ثلاثية الأبعاد');
 });

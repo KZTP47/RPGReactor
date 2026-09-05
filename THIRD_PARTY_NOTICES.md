@@ -189,12 +189,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 - Upstream: <https://github.com/nwjs-ffmpeg-prebuilt/nwjs-ffmpeg-prebuilt>
 - Build scripts for NW.js 0.107.0, commit `44c5d44e78c457149c8bee98aeca9a7bb1d5659c`: <https://github.com/nwjs-ffmpeg-prebuilt/nwjs-ffmpeg-prebuilt/tree/44c5d44e78c457149c8bee98aeca9a7bb1d5659c>
 - Corresponding FFmpeg source, commit `e18f48eba6b367ac68b9c477ae6cbe224e36b031`: <https://chromium.googlesource.com/chromium/third_party/ffmpeg/+archive/e18f48eba6b367ac68b9c477ae6cbe224e36b031.tar.gz>
-- License: GNU Lesser General Public License v2.1 or later. The complete text ships as `build-scripts/licenses/FFmpeg-LGPL-2.1.txt` and beside every installed overlay.
+- License: GNU Lesser General Public License v2.1 or later. The complete text is in `editor/build-scripts/licenses/FFmpeg-LGPL-2.1.txt` in the source tree and beside every installed overlay.
 
 Eligible full desktop editor and game packages enable this optional overlay by
 default to provide H.264/AVC and AAC playback; users may disable it. Minimal and
 Web packages do not contain it. Acquisition requires an exact NW.js release
-match, a trusted archive SHA-256 from `build-scripts/release-hashes.json`, and
+match, a trusted archive SHA-256 from `editor/build-scripts/release-hashes.json` in the source tree, and
 validation of the single expected platform binary. Disabling the overlay uses a
 clean official runtime rather than reusing a previously patched one. The build
 records its exact NW.js version and archive/binary SHA-256 values, immutable

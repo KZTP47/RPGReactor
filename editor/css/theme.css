@@ -51,6 +51,7 @@
     --color-selection-mid:        #1e3a52;        /* hover-selected blue */
 
     /* ---------- Danger / red palette (form errors, destructive UI) -------- */
+    --color-warning-text:         #ffd083;
     --color-danger-bright:        #ff6b6b;
     --color-danger-light:         #ff8080;
     --color-danger-soft:          #c94646;
@@ -187,7 +188,8 @@
     --color-selection-mid:        #d6ecff;        /* hover-selected */
 
     /* ---------- Danger / red palette ------------------------------------- */
-    --color-danger-bright:        #c83232;
+    --color-warning-text:         #785000;
+    --color-danger-bright:        #a82222;
     --color-danger-light:         #d44a4a;
     --color-danger-soft:          #a22020;
     --color-danger-pressed:       #b30000;
@@ -386,7 +388,8 @@
     --color-selection-mid:        #d6ecff;
 
     /* ---------- Danger / red palette ------------------------------------- */
-    --color-danger-bright:        #c83232;
+    --color-warning-text:         #785000;
+    --color-danger-bright:        #a82222;
     --color-danger-light:         #d44a4a;
     --color-danger-soft:          #a22020;
     --color-danger-pressed:       #b30000;
@@ -523,7 +526,8 @@
     --color-selection-mid:        #d6ecff;
 
     /* ---------- Danger / red palette ------------------------------------- */
-    --color-danger-bright:        #c83232;
+    --color-warning-text:         #785000;
+    --color-danger-bright:        #a82222;
     --color-danger-light:         #d44a4a;
     --color-danger-soft:          #a22020;
     --color-danger-pressed:       #b30000;
@@ -661,7 +665,8 @@
     --color-selection-mid:        #d6ecff;
 
     /* ---------- Danger / red palette ------------------------------------- */
-    --color-danger-bright:        #c83232;
+    --color-warning-text:         #785000;
+    --color-danger-bright:        #a82222;
     --color-danger-light:         #d44a4a;
     --color-danger-soft:          #a22020;
     --color-danger-pressed:       #b30000;
@@ -791,7 +796,8 @@
     --color-selection-deep:       #b3dcff;
     --color-selection-mid:        #d6ecff;
 
-    --color-danger-bright:        #c83232;
+    --color-warning-text:         #785000;
+    --color-danger-bright:        #a82222;
     --color-danger-light:         #d44a4a;
     --color-danger-soft:          #a22020;
     --color-danger-pressed:       #b30000;
@@ -916,7 +922,8 @@
     --color-selection-deep:       #b3dcff;
     --color-selection-mid:        #d6ecff;
 
-    --color-danger-bright:        #c83232;
+    --color-warning-text:         #785000;
+    --color-danger-bright:        #a82222;
     --color-danger-light:         #d44a4a;
     --color-danger-soft:          #a22020;
     --color-danger-pressed:       #b30000;
@@ -1054,7 +1061,8 @@
     --color-selection-mid:        #d6ecff;
 
     /* ---------- Danger / red palette ------------------------------------- */
-    --color-danger-bright:        #c83232;
+    --color-warning-text:         #785000;
+    --color-danger-bright:        #a82222;
     --color-danger-light:         #d44a4a;
     --color-danger-soft:          #a22020;
     --color-danger-pressed:       #b30000;

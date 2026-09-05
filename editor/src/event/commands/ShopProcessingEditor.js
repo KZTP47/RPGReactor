@@ -176,7 +176,7 @@ class ShopProcessingEditor {
             // Remove button
             const removeBtn = document.createElement('button');
             removeBtn.textContent = 'X';
-            removeBtn.style.cssText = 'padding: 4px 8px; background-color: #5a1d1d; color: var(--color-text-strong); border: 1px solid #8b3030; border-radius: 3px; cursor: pointer; font-size: 12px;';
+            removeBtn.style.cssText = 'padding: 4px 8px; background-color: var(--color-danger); color: var(--color-text-strong); border: 1px solid var(--color-danger-border); border-radius: 3px; cursor: pointer; font-size: 12px;';
             removeBtn.addEventListener('click', () => {
                 if (this.goods.length > 1) {
                     this.goods.splice(index, 1);

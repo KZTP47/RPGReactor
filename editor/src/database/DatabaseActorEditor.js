@@ -602,8 +602,6 @@ class DatabaseActorEditor {
                 { label: 'Copy', action: () => this.copyTrait(actor, traitIndex), disabled: traitIndex === null },
                 { label: 'Paste', action: () => this.pasteTrait(actor, traitIndex), disabled: false },
                 { label: 'Delete', action: () => this.deleteTrait(actor, traitIndex), disabled: traitIndex === null },
-                { divider: true },
-                { label: 'Select All', action: () => this.selectAllTraits(actor) }
             ];
 
             menuItems.forEach(item => {
@@ -737,12 +735,6 @@ class DatabaseActorEditor {
         this.refreshActorDetail(actor);
     }
 
-    /**
-     * Select all traits
-     */
-    selectAllTraits(actor) {
-        console.log('Select all traits');
-    }
 
     /**
      * Refresh the actor detail view after changes

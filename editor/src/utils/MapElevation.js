@@ -388,6 +388,8 @@
             animations: names(raw.animations, raw.animation),
             animation: names(raw.animations, raw.animation)[0] || '',
             repeat: raw.repeat === true || raw.repeat === 'true',
+            ...(raw.animationSpeed == null || Number(raw.animationSpeed) === 100 ? {}
+                : { animationSpeed: Math.max(1, Math.min(1000, number(raw.animationSpeed, 100))) }),
             effects: names(raw.effects, raw.effect),
             effect: names(raw.effects, raw.effect)[0] || ''
         };

@@ -114,6 +114,10 @@ test('the shadow variant of the light shader reads two atlases, however many lig
 
     const hard = Reactor3D.lightGlsl(true, 1);
     assert.match(hard, /#define RR_SHADOW_TAPS 1/);
+    for (const shader of [plain, soft, hard]) {
+        assert.match(shader, /fall \*= smoothstep\(aim\.w, mix\(aim\.w, 1\.0, 0\.35\), c\);\n\t\t\tif \(fall <= 0\.0\) continue;\n\t\t}/,
+            'zero spotlight contribution exits before any shadow fetch or light accumulation');
+    }
 });
 
 test('a lit material takes the shadow variant only while shadows are active, and keys its program apart', () => {
@@ -190,10 +194,24 @@ test('slots go to the nearest casters and stay put while their light stays chose
     const third = shadows.assign([b, a], 2, [{ id: 'a' }, { id: 'b' }]);
     assert.deepEqual(third.map(s => s.id), ['a', 'b']);
     assert.deepEqual(shadows.assign([], 2, first), [null, null]);
-    // A rank outranks the gap: the torch in hand (reach 3, on the focus) before the hall's screen glow (reach 50, twelve tiles off).
-    const torch = { id: 'torch', gap: -3, rank: 0 };
-    const glow = { id: 'glow', gap: -38, rank: 12 };
-    assert.deepEqual(shadows.assign([glow, torch], 1, null).map(s => s.id), ['torch']);
+    // A rank outranks the gap.
+    const torch = { id: 'torch', gap: -3, rank: -0.2 };
+    const glow = { id: 'glow', gap: -38, rank: -0.8 };
+    assert.deepEqual(shadows.assign([torch, glow], 1, null).map(s => s.id), ['glow']);
+    // The rank is the light landing on the player: the screen shining down on them from ten tiles
+    // (spot, reach 50) outranks the torch in their hand lighting the floor (reach 6, the focus on its edge).
+    const focus = { x: 25, y: 0, z: 50 };
+    const screen = { x: 30, y: 10, lightY: 10, z: 42, radius: 50, gap: -40, spot: true, ax: -0.44, ay: -0.8, az: 0.4, cosHalf: Math.cos(Math.PI / 5), strength: 1.25 };
+    const hand = { x: 25, y: 3, lightY: 3, z: 50, radius: 6, gap: -6, spot: true, ax: 0, ay: -1, az: 0, cosHalf: Math.cos(Math.PI / 6), strength: 1 };
+    const away = { x: 25, y: 10, lightY: 10, z: 60, radius: 50, gap: -40, spot: true, ax: 0, ay: 0, az: 1, cosHalf: Math.cos(Math.PI / 8), strength: 1.25 };
+    const far = { x: 5, y: 1, lightY: 1, z: 5, radius: 3, gap: 40, spot: false, strength: 1 };
+    assert.ok(shadows._incident(screen, focus) > shadows._incident(hand, focus), 'the screen lands more light on the body than the torch aimed at the floor');
+    assert.ok(shadows._incident(away, focus) < shadows._incident(screen, focus) / 5, 'a screen aimed away barely counts');
+    assert.equal(shadows._incident(far, focus), 0, 'out of reach lands nothing');
+    assert.ok(shadows._rankFor(screen, focus) < shadows._rankFor(hand, focus));
+    assert.ok(shadows._rankFor(hand, focus) < shadows._rankFor(away, focus));
+    assert.ok(shadows._rankFor(far, focus) > 2e4);
+    assert.equal(shadows._incident(screen, null), 0, 'no focus, no ranking');
     assert.deepEqual(shadows.assign([a], 3, null).map(s => s && s.id), ['a', null, null]);
 });
 
@@ -215,8 +233,10 @@ test('syncVolumeLights hands the shadow module every light that may cast, ranked
         assert.equal(handed[0].id, 'near');
         assert.equal(handed[0].index, 0, 'the slot is written back at the light\'s loop index');
         assert.equal(handed[0].gap, -3, 'distance to the focus minus reach');
-        assert.equal(handed[0].rank, 0, 'a light on the focus ranks first');
-        assert.ok(handed[1].rank > 1e4, 'one that stops short of the focus ranks after every one that covers it');
+        assert.equal(handed[0].lightY, 1, 'the row ranking sees where the light really is');
+        assert.equal(handed[0].strength, 1, 'and how bright it is');
+        assert.equal(handed[1].spot, true);
+        assert.ok(Math.abs(handed[1].cosHalf - Math.cos(Math.PI / 8)) < 1e-6 || handed[1].cosHalf > 0, 'and its cone');
         assert.equal(handed[0].x, 1.5);
         assert.equal(handed[0].y, 1, 'a light a tile up is its own shadow source');
         assert.equal(handed[0].z, 2);
@@ -427,9 +447,9 @@ test('the dynamic budget is measured from the player, and a party of two reduced
         assert.deepEqual(focus, { x: 10, y: 0, z: 10 }, 'the focus is the player model, not the eye');
 
         const saved = shadows._quality;
-        shadows._quality = { dynamicTriangles: 120000 };
+        shadows._quality = { dynamicTriangles: 200000 };
         let result = shadows._budgetDynamic(focus);
-        assert.equal(result.casters, 1, 'one character fits a 120k budget');
+        assert.equal(result.casters, 1, "one character fits the weak tier's budget");
         assert.ok(shadows._casting.has(player), 'and it is the player, however near the follower stands to the camera');
         assert.ok(!shadows._casting.has(follower));
 
@@ -437,6 +457,8 @@ test('the dynamic budget is measured from the player, and a party of two reduced
         delete global.Graphics;
         result = shadows._budgetDynamic(focus);
         assert.equal(result.casters, 2, 'the full tier fits both reduced characters');
+        assert.equal(Reactor3D.SHADOW_QUALITY.weak.dynamicTriangles, 200000, 'a reduced character casts on the weak tier too');
+        assert.equal(Reactor3D.SHADOW_QUALITY.weak.dynamicInterval, 2, 'at half rate');
         assert.ok(shadows._casting.has(follower) && shadows._casting.has(player));
         shadows._quality = saved;
     } finally {
@@ -461,12 +483,16 @@ test('both viewports render the maps once a frame before the first pass, and the
     assert.match(three, /geometry\.translate\(width \/ 2, lift, height \/ 2\);[\s\S]{0,2600}?material\.__reactorShaded = true;\n\s*Reactor3D\.litMaterial\(material\);\n\s*this\._materials\.push\(material\);\n\n\s*const mesh = new THREE\.Mesh\(geometry, material\);\n\s*\/\/ Beneath the tile geometry/);
     // The static rows draw models at their coarsest level, through three's ordinary render with the casters swapped to depth materials.
     assert.match(three, /const swapped = this\._swapCasters\(this\._static\);\s*try \{\s*this\._atCoarsestLod\(\(\) => \{/);
-    assert.match(three, /Reactor3D\.SHADOW_LAYER_STATIC, this\._static\);/);
+    assert.match(three, /Reactor3D\.SHADOW_LAYER_STATIC, this\._static, tile\.candidate && tile\.candidate\.carrier\);/, 'a light never shadows from the model it rides');
+    assert.match(three, /Reactor3D\.SHADOW_LAYER_DYNAMIC, roots, tile\.candidate && tile\.candidate\.carrier\);/);
+    assert.match(three, /const hide = exclude && exclude\.parent && exclude\.visible \? exclude : null;\s*if \(hide\) hide\.visible = false;/);
+    assert.match(three, /body: spec\.body,\n[\s\S]{0,300}?carrier: object\n\s*\};/, 'a model effect light names its carrier');
+    assert.match(three, /carrier: light\.carrier \|\| null\n\s*\}\);/, 'and the candidate carries it to the rows');
     // A nested render must not walk the scene's matrices six times a row, nor paint a background into the atlas.
     assert.match(three, /renderer\.autoClear = false;\s*scene\.matrixWorldAutoUpdate = false;\s*scene\.background = null;/);
     assert.match(three, /renderer\.setRenderTarget\(target\);\s*renderer\.autoClear = autoClear;\s*scene\.matrixWorldAutoUpdate = autoUpdate;\s*scene\.background = background;/);
     // Each face is scissored, cleared and, only when a caster stands in it, drawn.
-    const face = three.slice(three.indexOf('_renderTile(renderer, scene, atlas, row, origin, far, layer, roots) {'), three.indexOf('\n    },', three.indexOf('_renderTile(renderer, scene, atlas, row, origin, far, layer, roots) {')));
+    const face = three.slice(three.indexOf('_renderFaces(renderer, scene, target, size, row, origin, camera, mask) {'), three.indexOf('\n    },', three.indexOf('_renderFaces(renderer, scene, target, size, row, origin, camera, mask) {')));
     assert.match(face, /target\.viewport\.set\(face \* size, row \* size, size, size\);\s*target\.scissor\.set\(face \* size, row \* size, size, size\);\s*target\.scissorTest = true;\s*renderer\.setRenderTarget\(target\);\s*renderer\.clear\(false, true, false\);\s*if \(!\(mask & \(1 << face\)\)\) continue;/);
     assert.match(face, /camera\.up\.set\(spec\.up\[0\], spec\.up\[1\], spec\.up\[2\]\);\s*camera\.lookAt\(origin\.x \+ spec\.dir\[0\], origin\.y \+ spec\.dir\[1\], origin\.z \+ spec\.dir\[2\]\);/);
     assert.match(face, /renderer\.render\(scene, camera\);/);
@@ -476,7 +502,7 @@ test('both viewports render the maps once a frame before the first pass, and the
     assert.match(editor, /if \(sprite && Reactor3D\.Shadows\) Reactor3D\.Shadows\.markCaster\(mesh, false\);/);
     assert.equal((editor.match(/Reactor3D\.Shadows\.markCaster\(object, !!template\.userData\.animated\);/g) || []).length, 2, 'event models and props');
 
-    assert.match(read('runtime/reactor_main.js'), /runtime revision: 20260904\.13/);
+    assert.match(read('runtime/reactor_main.js'), /runtime revision: 20260904\.17/);
 });
 
 test("a casting light's maps hold their origin until the light has drifted a quarter tile", () => {

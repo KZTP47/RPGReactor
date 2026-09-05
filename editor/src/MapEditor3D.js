@@ -279,6 +279,7 @@ class MapEditor3D {
             }
 
             this.enabled = true;
+            this.projectController?.modelPropsManager?.preview2D?.suspend();
             this._stage('canvas');
             if (!this.createCanvas()) throw new Error('The 3D map container could not be found.');
             if (!this.activationIsCurrent(generation)) {
@@ -1613,7 +1614,7 @@ class MapEditor3D {
                 // million triangles on every mouse move is what jitters.
                 object.userData.pickBox = new THREE.Box3().setFromObject(object);
                 const names = Reactor3D.propAnimationList ? Reactor3D.propAnimationList(prop) : (prop.animation ? [prop.animation] : []);
-                this.animateModel(object, template, names.length ? { names, repeat: !!prop.repeat } : null);
+                this.animateModel(object, template, names.length ? { names, repeat: !!prop.repeat, speed: prop.animationSpeed ?? 100 } : { speed: prop.animationSpeed ?? 100 });
                 this.playModelEffects(object, template, Reactor3D.propEffectList ? Reactor3D.propEffectList(prop) : prop.effect);
                 if (this.selectedPropId === prop.id) this.selectProp(prop.id);
             });
@@ -1637,6 +1638,9 @@ class MapEditor3D {
         if (!driver) return;
         driver.object = object;
         driver.start = this._modelFrame || 0;
+        driver.speed = Math.max(1, Math.min(1000, Number(action?.speed) || 100)) / 100;
+        driver.previewFrame = driver.start;
+        driver.previewRealFrame = driver.start;
         // One name, or a list played in order; Repeat loops the whole list.
         const names = action ? (Array.isArray(action.names) ? action.names.filter(Boolean) : (action.name ? [action.name] : [])) : [];
         driver.sequence = names.length > 1 ? names.slice() : null;
@@ -1744,7 +1748,7 @@ class MapEditor3D {
     }
 
     /** Keep every playing effect on its anchor as the camera and models move. */
-    updateEffectPlays() {
+    updateEffectPlays(now = performance.now()) {
         const plays = (this.effectPlays || []).filter(play => play.object.parent);
         this.effectPlays = plays;
         // The lights placed models carry, rebuilt each frame for the feed.
@@ -1753,10 +1757,19 @@ class MapEditor3D {
         if (!plays.length || !this.camera || !this.canvas) return;
         const rect = this.canvas.getBoundingClientRect();
         const scratch = this._effectScratch || (this._effectScratch = new THREE.Vector3());
+        const frame = Math.floor(now * 0.06);
+        let lightSeed = 1000;
         for (const play of plays) {
             if (play.light) {
                 const light = Reactor3D.effectLight ? Reactor3D.effectLight(play.object, play.effect, play.key) : null;
-                if (light) lights.push(light);
+                if (light) {
+                    const animated = Reactor3D.animateLight(play.effect.light, frame, ++lightSeed, light.radius, light.intensity);
+                    light.radius = animated.radius;
+                    light.intensity = animated.intensity;
+                    light.priorityRadius = animated.priorityRadius;
+                    light.priorityIntensity = animated.priorityIntensity;
+                    lights.push(light);
+                }
                 continue;
             }
             if (play.plane) {
@@ -1934,7 +1947,7 @@ class MapEditor3D {
 
     /** Advance every animated model by the frames since the last tick. */
     animateModels(now) {
-        this.updateEffectPlays();
+        this.updateEffectPlays(now);
         const drivers = (this.animatedModels || []).filter(driver => driver.object.parent);
         this.animatedModels = drivers;
         if (!drivers.length || typeof Reactor3D === 'undefined' || !Reactor3D.applyModelAnimation) return;
@@ -1943,24 +1956,27 @@ class MapEditor3D {
         this._modelFrame = (this._modelFrame || 0) + Math.min(10, (now - last) / (1000 / 60));
         const frame = Math.floor(this._modelFrame);
         for (const driver of drivers) {
+            driver.previewFrame = (driver.previewFrame ?? frame) + (frame - (driver.previewRealFrame ?? frame)) * (driver.speed ?? 1);
+            driver.previewRealFrame = frame;
+            const playFrame = driver.previewFrame;
             let action = driver.action;
             if (action) {
                 const rule = driver.rules.find(entry => entry.trigger === 'action' && entry.name === action.name);
                 const duration = rule ? Reactor3D.modelRuleDuration(rule, driver.clips) : 0;
-                if (rule && frame - action.frame >= duration) {
+                if (rule && playFrame - action.frame >= duration) {
                     if (driver.queue && driver.queue.length) {
-                        action = { name: driver.queue.shift(), frame, repeat: false };
+                        action = { name: driver.queue.shift(), frame: playFrame, repeat: false };
                     } else if (driver.sequence && driver.loop) {
                         driver.queue = driver.sequence.slice(1);
-                        action = { name: driver.sequence[0], frame, repeat: false };
+                        action = { name: driver.sequence[0], frame: playFrame, repeat: false };
                     } else {
-                        action = (action.repeat || rule.repeat) ? Object.assign({}, action, { frame }) : null;
+                        action = (action.repeat || rule.repeat) ? Object.assign({}, action, { frame: playFrame }) : null;
                     }
                     driver.action = action;
                 }
             }
             Reactor3D.applyModelAnimation(driver.binding, driver.rules, {
-                frame, moving: false, dashing: false, distance: 0, scale: 1,
+                frame: playFrame, moving: false, dashing: false, distance: 0, scale: 1, playbackRate: driver.speed,
                 action: action ? { name: action.name, frame: action.frame } : null
             });
         }
@@ -1974,7 +1990,7 @@ class MapEditor3D {
      */
     static propIdentity(prop) {
         return [prop.name, prop.ext, prop.file, prop.texture,
-            (prop.animations || (prop.animation ? [prop.animation] : [])).join(','), prop.repeat ? 1 : 0,
+            (prop.animations || (prop.animation ? [prop.animation] : [])).join(','), prop.repeat ? 1 : 0, prop.animationSpeed ?? 100,
             (prop.effects || (prop.effect ? [prop.effect] : [])).join(',')].join('|');
     }
 

@@ -1,10 +1,10 @@
 {
   "advanced": {
     "gameId": 45388004,
-    "screenWidth": 1280,
-    "screenHeight": 720,
-    "uiAreaWidth": 1280,
-    "uiAreaHeight": 720,
+    "screenWidth": 1920,
+    "screenHeight": 1080,
+    "uiAreaWidth": 1920,
+    "uiAreaHeight": 1080,
     "numberFontFilename": "_decterm.ttf",
     "fallbackFonts": "Verdana, sans-serif",
     "fontSize": 26,
@@ -642,7 +642,7 @@
     "",
     ""
   ],
-  "versionId": 89781708,
+  "versionId": 70032471,
   "victoryMe": {
     "name": "Victory1",
     "pan": 0,

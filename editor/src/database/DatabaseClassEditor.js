@@ -130,7 +130,7 @@ class DatabaseClassEditor {
                          <span style="font-size: 9px; color: var(--color-text-muted);">${tt('Lv')}1: ${level1} → ${tt('Lv')}99: ${level99} → ${tt('Lv')}999: ${level999}</span>
                     </div>
                     <canvas id="${canvasId}" width="200" height="50"
-                            style="width: 100%; height: 50px; border: 1px solid var(--color-border); background: #0a0a0a; border-radius: 4px;"
+                            style="width: 100%; height: 50px; border: 1px solid var(--color-border); background: var(--color-bg-input); border-radius: 4px;"
                             data-color="${color}"></canvas>
                 </div>
             `;
@@ -238,13 +238,13 @@ class DatabaseClassEditor {
                     <input type="range" class="rr-pc-shape-slider rr-range" min="30" max="300" value="${Math.round(exponent * 100)}">
                     <div class="rr-pc-shape-label" style="font-size: 11px; text-align: center; color: var(--color-text); background: var(--color-bg-input-alt); padding: 4px 6px; border: 1px solid var(--color-border-input); border-radius: 3px;"></div>
                 </div>
-                <div style="display: flex; justify-content: space-between; font-size: 10px; color: var(--color-text-dim); margin-top: -10px; padding-left: 122px; padding-right: 92px;">
+                <div style="display: flex; justify-content: space-between; font-size: 10px; color: var(--color-text-muted); margin-top: -10px; padding-left: 122px; padding-right: 92px;">
                     <span>${tt('Fast early')}</span>
                     <span>${tt('Linear')}</span>
                     <span>${tt('Slow early')}</span>
                 </div>
 
-                <div style="background: #0a0a0a; border: 1px solid var(--color-border); border-radius: 4px; padding: 8px;">
+                <div style="background: var(--color-bg-input); border: 1px solid var(--color-border); border-radius: 4px; padding: 8px;">
                     <div style="display: flex; justify-content: space-between; font-size: 10px; color: var(--color-text-muted); margin-bottom: 4px;">
                         <span>${tt('Preview')}</span>
                         <span class="rr-pc-readout"></span>
@@ -261,6 +261,7 @@ class DatabaseClassEditor {
 
         overlay.appendChild(modal);
         document.body.appendChild(overlay);
+        this.commonUI?.databaseEditor?.registerDetailModal(overlay);
 
         const previewCanvas = modal.querySelector('.rr-pc-preview');
         const readout = modal.querySelector('.rr-pc-readout');
@@ -631,6 +632,7 @@ class DatabaseClassEditor {
         `;
         overlay.appendChild(modal);
         document.body.appendChild(overlay);
+        this.commonUI?.databaseEditor?.registerDetailModal(overlay);
 
         const close = () => overlay.remove();
         modal.querySelector('.learning-edit-close').addEventListener('click', close);
@@ -912,8 +914,6 @@ class DatabaseClassEditor {
                 { label: 'Copy', action: () => this.copyTrait(classEntry, traitIndex), disabled: traitIndex === null },
                 { label: 'Paste', action: () => this.pasteTrait(classEntry, traitIndex), disabled: false },
                 { label: 'Delete', action: () => this.deleteTrait(classEntry, traitIndex), disabled: traitIndex === null },
-                { divider: true },
-                { label: 'Select All', action: () => this.selectAllTraits(classEntry) }
             ];
 
             menuItems.forEach(item => {
@@ -1026,10 +1026,6 @@ class DatabaseClassEditor {
         this.refreshClassDetail(classEntry);
     }
 
-    selectAllTraits(classEntry) {
-        // Future implementation: could highlight all traits or copy all
-        console.log('Select all traits');
-    }
 
     refreshClassDetail(classEntry) {
         // Find the container and refresh
@@ -1220,9 +1216,9 @@ class DatabaseClassEditor {
 
             // Create table with graph background
             tabContent.innerHTML = `
-                <div style="position: relative; background: #0a0a0a; border: 1px solid var(--color-border-subtle); border-radius: 4px; height: 420px; overflow-y: auto;">
+                <div style="position: relative; background: var(--color-bg-input); border: 1px solid var(--color-border-subtle); border-radius: 4px; height: 420px; overflow-y: auto;">
                     <canvas id="exp-graph-canvas" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 0;"></canvas>
-                    <div style="position: relative; z-index: 1; background: rgba(10, 10, 10, 0.85);">
+                    <div style="position: relative; z-index: 1; background: color-mix(in srgb, var(--color-bg-input) 85%, transparent);">
                         <table style="width: 100%; border-collapse: collapse; font-family: monospace; font-size: 11px; background: transparent;">
                             <tbody>
                                 ${data.map((d, idx) => {
@@ -1401,6 +1397,7 @@ class DatabaseClassEditor {
         });
 
         document.body.appendChild(overlay);
+        this.commonUI?.databaseEditor?.registerDetailModal(overlay);
 
         // Initialize
         updateTabDisplay();

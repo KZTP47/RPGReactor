@@ -117,7 +117,7 @@ test('placed models light the map view through their light effects', () => {
     const map3d = fs.readFileSync(path.join(editorRoot, 'src', 'MapEditor3D.js'), 'utf8');
     assert.match(map3d, /if \(effect\.type === 'light' && effect\.light\) \{[\s\S]*?push\(\{ object, effect, light: true,/, 'an always-on light effect is a play');
     assert.match(map3d, /Reactor3D\._editorEffectLights = lights;/, 'rebuilt each frame');
-    assert.match(map3d, /const light = Reactor3D\.effectLight \? Reactor3D\.effectLight\(play\.object, play\.effect, play\.key\) : null;\s*if \(light\) lights\.push\(light\);/);
+    assert.match(map3d, /const light = Reactor3D\.effectLight \? Reactor3D\.effectLight\(play\.object, play\.effect, play\.key\) : null;\s*if \(light\) \{\s*const animated = Reactor3D\.animateLight\(/);
     const lighting = fs.readFileSync(path.join(editorRoot, 'src', 'LightingManager.js'), 'utf8');
     assert.match(lighting, /const modelLights = Array\.isArray\(Reactor3D\._editorEffectLights\) \? Reactor3D\._editorEffectLights : \[\];/);
     assert.match(lighting, /\}\)\)\.concat\(modelLights\)\);/, 'the feed carries them with the map lights');

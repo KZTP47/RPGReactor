@@ -1010,7 +1010,7 @@ class UIManager {
         const errorEl = document.createElement('div');
         errorEl.id = 'rr-new-project-error';
         errorEl.setAttribute('role', 'alert');
-        errorEl.style.cssText = 'color:var(--color-danger, #e5484d);font-size:12px;min-height:1.2em;';
+        errorEl.style.cssText = 'color:var(--color-danger-bright, #e5484d);font-size:12px;min-height:1.2em;';
 
         const templateLabel = document.createElement('div');
         templateLabel.style.cssText = 'color:var(--color-text);font-size:13px;margin-top:4px;';

@@ -496,7 +496,7 @@ test('the 3D section carries the tool strip, part picking, and the edit card', (
     // Selection is drawn against the uncarved mesh so triangle indices
     // count over the source geometry, and rules freeze while selecting.
     assert.match(source, /if \(!this\._selectMode && Reactor3D\.carveModelParts/);
-    assert.match(source, /!this\._selectMode && typeof Reactor3D/);
+    assert.match(source, /!this\._selectMode && !this\._rigFaceMode && typeof Reactor3D/);
     // The marquee takes every triangle it touches, rejecting behind-camera
     // folds — and by default only what the eye can see: a screen-space
     // depth grid culls covered triangles unless the Through toggle is on.

@@ -1702,7 +1702,7 @@ class VideoSurfaceEditor {
         const footer = this._el('div', 'rr-modal-footer');
         footer.style.cssText = 'display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:10px 14px;';
         const validation = this._el('div', 'vs-validation');
-        validation.style.cssText = 'display:none;margin-right:auto;color:var(--color-danger,#ff6b6b);font-size:11px;line-height:1.35;';
+        validation.style.cssText = 'display:none;margin-right:auto;color:var(--color-danger-bright,#ff6b6b);font-size:11px;line-height:1.35;';
         this.validationMessage = validation;
         const cancel = this._button('Cancel');
         const ok = this._button('OK', 'rr-button-primary');

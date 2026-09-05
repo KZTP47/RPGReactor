@@ -1,6 +1,372 @@
 # Handoff - 0.98.5 In Progress
 
-## 2026-09-04 — Shadow atlas: every light in reach casts, two samplers total
+## 2026-09-04 — Session closeout
+
+[SESSION-2026-09-04.md](SESSION-2026-09-04.md) consolidates the day's work and
+links the feature/performance/audit reports. The closeout includes current Demo
+content and the new Graviton Pistol asset; the authored 1920×1080 settings and
+three resulting title-layout test failures remain documented. Validation is
+recorded by scope, with runtime still .17 and development version 0.98.5.
+
+## 2026-09-04 — Database state and sequence audit
+
+See [DATABASE_STATE_AUDIT.md](DATABASE_STATE_AUDIT.md) and its checked-in results.
+405 live sequence checks pass with zero uncaught errors; 14 focused unit tests
+cover delayed work and project/session boundaries. Latest full suite: 2,643
+passed, the same three authored Demo title-layout failures (2,646 total).
+
+Database detail cleanup now runs on every departure, including list resets,
+Cancel, and project changes. Saves freeze controls and reject stale completion;
+modals, row/command callbacks, and preview image loads reject obsolete contexts.
+3D and tileset caches separate projects. Effekseer needed an update-entry guard:
+its texture callbacks can run after releaseContext, before the onLoad guard.
+Five placeholder trait Select All actions were removed. Model sidecar writes
+still save immediately and are outside Database Cancel. Runtime stays .17.
+
+Final evidence: `/tmp/rr-database-sequences-UPOAz7`, authoring repeat
+`/tmp/rr-command-database-audit-Hc0Duj`, full suite
+`/tmp/rr-db-state-audit-full.log`. Smoke projects/profiles are disposable; the
+original Demo content and live project lock were preserved.
+
+## 2026-09-04 — Event/database, language, and theme audit
+
+See [EDITOR_AUDIT.md](EDITOR_AUDIT.md) and the checked-in coverage matrix for
+scope, fixes, reproduction, and limits. All 123 picker items have valid sample
+creation/reopening coverage (111 dialog roundtrips, 12 inserts), with 19 database
+sections and 56 nested save/cancel cases. All 14 themes were sampled; the shared
+context menu has 32 palette/locale cases. Added 1,496 translations and fixed
+literal interpolation; the strengthened inventory finds zero gaps in 3,989
+phrases. Native fluency and exhaustive runtime parameter combinations are not
+certified by this pass.
+
+Database and model write failures now show feedback and preserve drafts;
+optimization rejects corrupt settings; corrupt binding files no longer blank
+panels. Theme fixes include nested fields, warnings/errors, hover and selected
+states. Model sidecar saves are still immediate. The Demo's missing SV actor
+asset is diagnosed visibly and left untouched.
+
+Final full suite: 2,628 passed, three existing Demo title-layout failures
+(`/tmp/rr-command-database-full-final.log`). Theme matrix artifacts:
+`/tmp/rr-command-database-audit-Ymwh4r`; menu/locale results:
+`/tmp/rr-command-database-audit-tZoWSX` (also the clean nested screenshots).
+The final 3D navigation-title correction passes all 22 localization tests and
+adds one case beyond the full-suite count above. The repeatable smoke cleans its disposable
+project and profile, retaining JSON and screenshots. Runtime stays .17.
+
+
+Start with [Current project status](STATUS.md) for the verified version, rendering
+defaults, test results, and open work as of 2026-09-04. This handoff is a dated
+engineering journal: later entries supersede earlier implementations and
+measurements. Scratchpad harnesses and ignored corpus projects named here are
+local development aids, not files guaranteed to exist in a clean checkout.
+
+## 2026-09-04 — Ground light alignment and flat preview profiling
+
+`LightingManager` r14 replaces screen-space cone stamps with `FlatLightField2D`
+footprints and a high-precision ground-light shader. Height, pitch, yaw, anchor
+coordinates, range and cone/beam falloff now follow the 3D light field. Floor
+lights share one layer below props; overlaps no longer depend on emitter sort
+order. Flat additive brightness and ambient-tinted model sprites remain an
+approximation; this does not add 3D walls/self-shadowing or event-model casters.
+The runtime remains revision .17: these changes are to the editor preview.
+
+Model targets follow display zoom/resolution with sampling headroom and MSAA;
+60 Hz pose/media updates avoid redundant high-refresh work. Model material
+uniforms are isolated from other previews. Shadow passes crop to the lit area,
+cull using projected bounds, skip empty pools, and retain/grow mask targets.
+The longer motion probe caught a bound-texture replacement error, now covered
+by a regression. Original-space frustum culling is disabled only during the
+shadow projection pass and restored afterward.
+
+`editor/tests/perf/nw-flat-preview.cjs` now provides a repeatable disposable-Demo
+GPU comparison and animated profile. Twenty-four actual 2D/3D light fields
+match within one 8-bit level on NVIDIA and AMD integrated graphics. The probe
+also checks shadow projection from outside the footprint, isolated model
+lighting and resolution after zoom/pan. See [PERFORMANCE.md](PERFORMANCE.md)
+for measured costs and scope. NVIDIA artifacts: `/tmp/rr-db-switch-E4tHCr`
+(images retained; disposable project/profile removed). Final logs:
+`/tmp/rr-flat-final3-nvidia.log`, `/tmp/rr-flat-final3-amd.log`. AMD images
+are in `/tmp/rr-db-switch-dzXU4T`; final lifecycle smoke artifacts are in
+`/tmp/rr-db-switch-1Y78dy`. Full suite: 2,595 passed, three existing Demo
+title-layout expectation failures. The two intermediate packaging failures
+were caused by exhausted test temp space and passed after cleanup.
+
+## 2026-09-04 — Flat preview gradients, attached media and prop shadows
+
+`LightingManager` r13 uses cached 1024-pixel, linearly filtered falloff textures
+with stable sub-level dithering and continuous beam shoulders. Pixel-art
+filtering for tiles/models is unchanged. The prop preview now includes authored
+Always/chosen database animations and video/image effects. Videos use depth-tested
+planes in the existing model target; database animations use the existing
+`AnimationPreviewLayer` at the projected anchor. Viewport visibility and 3D mode
+pause playback; deletion, project close and map changes dispose it. Video
+readiness reads decoded dimensions, and only new video/pose frames request draws,
+capped at 60 model draws per second.
+
+Shadow-enabled native/carried lights project posed prop geometry onto the ground
+using a cached GPU mask per light. Masks are at most 512 pixels on the long side,
+linearly filtered; moving geometry refreshes at most 30 times per second. Static
+poses, unchanged lights and flicker intensity/radius jitter reuse masks. A small
+light shader samples the mask to attenuate only its own additive contribution,
+so ambient and overlapping lights are preserved. Disabling a shadow releases its
+mask. This is a flat ground projection from placed props; it does not reproduce
+3D wall receivers or self-shadowing and does not add event-model casters.
+
+NW.js on a disposable Demo verified 11 advancing screen videos, nonempty pixels
+from both video planes and the reactor's database animation, 13 populated shadow
+maps, mode/map switching and project-close cleanup. A pixel probe verifies a
+masked red light leaves ambient unchanged while an overlapping green light still
+illuminates the same pixel. Runtime revision stays `20260904.17`; this pass fixes
+the editor's 2D preview. Local harness: `scratchpad/editor-flat-preview-check.cjs`.
+Final NW.js artifact: `/tmp/rr-db-switch-rnPekU/switch.png`; full suite: 2,590
+passed, with the same 3 existing Demo title-layout failures.
+
+## 2026-09-04 — Live props and lighting in the 2D map editor
+
+The flat map editor used still prop thumbnails and only ran lighting while its
+tool was open. `ModelPropsPreview2D` now retains placed model instances and
+shares the editor's PIXI WebGL2 context, sampling multisampled Three targets
+without canvas readback/uploads. It reuses the 3D editor's animation driver,
+including placement sequences, repeat and speed. Always/selected light effects
+follow their animated anchors; native and model lights use the runtime's flat
+ambient tint, translucent glow and tapered spotlight texture. Closing the
+lighting tool removes its handles, leaving the scene preview running.
+
+Unchanged poses and offscreen props reuse their textures; cached rigid/bone
+bounds expand only when needed. Switching to 3D pauses flat rendering. Map
+changes release textures, targets, instance materials and generated rig geometry;
+late loads cannot attach to a replaced map. Database preview-cache invalidation
+also reloads live props, and template/thumbnail cache keys include project paths.
+This initial change targeted placed props and light effects; the later media
+entry above adds non-light effects. Event-page model thumbnails remain separate.
+
+The light-order follow-up interleaves each prop's carried glows immediately
+behind its sprite, so its silhouette and nearer props cover the light. Ambient
+now sits below the prop layer and applies to model sprite tints by the same
+factor; this keeps model/floor brightness stable and avoids dimming the glow.
+This is the editor's flat sprite depth order, not per-pixel 3D shadow casting.
+The NW.js pixel probe verified an opaque emitter stayed `[68,68,68]` with the
+light on/off, while adjacent floor changed from `[137,137,137]` to
+`[157,137,137]`. It uses retained containers with no extra GPU render passes.
+
+NW.js checks on a disposable Demo verified live motion, 11 carried lights,
+nonempty GPU textures, selection retention, tool close, 2D → 3D → 2D, and map
+switch/reopen cleanup with no captured browser errors. Local harness:
+`scratchpad/editor-flat-preview-check.cjs`; final screenshot:
+`/tmp/rr-db-switch-GFgXmS/switch.png`. Project close also releases the renderer
+and unregisters its ticker. The final full suite after the light-order correction
+passed 2,587 tests, with the same 3 Demo title-layout failures.
+No Demo authoring files were changed by the checks. Runtime revision remains `20260904.17`; these changes are editor-side.
+
+## 2026-09-04 — Face points, speech, prop playback and the flat renderer
+
+Runtime revision `20260904.17`. [Usage/schema/limits](3D-FACE-AND-SPEECH.md)
+cover the new Face points tool, Speak 3D Dialogue command and per-prop speed.
+The first-person camera follows authored eyes or fitted model height, with
+player/follower models visible. Actual skin skeleton bones take precedence over
+same-named exported nodes. Generated lip morphs account for skinned bind space;
+waveforms are reduced to a cached 60 Hz RMS envelope outside the frame loop.
+The dedicated `reactor_speech_3d.js` is in the runtime manifest and all build
+preflight lists. Waveform animation is amplitude-based, not phoneme recognition.
+
+The menu bug was holder-owned playback being discarded when Scene_Map rebuilt
+its spriteset. A weak character-keyed snapshot now preserves action phase,
+sequence/rules and timed/toggled light state across reconstruction. Both map
+renderers use the same action clock. Speed overrides scale that clock without
+restarting the current action; default placement speed is 100%.
+
+Flat fallback sprites could remain hidden by 3D tile-event claims, model light
+effects were missing from flat light collection, and the duplicate animation
+driver ignored repeat.
+The flat ambient overlay also multiplied display pixels by linear brightness.
+These paths now share the appropriate runtime state. The 3D cone texture
+expected trapezoid geometry; stretching it onto a flat rectangle created broad
+opaque-looking washes. The flat texture now supplies the taper, and body
+opacity follows the volume renderer's reduced strengths.
+
+Flat model rendering now adopts a GPU target like battlers, resetting GL state
+around target allocation as well as drawing. The compatibility canvas path
+remains. Flat target resolution is retained with up to four MSAA samples;
+offscreen/catch-up draws are skipped without stopping simulation.
+
+Follow-up: flat render frames originally enclosed only the rest pose. Cached
+rigid-part boxes and per-bone bind-space boxes now track animated extents with
+matrix transforms; vertices are scanned only during cache construction.
+The render area grows with reserve space, preserving the ground anchor and
+pixel density up to GPU/4096 texture limits. Culling includes centered anchors
+and lift. Depth uses ground Y plus height toward the pitched camera, not the
+lifted image's screen Y. The sorting wrapper retains this within equal-priority
+layers even when `PSYCHRONIC_MZRX-FogAndOverlay` replaces the comparator.
+
+The lift path now distinguishes synthetic model props from the older tile-event
+`isEventProp` registry, which exists only for tile props built into a 3D scene.
+Runtime prop normalization retains complete animation/effect lists and the
+placement speed, rather than silently reducing them to legacy singular fields.
+
+Verification used disposable Demo copies, leaving the user's model/map/settings
+and active project lock intact. NW.js checked Face points save/reopen, authored
+eye position, visible first-person body/followers, voice/silence/stop/waits,
+and repeated prop cycles plus stop/menu/return in both map modes. The reviewed
+flat screenshot retains floor detail beneath soft colored lights. Current full
+suite results are maintained in STATUS.md; performance measurements and their
+limits are in PERFORMANCE.md.
+
+## 2026-09-04 — Empty-space menus and spotlight flicker in editor previews
+
+The model record menu listener covered only the list elements, missing effect
+form/footer whitespace. The right column now delegates by animation/effect
+section, including headers and blank padding, while native text/select controls
+retain their menus. The effects list has a 64px minimum height so an empty model
+has a real paste target. Blank-space menus enable Paste without selecting a row.
+
+Both `Database3DEditor._updateLightPreview` and
+`MapEditor3D.updateEffectPlays` resolved carried lights at their anchors without
+applying `Reactor3D.animateLight`. Both previews now use that shared flicker/pulse
+routine and their preview clocks for point, spot and beam lights. Map previews
+also carry its pre-flicker priority fields, preserving stable shadow assignment.
+The game already animated these lights; runtime remains `20260904.16`.
+
+Five behavioral regressions cover menu routing, all three preview light kinds,
+steady zero-flicker lights, pulse, and map lights without model animations.
+NW.js on a disposable Demo copy passed a real pointer right-click in the footer,
+Paste, header and empty-list menus. Thirty live spotlight samples varied body
+strength from about 0.15 to 0.29 and packed surface-light red from 0.51 to 0.97;
+setting flicker to zero stayed steady. The test copy's inherited project lock
+was removed before launch; the user's active project lock was untouched.
+
+Latest full suite: 2,560 passing, three failures in `stock-interfaces.test.cjs`.
+The working Demo's authored resolution changed during the session from 1280×720
+to 1920×1080; those tests assume the old title layout and matching generated
+interface records. The user's Demo settings were retained. Before that content
+change, the database-only fixes passed all 2,562 tests; the subsequent map-light
+regression and focused suites also pass. See STATUS.md for current validation.
+
+## 2026-09-04 — Copy/paste model animations and effects; Dropbox conflict recovery
+
+The right-hand saved-animation and effect lists now accept Ctrl/Cmd+C/V and
+right-click Edit, Copy, Paste, Duplicate and Delete. Lists retain keyboard
+focus through row redraws; text fields retain native clipboard behavior.
+Typed `model3dRecord` clipboard payloads snapshot working edits, persist through
+model changes and create unique names. Referenced named effects travel with an
+animation, reusing identical definitions and remapping name conflicts only in
+the pasted rule. Pasted entries save through the existing sidecar path and open
+for editing. Baked clips/parts/assets remain references, not copied geometry.
+Async paste cannot follow a model change or a closed panel. Deleting an edited
+animation also now captures its index before deselection clears it.
+
+Verified in NW.js: effect shortcuts, context-menu Duplicate, cross-model paste
+and its saved sidecar, and animation shortcuts. Seven behavioral clipboard/menu
+regressions added. Full suite: 2,558 passing in both the isolated verification
+copy and the restored shared workspace. Runtime remains `20260904.16`.
+
+Dropbox replaced newer session files with older committed versions and created
+conflicted copies during verification. Both versions were backed up outside
+Dropbox under `/home/doug/.local/share/rpg-reactor-recovery/20260904-150237`.
+Verified newer code/docs were recovered, incoming Demo content retained, and
+all conflict copies (including ignored corpus runtimes, save copies, a Git
+index copy and logs) archived out of the project. All 13 template runtimes
+match canonical runtime again. The active Git index and canonical saves were
+not replaced by their conflict copies.
+
+## 2026-09-04 — Database model previews no longer carry effects across selections
+
+Owner reported old animations/effects appearing on the next model at the wrong
+position. Reproduced in NW.js: Monitor Arm → Computer-01 changed the displayed
+effect definition to Animated Screen but kept the old Static Video media. Both
+were automatic effect index 0, so the playback check treated them as the same
+effect. A manually selected video also followed the selection onto the mascot.
+
+`Database3DEditor` now clears model-owned playback immediately on selection:
+media, lights, animation layers/actions, sound, flashes, trigger indices and
+anchor/edit state. The old object/binding are detached during loading while the
+renderer remains reusable. Selection generations guard both preview and embedded
+clip continuations, including A → B → A; stale requests cannot clear the latest
+loading indicator, and disposal invalidates pending work.
+
+Verified in the live editor with a disposable Demo copy: normal switching,
+manual media → mascot, and rapid mascot → computer → arm now select the right
+media/template/clips. Four behavioral Node regressions cover immediate cleanup,
+out-of-order completions, the loading indicator and close-during-load. Full suite:
+2,551 passing. This is an editor change; runtime revision remains `20260904.16`.
+
+## 2026-09-04 — Overlapping lights: stable shadow ownership and paired refreshes
+
+Owner reported shadows flipping on and off under overlapping lights. The .15
+Demo probe recorded 24 dynamic-slot changes and 46 mismatched static/dynamic
+pairs over 240 rendered frames. `_flush` could commit a moved static origin
+without redrawing its dynamic partner, and `_publish` then correctly refused
+the mismatched dynamic map, briefly removing the character shadow.
+
+Runtime `20260904.16` queues those partners together and defers the static
+origin change until both fit the existing budgets/intervals. Slot selection
+also gives incumbents a 25% priority margin, smooths the cone's priority edge,
+and uses pre-flicker intensity/reach for authored lights. Actual illumination
+still flickers; deliberate fades and reach pulses still affect priority. Native,
+model-effect and editor map lights carry the priority values. The per-light
+shadow multiplication and additive lighting shader are unchanged.
+
+Final NW probes: full/NVIDIA 240 frames, two slot changes, zero mismatched
+pairs; weak/AMD integrated 240 frames, one change, zero mismatched pairs. Both
+had zero GL errors and budget overruns. Different animation phases can change
+the swap counts, and genuinely stronger/moved/removed lights still change
+ownership. Four new Node regressions cover ties/replacement, cone continuity,
+authored flicker, and budgeted paired refreshes with stationary casters.
+Full suite: 2,547 passing. All 13 local template runtimes synchronized.
+See [performance checks](PERFORMANCE.md) for the retained moving-scene probe.
+
+## 2026-09-04 — Avoid zero-contribution spotlight shadows and duplicate anchor updates
+
+Runtime revision `20260904.15`: a spotlight now exits the fragment light loop
+when its cone falloff reaches zero, before fetching the shadow atlases. The
+existing cone edge and all quality settings remain. `effectAnchorWorld` also
+leaves the world-matrix update to Three.js `localToWorld`, removing a second
+walk through the same ancestors for every anchor query.
+
+Full suite: 2,543 passing. Runtime synced across all 13 local template projects.
+The NW game profiler now times the update handler's Three draws as well as the
+PIXI composite, and reports the actual GPU. A retained comparison setup freezes
+scene/clocks/media and alternates baseline and production shaders. Full and weak
+variants produced identical images on the AMD integrated GPU; full-quality
+rendering cost fell about 19%, while weak quality had no consistent gain.
+See [performance checks](PERFORMANCE.md) for samples, reproduction and limits.
+An additional experimental branch skipping dynamic shadow reads when the static
+sample was zero did not improve timings consistently and was not retained.
+
+## 2026-09-04 — Actor shadows under the screen glows; editor/game brightness mismatch
+
+Owner: "I'm still not seeing shadows for my actors in-game when the
+monitor arm screens shine on me" and "the intensity seems different in
+the editor for those lights vs in-game". Two causes, both found with
+`scratchpad/shadow-actor-harness.cjs` (stands the player where a screen's
+cone lands, freezes the clocks, on/off pixel diffs, samples floor
+brightness at a camera pose the editor harness matches):
+
+1. The dynamic rows (3 full / 1 weak) went to the lights NEAREST the
+   player — the torch in hand, the door beam, the dying tube — never to
+   the screens 11 tiles up. Rows are now ranked by `Shadows._incident`
+   (falloff × cone × brightness at the player's body); the screen shining
+   on the party outranks the torch lighting the floor. Weak tier now has
+   2 dynamic rows, `dynamicTriangles` 200k (was 30k, which refused the
+   149k actors outright) at half rate; full 600k.
+2. The screen glows are anchored ON the monitor screen; the arm is an
+   animated prop, so a DYNAMIC caster, and in the game its own geometry
+   sat at the light's origin: every glow's rows were black from a hand's
+   width away and the whole room fell to ambient (floor 26 with shadows
+   on, 83 off; the editor, whose arm never animates, read 69). A model
+   effect light now carries `carrier` and its rows render with that
+   object hidden. After: floor 75 on / 87 off, in line with the editor.
+   The packed light values (colour gain, reach, ambient) were identical in
+   both apps all along — compare `Reactor3D.lightUniforms()` by candidate
+   index before suspecting the pipeline.
+
+Verified: with one screen glow left on and the player in its cone, the
+actor's and the bike's shadows appear (4.7% of pixels darker). With all
+eight 74-tile glows on, a single occluder blocks one of eight lights and
+the shadow is faint — that is the authored reach, not a bug. Slider: the
+panel's range inputs now draw a rail + accent fill + ringed thumb
+(`--rr-fill` from `_trackFill`).
+
+## 2026-09-04 — Shadow atlas: budgeted lights in reach, two samplers total
 
 Owner rejected the nearest-4 rule ("all lights should cast shadows if
 they're within the range of the light... we have to be smart about it")
@@ -501,7 +867,7 @@ the plugin's `Categories` parameter; verified against the plugin's own
 twelve sample quests in a local project, which the test does not depend on
 because that project is gitignored).
 
-**Left for next time, in order of value:**
+**Follow-ups (updated for the 2026-09-03 importers):**
 - An on-map tracker window for the tracked quest's open objectives (the
   `tracked` state exists; nothing draws it on the map yet).
 - The log's labels (Objectives/Rewards/Complete/Failed/Tracked, All) read
@@ -509,8 +875,8 @@ because that project is gitignored).
   field for them yet.
 - Rewards are text only; a "give the reward" action (gold/items) is not
   modelled - VisuStella's are text too, so the import loses nothing.
-- Importers for other systems (Yanfly/Olivia, Cyclone) once someone has a
-  project with one.
+- Further importers when representative projects are available. Yanfly and GS
+  were added on 2026-09-03; Cyclone remains a possible follow-up.
 - Category is free text on each quest; a picker of existing names is a
   `datalist`, not a managed list.
 
@@ -2309,7 +2675,11 @@ bundles; and the web build test pinned `free-buick-riviera-car`, which the Demo
 no longer places (it is `kawashaki_ninja_h2`'s event now). Tests:
 `editor/tests/vertical-position.test.cjs`.
 
-## Current State
+## Historical state snapshot — 2026-08-29 to 2026-09-02
+
+This snapshot is preserved as history. Its runtime revision, test status, asset
+tracking, and issue backlog are superseded by [Current project status](STATUS.md)
+and the later dated entries above.
 
 - **0.98.4** is tagged and published at
   <https://github.com/Psychronic-Games/RPGReactor/releases/tag/v0.98.4>
@@ -3059,6 +3429,10 @@ seven faults found on 2026-09-02 were invisible anywhere else.
 
 ## Open Threads (pick up from here)
 
+Reviewed 2026-09-04; see [Current project status](STATUS.md) for current priorities
+and verification limits. Measurements below retain their original workload/date
+context and should be repeated before selecting an optimization.
+
 Performance, highest value first:
 
 - **The lit shader never reads a normal.** `lightGlsl` builds
@@ -3070,17 +3444,13 @@ Performance, highest value first:
   surface) does not apply here, and normal maps would do nothing either
   until the shader gains a lighting term. Worth re-reading this note before
   anyone adds one.
-- **Skinned meshes get no distance levels — now measured at ~9 ms a frame,
-  59 Hz to 100.** GPU timer queries (see the 2026-09-02 timing note) put the
-  Demo's four skinned characters at **70% of all GPU time**; blanking their
-  geometry alone reaches the display's ceiling. `lods()` refuses skins up
-  front and `QuadricDecimator` leaves them alone (JOINTS/WEIGHTS read as an
-  extra attribute), so a 596k-triangle character stays 596k at any distance.
-  Carry `skinIndex`/`skinWeight` from the surviving endpoint through a
-  collapse, exactly as UVs already are. Needs Node to generate, and must be
-  checked on an *animated* model — a collapse that mixes weights across a
-  joint boundary only tears once the mesh moves. **This is the single
-  biggest remaining win in the engine.**
+- **Generated distance levels remain open.** The optimizer now reduces base
+  skinned geometry with joint/weight handling (see the 2026-09-02 character
+  reduction notes); the former claim that skinned meshes cannot be reduced is
+  obsolete. Automatic skinned distance levels are still absent, and both import
+  presets disable separate LOD-file generation. Runtime `pickLod` still supports
+  existing files. Deriving levels in a worker and caching them per machine is a
+  proposal; validate animated joints as well as still silhouettes.
 - **Per-object light lists.** Measured at roughly **1.1 ms per visible light
   per frame** at 1280x720: a viewpoint with one light in view renders in
   ~4.2 ms of GPU, one with nine in view takes ~13.5 ms for the same
@@ -3099,8 +3469,9 @@ Performance, highest value first:
   context would remove it, and would also retire the readback that is still
   the single most expensive call in the frame.
 - **Single-face spot shadows: measured and rejected**, see the dated note.
-  Shadow map *rendering* is already 0 per frame; the cost is sampling, which
-  a single-face map does not reduce.
+  That 2026-09-02 experiment found sampling dominant. The current atlases
+  redraw dirty rows within per-frame budgets, so zero shadow rendering per
+  frame is not a general claim about the current scene.
 - **A frame-time governor.** The GPU tier is a name denylist, which by
   construction fails open — it missed the second most common integrated
   family for a whole release cycle, and will miss the next one. Something
@@ -3157,7 +3528,7 @@ Content and tooling:
 - **Demo art gaps** (owner replacing stock assets as originals are made):
   `img/characters/Actor1` (actors 2–8), `sv_actors/Actor1_2..8` and
   `Actor2_2`, all five enemies have no battler art on disk, and
-  `docs/demo-missing-se.md` lists the 120 SE names animations still
+  `docs/demo-missing-se.md` lists the 121 SE names animations still
   reference. Intentional Demo removals must be staged with `git rm` or the
   completeness test fails.
 - **Translations are stored and reviewed locally, by decision (2026-08-25).**
@@ -3176,7 +3547,7 @@ Content and tooling:
   System 1. Gamepad and touch already work in games (stock `Input` /
   `TouchInput`).
 - **Audit backlog** (`AUDIT-BACKLOG-2026-07-25.md`) still awaits owner
-  decisions on three authored-data items; nothing there is a code defect.
+  decisions on three authored-data items; these are authored-data/format questions rather than identified code defects.
 
 ## Manual Release Gates
 

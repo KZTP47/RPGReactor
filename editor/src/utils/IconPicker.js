@@ -161,6 +161,7 @@
             document.removeEventListener('keydown', onKey, true);
             if (modal.parentNode) modal.parentNode.removeChild(modal);
         };
+        modal.closePicker = close;
         document.addEventListener('keydown', onKey, true);
 
         const cancelBtn = document.createElement('button');
@@ -249,6 +250,7 @@
                 drawSelection(selectedIconIndex);
             };
         }).catch(() => {
+            if (!modal.parentNode) return;
             close();
             reportMissing();
         });

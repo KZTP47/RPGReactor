@@ -104,6 +104,9 @@ class DatabaseEffectEditor {
     }
 
     showEffectEditorModal(entry, effectIndex = -1, onSave = null) {
+        this._modal?.remove();
+        const modalGeneration = this._modalGeneration = (this._modalGeneration || 0) + 1;
+        const isCurrent = this.commonUI?.databaseEditor?.captureDetailContext?.() || (() => true);
         const tt = text => window.I18n ? window.I18n.tText(text) : text;
         this.currentEntry = entry;
         this.currentEffectIndex = effectIndex;
@@ -115,6 +118,7 @@ class DatabaseEffectEditor {
 
         const overlay = document.createElement('div');
         overlay.className = 'rr-modal-overlay';
+        this._modal = overlay;
 
         const modal = document.createElement('div');
         modal.className = 'rr-modal effect-editor-modal';
@@ -184,12 +188,14 @@ class DatabaseEffectEditor {
         header.querySelector('.close-btn').addEventListener('click', () => overlay.remove());
         footer.querySelector('.cancel-btn').addEventListener('click', () => overlay.remove());
         footer.querySelector('.ok-btn').addEventListener('click', () => {
+            if (!isCurrent() || modalGeneration !== this._modalGeneration || !overlay.isConnected) return;
             if (this.saveEffect(effect)) overlay.remove();
         });
         // A click on the backdrop no longer closes the dialog: close deliberately.
 
         this.loadEffectTabContent(activeTab, tabContent, effect);
         document.body.appendChild(overlay);
+        this.commonUI?.databaseEditor?.registerDetailModal(overlay);
     }
 
     loadEffectTabContent(tabId, container, effect) {

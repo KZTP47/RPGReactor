@@ -1190,7 +1190,7 @@ class MessageCommandEditor {
             };
 
             faceSheet.onerror = () => {
-                faceGridContainer.innerHTML = `<div style="color: #ff6666; padding: 20px;">${this._t('Failed to load faceset image')}</div>`;
+                faceGridContainer.innerHTML = `<div style="color: var(--color-danger-bright); padding: 20px;">${this._t('Failed to load faceset image')}</div>`;
             };
             faceSheet.src = RRAssetFiles.imageUrlFor(facesFolder, filename);
         };
@@ -1366,7 +1366,7 @@ class MessageCommandEditor {
         };
 
         faceSheet.onerror = () => {
-            content.innerHTML = `<div style="color: #ff6666; padding: 20px;">${this._t('Failed to load face image')}</div>`;
+            content.innerHTML = `<div style="color: var(--color-danger-bright); padding: 20px;">${this._t('Failed to load face image')}</div>`;
         };
         faceSheet.src = RRAssetFiles.imageUrlFor(facesFolder, filename);
 

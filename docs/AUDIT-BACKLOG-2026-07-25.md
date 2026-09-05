@@ -4,15 +4,17 @@ Findings from the 0.96.0 file-by-file correctness audit that were **verified but
 not acted on**, because acting on them is an authoring decision rather than a
 code fix. Roughly forty verified code defects from the same audit were fixed in
 the cycle — see the [root changelog](../CHANGELOG.md), the detailed
-[editor changelog](../editor/CHANGELOG.md), and the draft
+[editor changelog](../editor/CHANGELOG.md), and the
 [0.96.0 devlog](devlogs/2026-07-25-rpg-reactor-0.96.0.md).
 
 **Status: OPEN — awaiting a project-owner decision.** Nothing here blocked the
 release: 0.96.0 was tagged and published on 2026-07-27 with these items still
-open, and they carry forward through 0.98.3. Re-verified against the local
-projects on 2026-08-24: all three items stand exactly as described. Validation
+open. No later resolution is recorded as of the 2026-09-04 documentation review.
+The animation-cell and tileset-flag findings were re-verified against the local
+projects on 2026-09-04. The 403 exception remains in the tracked parameter-shape
+test; its original corpus observation dates to 2026-08-24. Validation
 stood at 777 passing Node tests at the time of the audit; it is 1,954 as of the
-0.98.4 cycle.
+0.98.4 cycle (historical counts; see [current validation](STATUS.md)).
 
 The projects named below are local compatibility-corpus copies under
 `template/`, not tracked files; only `template/Demo` is in git.
