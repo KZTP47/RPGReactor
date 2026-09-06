@@ -624,6 +624,96 @@
         return type === 'select' ? createSelect(options) : createCombo(options);
     };
 
+    // ------------------------------------------------------------ text codes
+    /**
+     * The message control characters a plugin's text parameter already accepts.
+     *
+     * A `@type note` or plain string parameter is drawn by whatever window the
+     * plugin hands it to, and plugins overwhelmingly use `drawTextEx` -- which
+     * is why VisuStella's own ElementStatusCore says "Text codes are allowed"
+     * on its Display Text field. The editor still showed the field as a bare
+     * text box: no way to insert a code, and `\I[64]Fire` read as its own
+     * markup rather than as an icon and a word.
+     *
+     * Both halves already existed for database text fields, so this attaches
+     * them rather than reimplementing either -- RRTextCodeMenu's right-click
+     * menu to author with (Insert Color Index / Icon Index / Control
+     * Character, plus Plugin Help), and its preview renderer to read with.
+     *
+     * The preview stays hidden until the value actually contains a code, so a
+     * parameter that holds ordinary text looks exactly as it did before.
+     */
+    const textCodeOptions = context => {
+        const settings = context || {};
+        const projectPath = () => settings.projectPath || '';
+        const nodePath = () => settings.path
+            || (typeof require === 'function' ? require('path') : null);
+        return {
+            scope: 'message',
+            projectPath,
+            iconSetUrl: () => iconSetUrl(settings),
+            plugins: () => (root.RRTextCodes && root.RRTextCodes.readManifest
+                ? root.RRTextCodes.readManifest(projectPath()) || []
+                : []),
+            // peek() loads the skin in the background and announces it, so the
+            // first paint uses the fallback palette and the listener below
+            // repaints it in the project's own colours a moment later.
+            skin: () => {
+                const skins = root.RRWindowskin;
+                const base = projectPath();
+                const path = nodePath();
+                if (!skins || !base || !path) return null;
+                return skins.peek(path.join(base, 'img', 'system', 'Window.png'));
+            },
+            pickVariable: onPick => {
+                if (typeof root.SwitchVariablePicker !== 'function' || !settings.database) return;
+                if (!textCodeOptions._picker) {
+                    textCodeOptions._picker = new root.SwitchVariablePicker(
+                        settings.database, settings.projectController);
+                }
+                textCodeOptions._picker.show('variable', 1, id => onPick(id));
+            }
+        };
+    };
+
+    const attachTextCodes = (field, context = {}) => {
+        const menu = root.RRTextCodeMenu;
+        if (!field || !menu || !menu.renderPreview) return field;
+
+        const wrap = root.document.createElement('div');
+        wrap.className = 'rr-plugin-text-codes';
+        wrap.style.cssText = 'display:flex;flex-direction:column;gap:4px;min-width:0;width:100%;';
+        wrap.appendChild(field);
+
+        const preview = root.document.createElement('div');
+        preview.className = 'rr-plugin-text-codes-preview';
+        preview.style.cssText = 'min-width:0;padding:1px 2px;font-size:12px;'
+            + 'color:var(--color-text);white-space:pre-wrap;overflow-wrap:anywhere;';
+        preview.hidden = true;
+        wrap.appendChild(preview);
+
+        const options = textCodeOptions(context);
+        const refresh = () => {
+            const value = String(field.value == null ? '' : field.value);
+            const show = menu.hasPreviewableCode(value);
+            preview.hidden = !show;
+            if (show) menu.renderPreview(preview, value, options);
+            else preview.textContent = '';
+        };
+
+        field.addEventListener('input', refresh);
+        field.addEventListener('change', refresh);
+        menu.attach(field, options);
+        refresh();
+        // Only while the skin is still loading, and only until it lands: a
+        // standing listener per field would accumulate one for every time a
+        // struct dialog is reopened.
+        if (!options.skin() && root.document.addEventListener) {
+            root.document.addEventListener('rr-windowskin-loaded', refresh, { once: true });
+        }
+        return wrap;
+    };
+
     const createArray = options => {
         const { schema, value, onChange, context = {} } = options;
         const returnsArray = Array.isArray(value);
@@ -656,8 +746,23 @@
             entries.forEach((entry, index) => {
                 const row = root.document.createElement('div');
                 row.className = 'rr-plugin-choice-array-row';
-                row.style.cssText = 'display:grid;grid-template-columns:minmax(0,1fr) auto auto auto;gap:4px;align-items:center;';
-                row.appendChild(createScalar({
+                // Wrap rather than compress. The row used to be a grid whose
+                // control track was `minmax(0,1fr)`, which let the track shrink
+                // below what the control can actually render: a data-ref cell
+                // is a fixed 74px id box plus a nowrap Browse button, a ~165px
+                // floor it cannot go under. In a struct dialog narrow enough --
+                // measured at a 608px modal, where the field column came out
+                // 340px -- the control overflowed 61px into the next column and
+                // Move Up, being later in the DOM, painted over Browse and took
+                // its clicks. Neither button could be pressed.
+                row.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;align-items:center;';
+                const cell = root.document.createElement('div');
+                cell.className = 'rr-plugin-choice-array-cell';
+                // min-content is the control's own floor, whatever the control
+                // and whatever the locale's button text measures. Below it the
+                // actions wrap to their own line instead of landing on top.
+                cell.style.cssText = 'flex:1 1 220px;min-width:min-content;';
+                cell.appendChild(createScalar({
                     schema: { ...schema, type: scalarType },
                     value: entry,
                     context,
@@ -666,6 +771,12 @@
                         emit();
                     }
                 }));
+                row.appendChild(cell);
+                const actions = root.document.createElement('div');
+                actions.className = 'rr-plugin-choice-array-actions';
+                // The three move as one unit, right-aligned on whichever line
+                // they end up on, so a wrapped row still reads as one row.
+                actions.style.cssText = 'flex:0 0 auto;display:flex;gap:4px;align-items:center;margin-left:auto;';
                 const action = (label, disabled, handler) => {
                     const button = root.document.createElement('button');
                     button.type = 'button';
@@ -675,21 +786,22 @@
                     button.addEventListener('click', handler);
                     return button;
                 };
-                row.appendChild(action('Move Up', index === 0, () => {
+                actions.appendChild(action('Move Up', index === 0, () => {
                     [entries[index - 1], entries[index]] = [entries[index], entries[index - 1]];
                     emit();
                     render();
                 }));
-                row.appendChild(action('Move Down', index === entries.length - 1, () => {
+                actions.appendChild(action('Move Down', index === entries.length - 1, () => {
                     [entries[index], entries[index + 1]] = [entries[index + 1], entries[index]];
                     emit();
                     render();
                 }));
-                row.appendChild(action('Remove', false, () => {
+                actions.appendChild(action('Remove', false, () => {
                     entries.splice(index, 1);
                     emit();
                     render();
                 }));
+                row.appendChild(actions);
                 container.appendChild(row);
             });
             const add = root.document.createElement('button');
@@ -726,6 +838,7 @@
     };
 
     const api = {
+        attachTextCodes,
         buildContext,
         canBrowseImages,
         choiceItems,
