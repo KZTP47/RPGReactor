@@ -1235,6 +1235,18 @@ class PluginManager {
             : options;
     }
 
+    /**
+     * Give a text field the message control characters it already accepts.
+     *
+     * Returns the wrapper to append in the field's place -- or the field
+     * itself, unchanged, if the shared widget module is not present.
+     */
+    decorateTextCodes(field) {
+        return typeof RRPluginParamWidgets !== 'undefined' && RRPluginParamWidgets.attachTextCodes
+            ? RRPluginParamWidgets.attachTextCodes(field, this.pluginWidgetContext())
+            : field;
+    }
+
     describeStructFieldValue(value, fieldSchema) {
         const refs = typeof RRPluginDataRefs !== 'undefined' ? RRPluginDataRefs : null;
         const context = this.pluginWidgetContext();
@@ -1524,7 +1536,7 @@ class PluginManager {
             textarea.addEventListener('change', event => {
                 structData[fieldName] = event.target.value;
             });
-            return textarea;
+            return this.decorateTextCodes(textarea);
         }
 
         const structInputStyle = `
@@ -1560,7 +1572,7 @@ class PluginManager {
         input.addEventListener('change', (e) => {
             structData[fieldName] = e.target.value;
         });
-        return input;
+        return this.decorateTextCodes(input);
     }
 
     /**
@@ -3857,7 +3869,7 @@ class PluginManager {
             textarea.addEventListener('change', event => {
                 plugin.parameters[key] = event.target.value;
             });
-            inputWrapper.appendChild(textarea);
+            inputWrapper.appendChild(this.decorateTextCodes(textarea));
             container.appendChild(inputWrapper);
             return container;
         }
@@ -3871,7 +3883,7 @@ class PluginManager {
             textarea.addEventListener('change', event => {
                 plugin.parameters[key] = JSON.stringify(event.target.value);
             });
-            inputWrapper.appendChild(textarea);
+            inputWrapper.appendChild(this.decorateTextCodes(textarea));
             container.appendChild(inputWrapper);
             return container;
         }
@@ -3919,7 +3931,7 @@ class PluginManager {
             plugin.parameters[key] = e.target.value;
         });
 
-        inputWrapper.appendChild(input);
+        inputWrapper.appendChild(this.decorateTextCodes(input));
         container.appendChild(inputWrapper);
         return container;
     }
