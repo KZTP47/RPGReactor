@@ -165,8 +165,15 @@
                 labelLine.style.whiteSpace = 'nowrap';
                 paintLabel(labelLine, opt.textContent);
                 item.appendChild(labelLine);
+                // A hint may carry further lines after a newline - a trait's
+                // says what the option does, then names the plugins that have
+                // replaced the engine behind it. Rendering them as one run of
+                // text loses the break (HTML folds it to a space) and the
+                // second thought reads as a continuation of the first, so each
+                // line gets its own div and the ones after the first are dimmer.
+                const [lead, ...notes] = String(hint).split('\n');
                 const hintLine = document.createElement('div');
-                hintLine.textContent = hint;
+                hintLine.textContent = lead;
                 hintLine.style.cssText = `
                     margin-top: 2px;
                     font-size: var(--font-size-sm);
@@ -175,6 +182,19 @@
                     color: ${opt.disabled ? 'var(--color-text-dim)' : 'var(--color-text-muted)'};
                 `;
                 item.appendChild(hintLine);
+                for (const note of notes) {
+                    if (!note) continue;
+                    const noteLine = document.createElement('div');
+                    noteLine.textContent = note;
+                    noteLine.style.cssText = `
+                        margin-top: 1px;
+                        font-size: var(--font-size-xs);
+                        font-weight: 400;
+                        line-height: 1.3;
+                        color: var(--color-text-dim);
+                    `;
+                    item.appendChild(noteLine);
+                }
                 item.title = hint;
             } else {
                 paintLabel(item, opt.textContent);
