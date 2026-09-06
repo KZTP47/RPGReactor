@@ -71,9 +71,15 @@ function createSandbox() {
         RRPluginParamCodec: require(path.join(editorRoot, 'src', 'utils', 'PluginParamCodec.js')),
         RRPickerIndex: {
             matches: (value, query) => String(value).toLowerCase().includes(String(query).toLowerCase())
-        }
+        },
+        // The text-code preview reads real colours off the project's
+        // windowskin; there is no project here, so one flat colour is enough
+        // to prove the run was recoloured at all.
+        RRWindowskin: { textColor: () => '#101016' }
     };
     sandbox.window = sandbox;
+    vm.runInNewContext(read('src/utils/IconCodes.js'), sandbox);
+    vm.runInNewContext(read('src/utils/TextCodeMenu.js'), sandbox);
     vm.runInNewContext(read('src/utils/PluginParamWidgets.js'), sandbox);
     sandbox.PluginManager = vm.runInNewContext(`${read('src/PluginManager.js')}\nPluginManager;`, sandbox);
     sandbox.PluginCommandEditor = vm.runInNewContext(
@@ -291,4 +297,86 @@ test('shared choice routing precedes generic arrays without replacing icon or au
     assert.ok(commands.indexOf('RRPluginParamWidgets.create({') < commands.indexOf('switch (arg.type)'));
     assert.match(commands, /case 'icon'/);
     assert.match(commands, /if \(!this\.showAudioPicker\(arg, input\)\) this\.showFilePicker\(arg, input\)/);
+});
+
+test('an array row wraps its actions instead of letting the control overlap them', () => {
+    const sandbox = createSandbox();
+    const writes = [];
+    const list = sandbox.RRPluginParamWidgets.create({
+        schema: { type: 'select[]', options: ['Window', 'Dim'], values: ['0', '1'] },
+        value: '["0","1","0"]',
+        onChange: value => writes.push(value)
+    });
+
+    const rows = descendants(list)
+        .filter(element => String(element.className).includes('rr-plugin-choice-array-row'));
+    assert.equal(rows.length, 3);
+
+    for (const row of rows) {
+        // The control track used to be `minmax(0,1fr)` in a four-column grid,
+        // which let it shrink below what a data-ref control can render -- a
+        // 74px id box plus a nowrap Browse button -- so the control overflowed
+        // into the Move Up column and the two took each other's clicks.
+        assert.ok(!/grid-template-columns/.test(row.style.cssText),
+            'a fixed track cannot express the control\'s own minimum');
+        assert.match(row.style.cssText, /flex-wrap:\s*wrap/,
+            'the row wraps rather than compressing past the control\'s floor');
+
+        const cell = row.children[0];
+        assert.match(String(cell.className), /rr-plugin-choice-array-cell/);
+        assert.match(cell.style.cssText, /min-width:\s*min-content/,
+            'the control keeps its own intrinsic minimum, whatever the locale measures');
+
+        const actions = row.children[1];
+        assert.match(String(actions.className), /rr-plugin-choice-array-actions/);
+        assert.deepEqual(actions.children.map(button => button.textContent),
+            ['Move Up', 'Move Down', 'Remove'],
+            'the three travel together so a wrapped row still reads as one row');
+        assert.equal(row.children.length, 2, 'nothing else competes for the row');
+    }
+
+    assert.equal(rows[0].children[1].children[0].disabled, true, 'the first row cannot move up');
+    assert.equal(rows[2].children[1].children[1].disabled, true, 'the last row cannot move down');
+
+    // Regrouping the buttons must not have cost the row its behaviour.
+    rows[2].children[1].children[0].dispatch('click');
+    assert.equal(writes.pop(), '["0","0","1"]');
+});
+
+test('a plugin text parameter shows the control characters it accepts, and only when it has them', () => {
+    const sandbox = createSandbox();
+    const widgets = sandbox.RRPluginParamWidgets;
+    const context = { iconSetPath: 'C:/project/img/system/IconSet.png' };
+
+    const plain = Object.assign(new FakeElement('input'), { value: 'Untitled' });
+    const plainWrap = widgets.attachTextCodes(plain, context);
+    assert.match(String(plainWrap.className), /rr-plugin-text-codes/);
+    assert.equal(plainWrap.children[0], plain, 'the field itself is left as it was');
+    assert.equal(plainWrap.children[1].hidden, true,
+        'a parameter holding ordinary text looks exactly as it did before');
+
+    const coded = Object.assign(new FakeElement('input'),
+        { value: '\\I[64]\\C[16]Fire\\C[0] rune \\V[7]' });
+    const preview = widgets.attachTextCodes(coded, context).children[1];
+    assert.equal(preview.hidden, false);
+    assert.deepEqual(preview.children.map(part => part.textContent), ['', 'Fire', ' rune ']);
+    assert.equal(preview.children[0].className, 'rr-icon-code', 'an icon code draws an icon');
+    assert.equal(preview.children[1].style.color, '#101016',
+        'a colour code recolours the run that follows it');
+    assert.equal(preview.children[2].style.color, undefined,
+        'C[0] returns to the normal colour, and V[7] leaves no trace');
+
+    // Typing is what the author does next, so the preview has to follow it.
+    coded.value = 'no codes here';
+    coded.dispatch('input');
+    assert.equal(preview.hidden, true);
+});
+
+test('every plugin text field routes through the shared text-code decorator', () => {
+    const source = read('src/PluginManager.js');
+    assert.match(source, /decorateTextCodes\(field\)\s*\{[\s\S]*?RRPluginParamWidgets\.attachTextCodes/);
+    // Top-level note, multiline_string and the default text input, plus the
+    // struct-field note and its default. Missing one leaves that surface
+    // showing markup while the field beside it renders the same markup.
+    assert.equal(source.split('this.decorateTextCodes(').length - 1, 5);
 });
