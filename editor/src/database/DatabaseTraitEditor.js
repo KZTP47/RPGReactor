@@ -22,6 +22,11 @@ class DatabaseTraitEditor {
      * symmetrical whatever mix of selects and numbers a row carries.
      * A row with no dropdown puts its number (and unit) where the dropdown
      * would sit, so the control column never yawns empty.
+     *
+     * Every row also carries TraitHelp's sentence for its code, which
+     * HoverHelp shows on rest. It rides on the row rather than the label so
+     * that resting anywhere along it - radio, name, or the empty space between
+     * them - explains the same thing.
      */
     _rowHTML(trait, { code, label, control = '', prefix = '', value = '', unit = '' }) {
         if (!control && value) {
@@ -29,8 +34,10 @@ class DatabaseTraitEditor {
             value = '';
             unit = '';
         }
+        const help = globalThis.TraitHelp ? globalThis.TraitHelp.rowTip(code) : '';
+        const helpAttr = help ? ` data-rr-help="${rrEscapeHtml(help)}"` : '';
         return `
-            <div class="trait-option rr-trait-row">
+            <div class="trait-option rr-trait-row"${helpAttr}>
                 <input type="radio" name="trait-type" value="${code}" ${trait.code === code ? 'checked' : ''}>
                 <span class="rr-trait-label">${label}</span>
                 <span class="rr-trait-control">${control}</span>
@@ -46,6 +53,26 @@ class DatabaseTraitEditor {
 
     _numberHTML(cssClass, code, value, extra = '') {
         return `<input type="number" class="${cssClass} database-field-value" data-code="${code}" value="${value}" ${extra}>`;
+    }
+
+    /**
+     * Options for a fixed list whose entries have an explanation each. The
+     * explanation rides on the option's `title`, which SelectThemingShim draws
+     * as a second line under the label in the open popup and keeps as the
+     * closed trigger's tooltip.
+     *
+     * `labels` and `hints` are both in stored-dataId order, so index is the
+     * value written to the trait - the same contract ActionScopes keeps.
+     */
+    _hintedOptions(code, trait, labels, hints) {
+        return labels.map((label, dataId) => {
+            const selected = trait.code === code && trait.dataId === dataId ? ' selected' : '';
+            const hint = globalThis.TraitHelp
+                ? globalThis.TraitHelp.optionTip(code, dataId, hints[dataId] || '')
+                : (hints[dataId] || '');
+            const title = hint ? ` title="${rrEscapeHtml(hint)}"` : '';
+            return `<option value="${dataId}"${title}${selected}>${rrEscapeHtml(label)}</option>`;
+        }).join('');
     }
 
     /**
@@ -268,14 +295,15 @@ class DatabaseTraitEditor {
     }
 
     createParamTab(container, trait) {
-        const exParams = ['Hit Rate', 'Evasion Rate', 'Critical Rate', 'Critical Evasion', 'Magic Evasion', 'Magic Reflection', 'Counter Attack', 'HP Regeneration', 'MP Regeneration', 'TP Regeneration']
-            .map(param => this._t(param))
-            .map((param, idx) => `<option value="${idx}" ${trait.code === 22 && trait.dataId === idx ? 'selected' : ''}>${param}</option>`)
-            .join('');
-        const spParams = ['Target Rate', 'Guard Effect', 'Recovery Effect', 'Pharmacology', 'MP Cost Rate', 'TP Charge Rate', 'Physical Damage', 'Magical Damage', 'Floor Damage', 'Experience']
-            .map(param => this._t(param))
-            .map((param, idx) => `<option value="${idx}" ${trait.code === 23 && trait.dataId === idx ? 'selected' : ''}>${param}</option>`)
-            .join('');
+        const help = globalThis.TraitHelp;
+        const exParams = this._hintedOptions(22, trait,
+            ['Hit Rate', 'Evasion Rate', 'Critical Rate', 'Critical Evasion', 'Magic Evasion', 'Magic Reflection', 'Counter Attack', 'HP Regeneration', 'MP Regeneration', 'TP Regeneration']
+                .map(param => this._t(param)),
+            help ? help.exParams() : []);
+        const spParams = this._hintedOptions(23, trait,
+            ['Target Rate', 'Guard Effect', 'Recovery Effect', 'Pharmacology', 'MP Cost Rate', 'TP Charge Rate', 'Physical Damage', 'Magical Damage', 'Floor Damage', 'Experience']
+                .map(param => this._t(param)),
+            help ? help.spParams() : []);
 
         container.innerHTML = [
             this._rowHTML(trait, {
@@ -370,9 +398,6 @@ class DatabaseTraitEditor {
         const typeOptions = (types, code) => types.map((type, id) => ({ type, id })).filter(entry => entry.id > 0 && entry.type).map(entry =>
             `<option value="${entry.id}" ${trait.code === code && trait.dataId === entry.id ? 'selected' : ''}>${rrEscapeHtml(entry.type)}</option>`
         ).join('');
-        const fixedOptions = (pairs, code) => pairs.map(([value, label]) =>
-            `<option value="${value}" ${trait.code === code && trait.dataId === value ? 'selected' : ''}>${this._t(label)}</option>`
-        ).join('');
 
         container.innerHTML = [
             this._rowHTML(trait, {
@@ -393,7 +418,9 @@ class DatabaseTraitEditor {
             }),
             this._rowHTML(trait, {
                 code: 55, label: this._t('Slot Type'),
-                control: this._selectHTML('slottype-select', 55, fixedOptions([[0, 'Normal'], [1, 'Dual Wield']], 55))
+                control: this._selectHTML('slottype-select', 55, this._hintedOptions(55, trait,
+                    ['Normal', 'Dual Wield'].map(label => this._t(label)),
+                    globalThis.TraitHelp ? globalThis.TraitHelp.slotTypes() : []))
             })
         ].join('');
 
@@ -401,9 +428,7 @@ class DatabaseTraitEditor {
     }
 
     createOtherTab(container, trait) {
-        const fixedOptions = (pairs, code) => pairs.map(([value, label]) =>
-            `<option value="${value}" ${trait.code === code && trait.dataId === value ? 'selected' : ''}>${this._t(label)}</option>`
-        ).join('');
+        const help = globalThis.TraitHelp;
 
         container.innerHTML = [
             this._rowHTML(trait, {
@@ -413,15 +438,21 @@ class DatabaseTraitEditor {
             }),
             this._rowHTML(trait, {
                 code: 62, label: this._t('Special Flag'),
-                control: this._selectHTML('specialflag-select', 62, fixedOptions([[0, 'Auto Battle'], [1, 'Guard'], [2, 'Substitute'], [3, 'Preserve TP']], 62))
+                control: this._selectHTML('specialflag-select', 62, this._hintedOptions(62, trait,
+                    ['Auto Battle', 'Guard', 'Substitute', 'Preserve TP'].map(label => this._t(label)),
+                    help ? help.specialFlags() : []))
             }),
             this._rowHTML(trait, {
                 code: 63, label: this._t('Collapse Effect'),
-                control: this._selectHTML('collapse-select', 63, fixedOptions([[0, 'Normal'], [1, 'Boss'], [2, 'Instant'], [3, 'No Disappear']], 63))
+                control: this._selectHTML('collapse-select', 63, this._hintedOptions(63, trait,
+                    ['Normal', 'Boss', 'Instant', 'No Disappear'].map(label => this._t(label)),
+                    help ? help.collapseEffects() : []))
             }),
             this._rowHTML(trait, {
                 code: 64, label: this._t('Party Ability'),
-                control: this._selectHTML('party-select', 64, fixedOptions([[0, 'Encounter Half'], [1, 'Encounter None'], [2, 'Cancel Surprise'], [3, 'Raise Preemptive'], [4, 'Gold Double'], [5, 'Drop Item Double']], 64))
+                control: this._selectHTML('party-select', 64, this._hintedOptions(64, trait,
+                    ['Encounter Half', 'Encounter None', 'Cancel Surprise', 'Raise Preemptive', 'Gold Double', 'Drop Item Double'].map(label => this._t(label)),
+                    help ? help.partyAbilities() : []))
             })
         ].join('');
 

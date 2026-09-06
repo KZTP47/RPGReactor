@@ -196,6 +196,78 @@
         field.dispatchEvent(new Event('input', { bubbles: true }));
     }
 
+    // ------------------------------------------------------------ preview
+    /**
+     * Draw `text` into `element` the way drawTextEx would read it.
+     *
+     * The insert menu above is the authoring half; this is the reading half.
+     * A field that accepts control characters showed its author raw markup --
+     * `\I[64]Fire`, `\C[16]Label` -- with no way to see what that meant short
+     * of launching the game. Icons become real cells out of the project's
+     * IconSet, `\C[n]` recolours the run that follows it from the project's
+     * own windowskin palette, and every other code is dropped, which is what
+     * leaves the text reading as the player will read it.
+     *
+     * Deliberately not a renderer: no word wrap, no `\{` size changes, no
+     * variable substitution. It answers "what does this line say, and in what
+     * colour", which is the question an author has while typing.
+     */
+    const PREVIEW_CODE = /\\([A-Za-z]{1,8})\[([^\]]*)\]|\\([{}|.^!><$])/g;
+
+    function renderPreview(element, text, options) {
+        if (!element) return element;
+        const settings = options || {};
+        const raw = String(text == null ? '' : text);
+        const url = typeof settings.iconSetUrl === 'function'
+            ? settings.iconSetUrl()
+            : (settings.iconSetUrl || '');
+        const skin = typeof settings.skin === 'function' ? settings.skin() : (settings.skin || null);
+        const colorFor = index => (root.RRWindowskin ? root.RRWindowskin.textColor(skin, index) : '');
+
+        element.textContent = '';
+        let color = '';
+        let buffer = '';
+        const flush = () => {
+            if (!buffer) return;
+            const span = document.createElement('span');
+            span.textContent = buffer;
+            if (color) span.style.color = color;
+            element.appendChild(span);
+            buffer = '';
+        };
+
+        PREVIEW_CODE.lastIndex = 0;
+        let last = 0;
+        let match;
+        while ((match = PREVIEW_CODE.exec(raw)) !== null) {
+            buffer += raw.slice(last, match.index);
+            last = PREVIEW_CODE.lastIndex;
+            const name = String(match[1] || '').toUpperCase();
+            if (name === 'I') {
+                flush();
+                const cell = root.RRIconCodes ? root.RRIconCodes.cell(Number(match[2]), { url }) : null;
+                if (cell) element.appendChild(cell);
+            } else if (name === 'C') {
+                // A colour code applies to everything after it, so the run
+                // before it has to be committed at its old colour first.
+                flush();
+                const index = Number(match[2]);
+                color = Number.isFinite(index) && index > 0 ? colorFor(index) : '';
+            }
+            // Everything else -- \V[n], \N[n], \{, \} -- is markup the player
+            // never sees, so it leaves no trace here either.
+        }
+        buffer += raw.slice(last);
+        flush();
+        return element;
+    }
+
+    /** Does `text` carry anything renderPreview would draw differently? */
+    function hasPreviewableCode(text) {
+        PREVIEW_CODE.lastIndex = 0;
+        return PREVIEW_CODE.test(String(text == null ? '' : text));
+    }
+
     // ------------------------------------------------------------- pickers
     function pickColor(field, options) {
         const skin = typeof options.skin === 'function' ? options.skin() : null;
@@ -736,6 +808,8 @@
         attach,
         insertAtCaret,
         createReferencePanel,
+        renderPreview,
+        hasPreviewableCode,
         openPluginHelp,
         showMenu,
         closeMenu
