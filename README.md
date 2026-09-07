@@ -1,16 +1,20 @@
 # RPG Reactor
 
-RPG Reactor 0.98.5 is an open-source, cross-platform RPG game editor and runtime for RPG Maker MV/MZ-compatible projects. RPG Reactor provides its own modern runtime, PixiJS 8 for 2D and Three.js for HD-2D/3D maps, while preserving compatibility with RPG Maker project data and targeting backwards compatibility with both RPG Maker MZ and MV plugins, including mixing plugins from both engines within a single project through complementary MZ and MV compatibility layers.
+RPG Reactor is an open-source, cross-platform RPG game editor and runtime for RPG Maker MV/MZ-compatible projects. RPG Reactor provides its own modern runtime, PixiJS 8 for 2D and Three.js for HD-2D/3D maps, while preserving compatibility with RPG Maker project data and targeting backwards compatibility with both RPG Maker MZ and MV plugins, including mixing plugins from both engines within a single project through complementary MZ and MV compatibility layers.
 
 Use RPG Reactor to create, edit, playtest, and package 2D RPGs with familiar RPG Maker-style maps, events, database records, plugins, and deployment workflows, without depending on the original RPG Maker runtime or editor.
 
-Pre-built download binaries are available at <https://psychronic.itch.io/rpg-reactor>. The latest tagged source release is [0.98.5](https://github.com/Psychronic-Games/RPGReactor/releases/tag/v0.98.5).
+Pre-built download binaries are available at <https://psychronic.itch.io/rpg-reactor>. The current development version is 0.98.6 and is not published yet; the latest tagged source release is [0.98.5](https://github.com/Psychronic-Games/RPGReactor/releases/tag/v0.98.5).
 
 ## What's new in 0.98.5
 
-Build map-based Battle Rooms and visual Action Sequences with reusable attack steps, 2D/3D battlers, and cinematic cameras. Place native lighting and image/video media surfaces, author quests and custom interfaces, and use the expanded audio and model tools. This release also includes MV/MZ compatibility fixes, safer event/map saving, and a theme/localization pass.
+- **Battle Rooms and visual Action Sequences:** use a map as the battle arena, place 2D/3D battlers, build attacks from editable steps, and stage cinematic cameras. Start with the reusable unarmed punch sequence.
+- **Native lighting and media surfaces:** place animated lights, images, and videos directly on maps or model parts, with visual position, rotation, size, and corner controls.
+- **Expanded 3D authoring:** sharper model previews, model optimization tools, facial markers, and audio-driven lip motion for spoken voices.
+- **Quests, interfaces, and audio:** author quests and custom interface panels, arrange map music sequences, and choose sound variants with shared audio pickers.
+- **Compatibility and reliability:** MV/MZ and 2D regression fixes, safer event/map saving, clearer tool selection, and more consistent themes and translations.
 
-Read the [0.98.5 release notes](docs/posts/release-notes-0.98.5.md), [battle authoring guide](docs/BATTLE-PRESENTATION.md), and [media surface guide](docs/MEDIA-SURFACES.md). New battle presentation is opt-in; the guides describe current plugin and feature limitations.
+Read the [0.98.5 release notes](docs/posts/release-notes-0.98.5.md) for details and current limitations. Battle Rooms and Action Sequences are opt-in; existing battles keep their configured behavior. Earlier updates remain in the [changelog](CHANGELOG.md) and [devlog archive](docs/README.md).
 
 ## Repository Layout
 
@@ -29,15 +33,14 @@ RPGReactor/
 ## Documentation
 
 - [Editor README](editor/README.md): detailed feature list, source launch steps, project structure, shortcuts, and technical notes.
-- [Changelog](CHANGELOG.md): GitHub-facing release progress and links to the detailed editor changelog.
+- [Latest release notes](docs/posts/release-notes-0.98.5.md): features, fixes, and compatibility limits for 0.98.5.
+- [Changelog](CHANGELOG.md): upcoming development and previous releases.
+- [Battle authoring guide](docs/BATTLE-PRESENTATION.md): Battle Rooms, formations, action steps, and supported plugin behavior.
+- [Media surface guide](docs/MEDIA-SURFACES.md): image/video placement, transforms, proportions, and legacy command support.
 - [Current status](docs/STATUS.md): verified development state, runtime defaults, test results, and open work.
 - [Handoff notes](docs/HANDOFF.md): dated engineering history, open threads, and manual release gates.
-- [RPG Reactor 0.98.4 devlog](docs/devlogs/2026-08-30-rpg-reactor-0.98.4.md): height as a coordinate, 3D props and passage, in-world model effects and video surfaces, background waits, the Show Text overhaul, import-time model optimization.
-- [RPG Reactor 0.98.3 devlog](docs/devlogs/2026-08-23-rpg-reactor-0.98.3.md): in-editor rigging, preset motions, database 3D bindings, model preloading, and multi-format audio.
 - [Custom user interfaces design](docs/DESIGN-USER-INTERFACES.md): the User Interfaces database section, its runtime, how it stays invisible to RPG Maker, seven opt-in stock-scene replacements, and the workflows intentionally left stock.
 - [3D objects on the map](docs/devlogs/2026-08-02-3d-objects-on-the-map.md): how painted object groupings and tileset 3D classes build the HD-2D world.
-- [RPG Reactor 0.96.0 overview](docs/devlogs/2026-07-25-rpg-reactor-0.96.0.md): release explanation of the deep correctness audit, the authored-data oracle, the event-command and database fixes it produced, the 3D map renderer, and a closing section on what in 3D is not finished.
-- [RPG Reactor 0.95.0 overview](docs/devlogs/2026-07-18-rpg-reactor-0.95.0.md): prior-cycle explanation, including source-audited localization, expanded database workspaces, complete Conditional Branch editing, safer large-map workflows, and restored MV/YEP save compatibility.
 - [Maintainer docs](docs/README.md): workflows that are useful for project maintenance but are not required for normal editor use.
 - [Release checklist](docs/RELEASE-CHECKLIST.md): exact maintainer commands for source publication, signed release candidates, GitHub attachments, and optional itch.io publication.
 
@@ -45,7 +48,7 @@ RPGReactor/
 
 - **Full RPG Maker-style editor**: map editing with four tile layers, autotiles, shadow pen, and region painting; a visual event editor with 100+ commands, multi-page events, every MZ Conditional Branch form in RPG Maker's own four-tab layout (plus a Reactor tab for keyboard, mouse, wheel and pointer conditions), collapsible block structures with persisted fold state, Show Text edited as a whole run of message boxes with RPG Maker's text-code menu and a windowskin-accurate preview, and optional advanced expressions, loops, input conditions, event calls, and picture controls beyond the stock MV/MZ editors; a database where any entry can list what references it, descriptions and battle messages carry the text codes their windows honour, enemies have their own Max TP and can require states the user or target lacks, Add State can set its own duration, and Grow reaches Max TP or a random range; complete database editors with dense Types and Terms workspaces; a multi-channel audio player; and multi-instance editing with a cross-window typed clipboard. Drawing, layer, Undo/Redo, Audio, Database, Plugin, Resource Manager, and Forge actions share a high-contrast blue/cyan/gold SVG toolbar language; the Fill action is a pouring paint bucket and the Shadow Pen visibly lays a dark stroke.
 - **Project-wide Resource Manager**: browse locale-sorted nested MZ/Reactor image, audio, effect, movie, font, icon, and 3D assets; preview media and orbit/zoom models through Reactor3D; batch-import safely on desktop; multi-select nested exports with Ctrl/Cmd or Shift; export decrypted bytes from encrypted projects; and delete only after path, project-lock, and symlink checks. The 3D category does not delete or merge existing models, but desktop users can import one validated GLB/OBJ/FBX/STL/USDZ/3MF/DXF into a new user-named `3d/<folder>/` containing `source/` and an empty `textures/`; `.blend` must first be exported. Publication is staged, destination-reserved, ownership-checked, and rolled back on failure. Web mutation is intentionally disabled.
-- **Native Video Surfaces**: Reactor event commands Show, Transform, and Stop Video Surface place WebM/MP4 or still pictures on the screen, map, player, or an event with layer, opacity, audio, playback rate, loop/wait, scanlines, culling, position, size, rotation, scale, depth, Z, and four local corners. Runtime uses PIXI for 2D/all screen targets; only PIXI projectively warps corners, leaves Z to the 3D view (the dragged position is the whole 2D placement), and interprets culling distance in screen pixels. Map/event/player targets on 3D maps use rectangular Three.js planes with Z/world-camera-distance culling and ignore corners. Editor live previews use PIXI, Three.js, or a 3D-screen DOM bounding-box/clip approximation; DOM corner handles reshape the clip but do not projectively warp video pixels. Editor previews omit scanlines, and only Three.js previews apply culling. All preview types move directly, Three.js stays rectangular, numeric fields synchronize, and right-click opens the exact source command. The map view reduces each page independently without evaluating page conditions/flow and forces preview media muted/looping; playtest honors authored playback. Preview resources never enter map or sidecar data.
+- **Native Media Surfaces**: place images and videos through the map toolbar or Show, Transform, and Stop Media Surface event commands. Attach them to the screen, map, player, events, or model parts; edit position, elevation, rotation, scale, corners, opacity, scanlines, and playback settings. Visual arrows, rings, sliders, and source-proportion controls support placement in 2D and 3D. Existing Video Surface commands remain supported. See the [media surface guide](docs/MEDIA-SURFACES.md) for rendering and preview behavior.
 - **Modern PIXI 8 + Three.js runtime**: the game runtime (`runtime/`) is a fully migrated PIXI v8 corescript. Tilemaps, UltraMode7, Effekseer particle effects, video, and shaders all run on current PixiJS instead of the legacy renderer RPG Maker ships, and 3D maps, models, rooms, cameras and in-scene effects are drawn by Three.js (r185) sharing the same canvas.
 - **Authorable HD-2D maps**: maps can opt into a perspective 3D presentation while retaining RPG Maker's grid, passability, events, and data format. Map Properties carries the 3D switch and a room: a parallax floor, walls, and ceiling at an authored height, faces inward, stored beside the map in `Map###.r3d.json`. Model props from the palette's 3D-M tab stand 3D models on any map, colliding where their geometry actually is. Models carry named effects — an animation, video/image surface, or light anchored to a part, sized relative to the model, played on demand, always, or while moving, dashing, or idle — fired by the Play 3D Effect command and animation timelines, and drawn inside the 3D world in both the editor and the game, so a wall, a strut or a character in front of the anchor hides them. A map with models is drawn under one depth buffer everywhere: what stands behind something stays behind it as the view turns. Each 3D map picks a Default Camera from Fixed Angle (HD-2D), Top-Down, Isometric, Third Person, or First Person, and the Change 3D Camera event command switches modes and angles during play; third and first person use mouse look with camera-relative WASD. The player start has a facing (right-click → Player Facing; the Reactor extension `System.json.startDirection`, which MZ ignores) and is drawn in the 3D view. Tileset classes and map-painted object groupings stand walls, roofs, panels, foliage, events, lights, and parallax-backed ground in the editor and runtime. Events, actors, enemies, weapons, armor, and items can carry GLB/OBJ/FBX models with in-editor rigging, carved parts, and authored animations, stored in `.r3d.json` sidecars beside the MZ data. Height is a real coordinate: events and props carry a Z in tiles (editable X/Y/Z in the Event Editor, drag arrows in the 3D view), move routes gain Rise/Descend/Set Height and Face Ceiling/Face Ground/Stand Up/Rotate steps, and collision respects vertical separation — a scaffold overhead blocks nobody, and a long vehicle turns through the arc its body actually sweeps. Model animations queue and never freeze the world: Play Model Animation chains plays with an optional Wait for Completion, and the Scoped Wait command (under the new Game Flow category) holds a script in the background — on a target's last actions, a duration, a switch, or a variable — while the player keeps moving and a second interaction parks the waiting script onto its own runner. Maps carry their own lights, placed with the Lighting tool and stored in the map sidecar: in 3D every surface — tiles, walls, ceilings, models, characters — is lit per pixel by its distance from each point light's sphere or spotlight's cone (yaw and pitch), and each source glows as a body in the world that walls hide, and selected lights cast shadows through cached static and dynamic depth atlases, refreshed when casters or lights move within GPU-specific budgets. Full quality supports eight casting lights and three dynamic rows; weak quality supports four and two, prioritized by light incident on the player; on 2D maps the same lights composite flat. Plugin lights from MV Nova Lighting and RaveLighting feed the same field.
 - **Model optimization**: GLB import can cap textures at 2K, pack skin weights, reduce geometry, and reorder triangles for the GPU vertex cache. The 3D database also offers Optimize for existing models and reports geometry, materials, textures, and rig costs. Both presets can change geometry; aggressive reduction targets fewer triangles. Separate distance-level file generation is disabled in both presets, while the runtime still supports existing authored LOD files. World rendering defaults to game resolution with nearest enlargement and no MSAA; adaptive resolution is opt-in.
@@ -60,23 +63,6 @@ RPGReactor/
   - **Sound Effect Generator**: procedural sfxr-style sound design on Web Audio, baked to 16-bit WAV in the project's `audio/se/`. 29 archetypes across RPG SFX and tuned instruments, six waveforms including a physically modelled Karplus-Strong pluck, 27 parameters, live waveform/envelope/pitch visualizers, and a 16-step sequencer for jingles and stingers.
 - **Build & deploy**: one-click isolated playtests; cross-platform game packaging for Windows, macOS, Linux, and Web; optional Linux AppImages for games and the editor; configurable NW.js releases and runtime locales; optional staged PNG/audio optimization; and an editor distribution builder with SHA-256 checksums. Eligible full desktop packages default to an exact-NW.js-version H.264/AAC codec overlay verified by a trusted archive hash plus extracted-binary validation; users can disable it, and Web/Minimal packages never include it. Every overlay carries machine-readable provenance, recorded archive/binary hashes, the complete LGPL text, corresponding-source/build references, and a patent notice.
 - **Source-audited 18-language localization** across editor-generated interface text, with locale-key and placeholder validation, Arabic right-to-left direction, and project-authored game content deliberately left untouched; plus a theme system with multiple color palettes in light and dark modes.
-
-## What's New in 0.98.4
-
-This is the released 0.98.4 overview. The 0.98.5 development defaults, including
-render resolution and model optimization, are described above and in
-[current status](docs/STATUS.md).
-
-The full list for this release cycle is in the [changelog](CHANGELOG.md).
-
-- **Height is a real coordinate.** Every event and prop has a Z in tiles: set it in the Event Editor, drag it with 3D arrows, move it with the new Rise/Descend/Set Height route steps, and collision is by vertical overlap, so a catwalk overhead blocks nobody.
-- **3D props grew a full toolset.** Placement ghosts, undo, a transform card (offset, rotation, per-axis scale), collision that matches the actual mesh, a Passage view that draws blocked tiles in 2D and 3D alike, and drag arrows on the selection.
-- **Model effects live inside the world.** Effekseer effects anchored on models draw at their world position and depth, scale with the model, and hide behind geometry; video surfaces play on model parts (a screen on a swinging monitor arm keeps its movie on the glass), in game and in both editors.
-- **Events act without freezing the player.** Scoped Wait holds a script in the background on actions, time, a switch, or a variable; Play Model Animation queues; Transform 3D Model eases a model to a new pose. The tank fires its whole sequence while you walk away.
-- **Show Text is a conversation editor.** Whole message runs edit as one strip, a live miniature of the current box renders under the text field in the project's own windowskin and font, and overflow marks are pixel-identical to the game, escape codes measured the way the game measures them.
-- **3D models shrink on import.** The optimizer caps textures at 2K, packs skin weights, drops unused data, and welds duplicate vertices with no visible change, plus an optional mesh-simplification mode. The bundled Demo's six big models went 469MB to 168MB.
-- **The game stays sharp.** Fullscreen renders the canvas at on-screen size so 3D geometry is native-resolution while UI keeps its smooth scaling, and the adaptive-resolution blur is now opt-in.
-- **Database parity keeps landing.** Referenced By on every record, RPG Maker's four-tab Conditional Branch, enemy Max TP, per-effect state durations, random Grow/Change Parameter ranges, and text codes with live reference on descriptions and messages (GitHub #7, #15, #16, #23, #28-#32).
 
 ## Development Launchers
 
@@ -177,17 +163,17 @@ for third-party files or user/project content.
 ## Cutting a Source Release
 
 `cut-release.cjs` is the canonical source-release path. Run it from a clean
-`main` worktree after all 0.98.5 changes have been committed:
+`main` worktree after all 0.98.6 changes have been committed:
 
 ```bash
-node editor/build-scripts/cut-release.cjs 0.98.5 --dry-run
-node editor/build-scripts/cut-release.cjs 0.98.5
+node editor/build-scripts/cut-release.cjs 0.98.6 --dry-run
+node editor/build-scripts/cut-release.cjs 0.98.6
 ```
 
 The command runs the complete editor test suite, finalizes both changelog
 headings with the release date, updates `editor/package.json`, the root README
 release link and its recognized validation-count sentence, creates a release
-commit when those surfaces changed, creates an annotated `v0.98.5` tag, and pushes the branch and tag. The tag push starts
+commit when those surfaces changed, creates an annotated `v0.98.6` tag, and pushes the branch and tag. The tag push starts
 `publish-release.yml`, which creates or updates the GitHub source release using
 that version's root changelog section. `--no-push` stops after creating the tag.
 Other version prose, validation dates, the editor README, and the status summary
