@@ -1904,7 +1904,7 @@ AudioManager._bgmSequenceBuffers = function() {
 };
 
 /** Starts one non-looping track for the sequence; `onEnd` runs when it plays out. */
-AudioManager._startBgmSequenceTrack = function(state, audio, onEnd) {
+AudioManager._startBgmSequenceTrack = function(state, audio, onEnd, fadeIn) {
     const buffer = this.createBuffer("bgm/", audio.name);
     this.updateBufferParameters(buffer, this._bgmVolume, audio);
     buffer._rrBaseVolume = buffer.volume;
@@ -1916,6 +1916,9 @@ AudioManager._startBgmSequenceTrack = function(state, audio, onEnd) {
         onEnd();
     });
     buffer.play(false, 0);
+    // After play: the fade stage does not exist until the nodes do. A buffer
+    // still loading defers both, and in the order they were asked for.
+    if (fadeIn > 0) buffer.fadeIn(fadeIn);
     state.buffers.push(buffer);
     return buffer;
 };
@@ -1958,7 +1961,7 @@ AudioManager._startBgmSequenceEntry = function(state, entry) {
             const buffer = this._startBgmSequenceTrack(state, audio, () => {
                 this._destroyBgmSequenceBuffer(buffer);
                 this._advanceBgmSequence();
-            });
+            }, Math.max(0, Number(entry.fadeIn) || 0));
         }
     }
 };
@@ -1979,6 +1982,7 @@ AudioManager._startBgmSequencePalette = function(state, entry, now) {
         startTime: now,
         duration: duration,
         fadeOut: Math.max(0, Number(entry.fadeOut) || 0),
+        fadeIn: Math.max(0, Number(entry.fadeIn) || 0),
         fading: false,
         fadeDoneAt: 0
     };
@@ -2017,7 +2021,7 @@ AudioManager._startBgmSequenceLayer = function(state, layer) {
         if (layer.buffer === buffer) layer.buffer = null;
         this._pruneBgmSequenceBuffers(state);
         this._startBgmSequenceLayer(state, layer);
-    });
+    }, palette.fadeIn);
     layer.buffer = buffer;
 };
 

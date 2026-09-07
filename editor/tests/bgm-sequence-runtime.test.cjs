@@ -260,3 +260,51 @@ test('the runtime hooks are in place: the scene tick, map autoplay and the vehic
     assert.match(objects, /AudioManager\.playBgm\(AudioManager\.mapBgmObject\(\$dataMap, this\.mapId\(\)\)\)/);
     assert.match(objects, /this\._walkingBgm = AudioManager\.mapBgmObject\(\$dataMap, \$gameMap\.mapId\(\)\)/);
 });
+
+test('an entry fades in over its own field, and one without a fade still starts at full volume', () => {
+    const map = { bgm: { name: 'Fallback', volume: 90, pitch: 100, pan: 0 }, bgmSequence: { enabled: true, entries: [
+        { type: 'track', name: 'Swell', volume: 80, pitch: 100, pan: 0, fadeIn: 3 },
+        { type: 'track', name: 'Blunt', volume: 80, pitch: 100, pan: 0 }
+    ] } };
+    const { AudioManager, created } = loadAudioManager({ map });
+    AudioManager.playBgm(AudioManager.mapBgmObject(map, 1));
+
+    assert.equal(created[0].name, 'Swell');
+    assert.equal(created[0].fadedIn, 3, 'the entry fades in over its own field');
+    assert.equal(created[0].playing, true, 'the fade is asked for after play, when the fade stage exists');
+
+    created[0].end();
+    assert.equal(created[1].name, 'Blunt');
+    assert.equal(created[1].fadedIn, null, 'an entry with no fade-in is untouched');
+});
+
+test('a palette fades in every layer it starts, including one it redraws later', () => {
+    const palette = {
+        type: 'palette', duration: 60, fadeIn: 4, fadeOut: 5,
+        layers: [
+            { volume: 90, pitch: 100, pan: 0, pool: [{ type: 'track', name: 'DroneA' }, { type: 'track', name: 'DroneB' }] },
+            { volume: 50, pitch: 100, pan: -30, pool: [{ type: 'track', name: 'Perc' }] }
+        ]
+    };
+    const map = { bgm: { name: 'Fallback', volume: 90, pitch: 100, pan: 0 }, bgmSequence: { enabled: true, entries: [palette] } };
+    const { AudioManager, created } = loadAudioManager({ map });
+    AudioManager.playBgm(AudioManager.mapBgmObject(map, 1));
+
+    assert.equal(created.length, 2);
+    assert.deepEqual(created.map(b => b.fadedIn), [4, 4], 'both layers swell in rather than snapping on');
+
+    // A re-draw is a new voice arriving, so it fades in the same way.
+    const layerOne = AudioManager._bgmSequence.palette.layers[0];
+    layerOne.buffer.end();
+    const redrawn = created[created.length - 1];
+    assert.notEqual(redrawn, created[0]);
+    assert.equal(redrawn.fadedIn, 4, 'a pool re-draw fades in too');
+});
+
+test('a palette with no fade-in keeps the abrupt start it has always had', () => {
+    const palette = { type: 'palette', duration: 60, fadeOut: 5, layers: [{ volume: 90, pitch: 100, pan: 0, pool: [{ type: 'track', name: 'Bed' }] }] };
+    const map = { bgm: { name: '', volume: 90, pitch: 100, pan: 0 }, bgmSequence: { enabled: true, entries: [palette] } };
+    const { AudioManager, created } = loadAudioManager({ map });
+    AudioManager.playBgm(AudioManager.mapBgmObject(map, 1));
+    assert.equal(created[0].fadedIn, null, 'an absent fade-in changes nothing for sequences authored before it existed');
+});

@@ -3,9 +3,9 @@
  *
  * A sequence is `{ enabled, entries }` and lives in Map###.json as
  * `bgmSequence`. Entries play in order and repeat:
- *   { type: 'track', name, volume, pitch, pan }
+ *   { type: 'track', name, volume, pitch, pan, fadeIn }
  *   { type: 'silence', duration }
- *   { type: 'palette', duration, fadeOut, layers: [{ volume, pitch, pan, pool }] }
+ *   { type: 'palette', duration, fadeIn, fadeOut, layers: [{ volume, pitch, pan, pool }] }
  * where a pool holds tracks (`{ type: 'track', name }`) and silences.
  *
  * The model functions are static so a save can normalize and validate what
@@ -61,11 +61,14 @@ class RRBgmSequenceEditor {
                 return {
                     type: 'palette',
                     duration: RRBgmSequenceEditor.seconds(raw.duration),
+                    fadeIn: RRBgmSequenceEditor.seconds(raw.fadeIn),
                     fadeOut: RRBgmSequenceEditor.seconds(raw.fadeOut),
                     layers: (Array.isArray(raw.layers) ? raw.layers : []).map(RRBgmSequenceEditor.layer)
                 };
             default:
-                return Object.assign({ type: 'track', name: typeof raw.name === 'string' ? raw.name : '' }, RRBgmSequenceEditor.levels(raw));
+                return Object.assign(
+                    { type: 'track', name: typeof raw.name === 'string' ? raw.name : '', fadeIn: RRBgmSequenceEditor.seconds(raw.fadeIn) },
+                    RRBgmSequenceEditor.levels(raw));
         }
     }
 
@@ -103,6 +106,7 @@ class RRBgmSequenceEditor {
             } else if (entry.type === 'palette') {
                 if (!entry.layers.length) return say('Entry {n}: a palette needs at least one layer.', { n });
                 if (entry.duration > 0 && entry.fadeOut > entry.duration) return say('Entry {n}: the fade-out cannot be longer than the duration.', { n });
+                if (entry.duration > 0 && entry.fadeIn > entry.duration) return say('Entry {n}: the fade-in cannot be longer than the duration.', { n });
                 for (let l = 0; l < entry.layers.length; l++) {
                     const layer = entry.layers[l];
                     if (!layer.pool.length) return say('Entry {n}, layer {layer}: the pool needs at least one entry.', { n, layer: l + 1 });
@@ -186,6 +190,7 @@ class RRBgmSequenceEditor {
             return `<div class="bgm-seq-row bgm-seq-depth-1" style="display: flex; gap: 6px; align-items: center;">${head}
                 <span style="flex: 0 0 52px; font-size: 12px;">${this.escape(this.tt('Track'))}</span>
                 ${nameBox(path, entry.name, entry)}
+                <label style="flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; font-size: 12px;">${this.escape(this.tt('Fade-in (s)'))} ${this.numberInput(`${path}.fadeIn`, entry.fadeIn, 0, 600, 0.5, 60)}</label>
                 ${this.rowTools(path)}
             </div>`;
         }
@@ -225,6 +230,7 @@ class RRBgmSequenceEditor {
             <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">${head}
                 <span style="flex: 0 0 52px; font-size: 12px;">${this.escape(this.tt('Palette'))}</span>
                 <label style="display: inline-flex; align-items: center; gap: 4px; font-size: 12px;">${this.escape(this.tt('Duration (s)'))} ${this.numberInput(`${path}.duration`, entry.duration, 0, 36000, 1, 64)}</label>
+                <label style="display: inline-flex; align-items: center; gap: 4px; font-size: 12px;">${this.escape(this.tt('Fade-in (s)'))} ${this.numberInput(`${path}.fadeIn`, entry.fadeIn, 0, 600, 0.5, 60)}</label>
                 <label style="display: inline-flex; align-items: center; gap: 4px; font-size: 12px;">${this.escape(this.tt('Fade-out (s)'))} ${this.numberInput(`${path}.fadeOut`, entry.fadeOut, 0, 600, 0.5, 60)}</label>
                 <span style="flex: 1;"></span>
                 ${this.rowTools(path)}
@@ -275,13 +281,13 @@ class RRBgmSequenceEditor {
         const { node, list, index } = this.resolve(path);
         switch (action) {
             case 'add-track':
-                this.sequence.entries.push(Object.assign({ type: 'track', name: '' }, RRBgmSequenceEditor.levels(null)));
+                this.sequence.entries.push(Object.assign({ type: 'track', name: '', fadeIn: 0 }, RRBgmSequenceEditor.levels(null)));
                 break;
             case 'add-silence':
                 this.sequence.entries.push({ type: 'silence', duration: 10 });
                 break;
             case 'add-palette':
-                this.sequence.entries.push({ type: 'palette', duration: 0, fadeOut: 4, layers: [RRBgmSequenceEditor.layer(null)] });
+                this.sequence.entries.push({ type: 'palette', duration: 0, fadeIn: 0, fadeOut: 4, layers: [RRBgmSequenceEditor.layer(null)] });
                 break;
             case 'add-layer':
                 if (node && node.type === 'palette') node.layers.push(RRBgmSequenceEditor.layer(null));

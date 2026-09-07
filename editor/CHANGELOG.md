@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+- **A fade no longer fights whatever it interrupts, and a music sequence can fade in.** Scheduling a gain ramp over a running one does not replace it: the Web Audio timeline keeps both, so the level jumps to the older ramp's target, waits out its end time, and only then follows the new one. Measured in Chromium with `OfflineAudioContext`, driving the interrupt from `ctx.suspend()` so what has already rendered stays immutable: a `fadeOut(2)` arriving half a second into a `fadeIn(2)` jumped from 0.25 to full volume, held there until the fade-in's end time, and then fell over the half second left of its own two seconds. It is reachable today, because `replayBgm` fades in -- leaving a menu or a battle and immediately triggering a transfer or a gameover runs `Scene_Base.fadeOutAll` straight into it. Both pairs of fades now clear the timeline first, through one pair of helpers rather than four copies of the guard; a fade-out holds the level it is audibly at, and a fade-in still forces zero because a gain node is created open.
+
+  Underneath that, fades were sharing one `GainNode` with the authored volume and the ME duck, and three writers on one `AudioParam` cancel each other. Ducking to 0.25 half a second into a two-second fade-in was swallowed whole -- the same numbers as a fade-in nothing interrupted -- so an ME would not have ducked the bed at all, and a volume slider moved during the same fade was dragged back to full by the running ramp. Sources now feed a fade stage that feeds the volume stage (`source -> _fadeGainNode -> _gainNode -> _pannerNode -> master`). The fade stage carries a plain 0..1 envelope and fades ramp only that; the volume setter and the duck keep `_gainNode` to themselves. Plugins that splice nodes attach downstream of `_gainNode`, so the new stage above it leaves their attachment points untouched.
+
+  With that separation in place, a sequence entry can fade in: **Fade-in (s)** sits beside the palette's existing Fade-out and on a plain track row, and a palette fades in every layer it starts, including one it redraws from its pool later. A palette had only ever faded *out*, so the bed died away smoothly and the next entry began at full level instantly. Absent or zero, which is what every sequence authored before now carries, changes nothing.
+
 ## [0.98.5] - 2026-09-07
 
 0.98.5 brings battle choreography into the editor: build a battle arena from a map, position the party and enemies, and assemble attacks from editable steps. It also adds native lighting, map media surfaces, quests, expanded interface authoring, and a substantial MV/MZ compatibility and editor reliability pass.

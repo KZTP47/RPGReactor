@@ -26,9 +26,9 @@ test('a sequence normalizes to its three entry shapes with clamped levels, and a
         null, 'junk'
     ] };
     const sequence = plain(E.normalize(raw));
-    assert.deepEqual(sequence.entries[0], { type: 'track', name: 'Forest', volume: 100, pitch: 50, pan: 0 });
+    assert.deepEqual(sequence.entries[0], { type: 'track', name: 'Forest', fadeIn: 0, volume: 100, pitch: 50, pan: 0 });
     assert.deepEqual(sequence.entries[1], { type: 'silence', duration: 2.6 });
-    assert.deepEqual(sequence.entries[2], { type: 'palette', duration: 30, fadeOut: 4, layers: [{ volume: 70, pitch: 100, pan: 0, pool: [{ type: 'track', name: 'A' }, { type: 'silence', duration: 0 }] }] });
+    assert.deepEqual(sequence.entries[2], { type: 'palette', duration: 30, fadeIn: 0, fadeOut: 4, layers: [{ volume: 70, pitch: 100, pan: 0, pool: [{ type: 'track', name: 'A' }, { type: 'silence', duration: 0 }] }] });
     assert.deepEqual(plain(E.levels(null)), { volume: 100, pitch: 100, pan: 0 }, 'a new row starts at full volume and pitch, not at the slider minimums');
     assert.deepEqual(plain(E.layer(null)).volume, 100);
     assert.equal(sequence.entries.length, 3);
@@ -84,7 +84,7 @@ test('the list edits its copy in place: add, move, remove, retype a number, and 
     assert.equal(picks[0].levels, null, 'a pool entry has no levels of its own');
     assert.deepEqual(picks[0].previewLevels, { volume: 100, pitch: 100, pan: 0 }, 'it previews with its layer');
     await editor.pick('entries.0', editor.sequence.entries[0], null);
-    assert.deepEqual(plain(editor.value().entries[0]), { type: 'track', name: 'Chosen', volume: 55, pitch: 100, pan: 10 }, 'a track row takes the picker levels');
+    assert.deepEqual(plain(editor.value().entries[0]), { type: 'track', name: 'Chosen', fadeIn: 0, volume: 55, pitch: 100, pan: 10 }, 'a track row takes the picker levels');
     assert.match(container.innerHTML, /bgm-seq-row/);
     editor.setEnabled(false);
     assert.equal(editor.value().enabled, false);
@@ -129,7 +129,7 @@ function controllerFor(mapData, sequence) {
 
 test('Map Properties carries every field the map already has and writes the sequence beside them', async () => {
     const map = { id: 3, name: 'Woods', width: 20, height: 15, data: [1, 2], events: [null], pluginField: { kept: true }, _transient: 1, bgm: { name: 'Old' } };
-    const sequence = { enabled: true, entries: [{ type: 'track', name: 'A', volume: 80, pitch: 100, pan: 0 }, { type: 'silence', duration: 2 }] };
+    const sequence = { enabled: true, entries: [{ type: 'track', name: 'A', fadeIn: 0, volume: 80, pitch: 100, pan: 0 }, { type: 'silence', duration: 2 }] };
     const controller = controllerFor(map, sequence);
     assert.equal(await controller.saveMapProperties(), true);
     const written = controller.written;
