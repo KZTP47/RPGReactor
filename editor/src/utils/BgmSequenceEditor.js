@@ -244,7 +244,7 @@ class RRBgmSequenceEditor {
         const entries = this.sequence.entries;
         const rows = entries.map((entry, index) => this.renderEntry(entry, index)).join('');
         this.container.innerHTML = `
-            <div style="font-size: 11px; color: var(--color-text-muted); line-height: 1.5; margin-bottom: 4px;">${this.escape(this.tt('A palette plays every layer at once; each layer draws at random from its pool. Duration 0 runs until the map changes. Loop points are ignored inside a sequence.'))}</div>
+            <div style="font-size: 11px; color: var(--color-text-muted); line-height: 1.5; margin-bottom: 4px;">${this.escape(this.tt('A palette plays every layer at once; each layer draws at random from its pool. Duration 0 runs until the map changes. Loop points are ignored inside a sequence.'))} ${this.escape(this.tt('A fade-in on the next entry crossfades into it.'))}</div>
             <div class="bgm-seq-list" style="display: flex; flex-direction: column; gap: 4px;">${rows || `<div style="font-size: 12px; color: var(--color-text-muted); padding: 4px 0;">${this.escape(this.tt('No entries yet.'))}</div>`}</div>
             <div style="display: flex; gap: 4px; margin-top: 6px;">
                 ${this.smallButton('add-track', '', this.tt('+ Track'))}

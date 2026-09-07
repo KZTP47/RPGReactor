@@ -1876,6 +1876,7 @@ AudioManager.playBgmSequence = function(bgm) {
         duck: this._meBuffer ? this.BGM_SEQUENCE_ME_DUCK : 1,
         due: 0,
         palette: null,
+        retiring: [],
         stopping: false
     };
     this._advanceBgmSequence();
@@ -1887,7 +1888,9 @@ AudioManager.stopBgmSequence = function() {
     if (!state) return;
     this._bgmSequence = null;
     for (const buffer of state.buffers) this._destroyBgmSequenceBuffer(buffer);
+    for (const item of state.retiring || []) item.buffer.destroy();
     state.buffers = [];
+    state.retiring = [];
 };
 
 AudioManager._bgmSequenceTrackAudio = function(entry) {
@@ -1929,14 +1932,48 @@ AudioManager._destroyBgmSequenceBuffer = function(buffer) {
     buffer.destroy();
 };
 
+/**
+ * Releases a buffer the sequence has finished with. Given a fade it keeps
+ * playing, ramping down, until the sweep in updateBgmSequence destroys it --
+ * which is what lets the next entry start over the top of this one.
+ */
+AudioManager._retireBgmSequenceBuffer = function(state, buffer, fade) {
+    if (!buffer) return;
+    if (!(fade > 0)) {
+        this._destroyBgmSequenceBuffer(buffer);
+        return;
+    }
+    // Already ramping down under the sequential path, which destroys it when the
+    // fade is done. Leaving that ramp alone is the point; restarting it here
+    // would stretch a tail that is halfway through.
+    if (buffer._rrRetired) return;
+    buffer._rrRetired = true;
+    buffer.fadeOut(fade);
+    state.retiring.push({ buffer: buffer, doneAt: WebAudio._currentTime() + fade });
+};
+
+AudioManager._sweepBgmSequenceRetiring = function(state, now) {
+    if (!state.retiring || !state.retiring.length) return;
+    state.retiring = state.retiring.filter(item => {
+        if (now < item.doneAt) return true;
+        item.buffer.destroy();
+        return false;
+    });
+};
+
+/** Seconds the entry wants to swell in over; 0 for one that names none. */
+AudioManager._bgmSequenceFadeIn = function(entry) {
+    return entry ? Math.max(0, Number(entry.fadeIn) || 0) : 0;
+};
+
 AudioManager._pruneBgmSequenceBuffers = function(state) {
     state.buffers = state.buffers.filter(buffer => buffer && !buffer._rrRetired);
 };
 
-AudioManager._advanceBgmSequence = function() {
+AudioManager._advanceBgmSequence = function(fadeOut) {
     const state = this._bgmSequence;
     if (!state || state.stopping) return;
-    this._endBgmSequencePalette(state);
+    this._endBgmSequencePalette(state, fadeOut);
     this._pruneBgmSequenceBuffers(state);
     state.index = (state.index + 1) % state.entries.length;
     this._startBgmSequenceEntry(state, state.entries[state.index]);
@@ -2025,12 +2062,12 @@ AudioManager._startBgmSequenceLayer = function(state, layer) {
     layer.buffer = buffer;
 };
 
-AudioManager._endBgmSequencePalette = function(state) {
+AudioManager._endBgmSequencePalette = function(state, fadeOut) {
     const palette = state.palette;
     if (!palette) return;
     state.palette = null;
     for (const layer of palette.layers) {
-        if (layer.buffer) this._destroyBgmSequenceBuffer(layer.buffer);
+        if (layer.buffer) this._retireBgmSequenceBuffer(state, layer.buffer, fadeOut);
         layer.buffer = null;
     }
     this._pruneBgmSequenceBuffers(state);
@@ -2041,6 +2078,7 @@ AudioManager.updateBgmSequence = function() {
     const state = this._bgmSequence;
     if (!state) return;
     const now = WebAudio._currentTime();
+    this._sweepBgmSequenceRetiring(state, now);
     if (state.stopping) {
         if (now >= state.due) this.stopBgmSequence();
         return;
@@ -2058,6 +2096,16 @@ AudioManager.updateBgmSequence = function() {
             }
         }
         if (palette.duration > 0 && now - palette.startTime >= palette.duration) {
+            // When the entry that follows names a fade-in, the two overlap: this
+            // palette starts its tail and the next entry begins over the top of
+            // it, rather than the advance waiting for silence first. An entry
+            // naming no fade-in -- every sequence authored before there was one,
+            // and every silence -- keeps the sequential timing it has always had.
+            const next = state.entries[(state.index + 1) % state.entries.length];
+            if (this._bgmSequenceFadeIn(next) > 0) {
+                this._advanceBgmSequence(palette.fadeOut);
+                return;
+            }
             palette.fading = true;
             palette.fadeDoneAt = now + palette.fadeOut;
             for (const layer of palette.layers) {

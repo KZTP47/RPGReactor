@@ -308,3 +308,64 @@ test('a palette with no fade-in keeps the abrupt start it has always had', () =>
     AudioManager.playBgm(AudioManager.mapBgmObject(map, 1));
     assert.equal(created[0].fadedIn, null, 'an absent fade-in changes nothing for sequences authored before it existed');
 });
+
+/** A palette that runs `duration`, followed by an entry that may name a fade-in. */
+function crossfadeMap(nextFadeIn) {
+    const next = { type: 'track', name: 'Next', volume: 80, pitch: 100, pan: 0 };
+    if (nextFadeIn) next.fadeIn = nextFadeIn;
+    return {
+        bgm: { name: 'Fallback', volume: 90, pitch: 100, pan: 0 },
+        bgmSequence: { enabled: true, entries: [
+            { type: 'palette', duration: 60, fadeOut: 5, layers: [{ volume: 90, pitch: 100, pan: 0, pool: [{ type: 'track', name: 'Bed' }] }] },
+            next
+        ] }
+    };
+}
+
+test('a palette hands over while it is still sounding when the next entry fades in', () => {
+    const map = crossfadeMap(4);
+    const { AudioManager, created, live, tick } = loadAudioManager({ map });
+    AudioManager.playBgm(AudioManager.mapBgmObject(map, 1));
+    const bed = created[0];
+    assert.equal(bed.name, 'Bed');
+
+    tick(60);
+    // The advance happens as the tail starts, not after it: both are audible.
+    assert.equal(AudioManager._bgmSequence.index, 1, 'the next entry has already begun');
+    assert.deepEqual(live(), ['Bed', 'Next'], 'the outgoing bed is still sounding under the incoming track');
+    assert.equal(bed.fadedOut, 5, 'the bed rides its own fade-out down');
+    assert.equal(created[1].fadedIn, 4, 'the incoming entry swells in over its own field');
+    assert.equal(AudioManager._bgmSequence.palette, null, 'the palette itself is over');
+
+    // The bed is released once its tail is done, not before.
+    tick(4);
+    assert.deepEqual(live(), ['Bed', 'Next'], 'still fading, so still held');
+    tick(1);
+    assert.deepEqual(live(), ['Next'], 'the tail finished and the bed was released');
+});
+
+test('a next entry with no fade-in keeps the sequential timing it has always had', () => {
+    const map = crossfadeMap(0);
+    const { AudioManager, live, tick } = loadAudioManager({ map });
+    AudioManager.playBgm(AudioManager.mapBgmObject(map, 1));
+
+    tick(60);
+    assert.equal(AudioManager._bgmSequence.palette.fading, true, 'the old path: fade first');
+    assert.deepEqual(live(), ['Bed'], 'nothing has started over the top of it');
+    assert.equal(AudioManager._bgmSequence.index, 0, 'the advance waits for the fade to finish');
+
+    tick(5);
+    assert.deepEqual(live(), ['Next'], 'and only then does the next entry begin');
+});
+
+test('stopping the sequence releases a bed that is still fading out under the next entry', () => {
+    const map = crossfadeMap(4);
+    const { AudioManager, live, tick } = loadAudioManager({ map });
+    AudioManager.playBgm(AudioManager.mapBgmObject(map, 1));
+    tick(60);
+    assert.equal(live().length, 2);
+
+    AudioManager.stopBgm();
+    assert.deepEqual(live(), [], 'both the retiring bed and the live entry are released');
+    assert.equal(AudioManager._bgmSequence, null);
+});

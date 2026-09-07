@@ -8,6 +8,8 @@
 
   With that separation in place, a sequence entry can fade in: **Fade-in (s)** sits beside the palette's existing Fade-out and on a plain track row, and a palette fades in every layer it starts, including one it redraws from its pool later. A palette had only ever faded *out*, so the bed died away smoothly and the next entry began at full level instantly. Absent or zero, which is what every sequence authored before now carries, changes nothing.
 
+  A fade-in also decides whether the handover overlaps. A palette used to fade out and only then advance, so its tail and the next entry never sounded together. When the entry that follows names a fade-in, the palette now starts its tail and the next entry begins over the top of it; the outgoing layers keep playing from a retiring pool until their fade is done, and are released then rather than at the moment they were replaced. An entry naming no fade-in -- every sequence authored before there was one, and every silence, which has no such field -- keeps the sequential timing it has always had, so nothing already built shifts by a second.
+
 ## [0.98.5] - 2026-09-07
 
 0.98.5 brings battle choreography into the editor: build a battle arena from a map, position the party and enemies, and assemble attacks from editable steps. It also adds native lighting, map media surfaces, quests, expanded interface authoring, and a substantial MV/MZ compatibility and editor reliability pass.
