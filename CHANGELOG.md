@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased - 0.98.5]
+## [0.98.5] - 2026-09-07
 
 0.98.5 brings battle choreography into the editor: build a battle arena from a map, position the party and enemies, and assemble attacks from editable steps. It also adds native lighting, map media surfaces, quests, expanded interface authoring, and a substantial MV/MZ compatibility and editor reliability pass.
 
