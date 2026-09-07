@@ -8305,12 +8305,40 @@ WebAudio._resetVolume = function() {
     }
 };
 
+// A gain ramp scheduled over one that is still running does not replace it: the
+// Web Audio timeline keeps both, so the param jumps to the older ramp's target,
+// waits out its end time, and only then follows the new one. Measured: a
+// fade-out arriving 0.5s into a 2s fade-in jumped from 0.25 to full volume, held
+// there until the fade-in's end time, and then fell over the 0.5s left of its
+// own two seconds. Every ramp below therefore clears the timeline first.
+
+/** Clears pending automation, keeping the level the param is audibly at. */
+WebAudio._holdGain = function(gain, currentTime) {
+    if (gain.cancelAndHoldAtTime) {
+        gain.cancelAndHoldAtTime(currentTime);
+    } else {
+        // Read before cancelling: cancelScheduledValues drops a running ramp
+        // back to its previous event's value, not to where it had reached.
+        const held = gain.value;
+        gain.cancelScheduledValues(currentTime);
+        gain.setValueAtTime(held, currentTime);
+    }
+};
+
+/** Clears pending automation and forces the param to `value`. */
+WebAudio._restartGain = function(gain, value, currentTime) {
+    gain.cancelScheduledValues(currentTime);
+    gain.setValueAtTime(value, currentTime);
+};
+
 WebAudio._fadeIn = function(duration) {
     if (this._masterGainNode) {
         const gain = this._masterGainNode.gain;
         const volume = this._masterVolume;
         const currentTime = this._currentTime();
-        gain.setValueAtTime(0, currentTime);
+        // Forced to zero rather than held: a gain node is created at its full
+        // volume, so a fade-in that started from the live value would be silent.
+        this._restartGain(gain, 0, currentTime);
         gain.linearRampToValueAtTime(volume, currentTime + duration);
     }
 };
@@ -8318,9 +8346,8 @@ WebAudio._fadeIn = function(duration) {
 WebAudio._fadeOut = function(duration) {
     if (this._masterGainNode) {
         const gain = this._masterGainNode.gain;
-        const volume = this._masterVolume;
         const currentTime = this._currentTime();
-        gain.setValueAtTime(volume, currentTime);
+        this._holdGain(gain, currentTime);
         gain.linearRampToValueAtTime(0, currentTime + duration);
     }
 };
@@ -8567,7 +8594,7 @@ WebAudio.prototype.fadeIn = function(duration) {
         if (this._gainNode) {
             const gain = this._gainNode.gain;
             const currentTime = WebAudio._currentTime();
-            gain.setValueAtTime(0, currentTime);
+            WebAudio._restartGain(gain, 0, currentTime);
             gain.linearRampToValueAtTime(this._volume, currentTime + duration);
         }
     } else {
@@ -8584,7 +8611,9 @@ WebAudio.prototype.fadeOut = function(duration) {
     if (this._gainNode) {
         const gain = this._gainNode.gain;
         const currentTime = WebAudio._currentTime();
-        gain.setValueAtTime(this._volume, currentTime);
+        // Held, not pinned to _volume: a track fading out from partway through a
+        // fade-in must continue down from where it is rather than jump to full.
+        WebAudio._holdGain(gain, currentTime);
         gain.linearRampToValueAtTime(0, currentTime + duration);
     }
     this._isPlaying = false;
