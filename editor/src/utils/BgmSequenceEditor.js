@@ -330,7 +330,10 @@ class RRBgmSequenceEditor {
         const key = parts.pop();
         const { node } = this.resolve(parts.join('.'));
         if (!node) return;
-        if (key === 'duration' || key === 'fadeOut') node[key] = RRBgmSequenceEditor.seconds(input.value);
+        // An unlisted key is not merely ignored: the write-back below then
+        // restores the old value, so the field reads as refusing to be typed in
+        // at all. Anything numberInput() renders has to appear here.
+        if (key === 'duration' || key === 'fadeOut' || key === 'fadeIn') node[key] = RRBgmSequenceEditor.seconds(input.value);
         else if (key === 'volume') node[key] = RRBgmSequenceEditor.number(input.value, 100, 0, 100);
         else if (key === 'pitch') node[key] = RRBgmSequenceEditor.number(input.value, 100, 50, 150);
         else if (key === 'pan') node[key] = RRBgmSequenceEditor.number(input.value, 0, -100, 100);

@@ -127,6 +127,43 @@ function controllerFor(mapData, sequence) {
     return controller;
 }
 
+test('every numeric field round-trips, because an unhandled key silently reverts', () => {
+    const E = loadEditorClass();
+    const handlers = {};
+    const container = { innerHTML: '', addEventListener: (type, fn) => { handlers[type] = fn; }, contains: () => true };
+    const editor = new E({ container, tt: t => t, t: () => 'levels', pickTrack: () => Promise.resolve(null) });
+    editor.load({ enabled: true, entries: [
+        { type: 'track', name: 'A', fadeIn: 1 },
+        { type: 'silence', duration: 5 },
+        { type: 'palette', duration: 60, fadeIn: 2, fadeOut: 4, layers: [
+            { volume: 90, pitch: 100, pan: 0, pool: [{ type: 'track', name: 'B' }, { type: 'silence', duration: 3 }] }
+        ] }
+    ] });
+
+    // onChange writes the model back into the control, so a key it does not
+    // handle presents as a field that refuses to be typed in -- which is how a
+    // missing fadeIn branch reached a running editor.
+    const inRange = { duration: 3, fadeIn: 3, fadeOut: 3, volume: 70, pitch: 120, pan: -20 };
+    const paths = [];
+    editor.container.innerHTML.replace(/<input[^>]*>/g, tag => {
+        if (/type="number"/.test(tag)) {
+            const m = tag.match(/data-path="([^"]+)"/);
+            if (m) paths.push(m[1]);
+        }
+        return tag;
+    });
+    assert.ok(paths.some(p => p.endsWith('.fadeIn')), 'the sweep reaches a fade-in field');
+    assert.ok(paths.length >= 8, 'the sweep reaches every row type: ' + paths.length);
+    for (const path of paths) {
+        const key = path.split('.').pop();
+        assert.ok(key in inRange, path + ' has no known-good value; add one');
+        const field = { dataset: { path }, value: String(inRange[key]) };
+        handlers.change({ target: field });
+        assert.equal(Number(field.value), inRange[key], path + ' kept the typed value');
+        assert.equal(editor.resolve(path).node, inRange[key], path + ' reached the model');
+    }
+});
+
 test('Map Properties carries every field the map already has and writes the sequence beside them', async () => {
     const map = { id: 3, name: 'Woods', width: 20, height: 15, data: [1, 2], events: [null], pluginField: { kept: true }, _transient: 1, bgm: { name: 'Old' } };
     const sequence = { enabled: true, entries: [{ type: 'track', name: 'A', fadeIn: 0, volume: 80, pitch: 100, pan: 0 }, { type: 'silence', duration: 2 }] };
