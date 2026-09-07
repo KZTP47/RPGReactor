@@ -661,3 +661,23 @@ test('a single-shot palette crossfades into what follows when its track runs out
     assert.equal(created[0].fadedOut, 4);
     assert.equal(created[1].fadedIn, 3);
 });
+
+test('the overlap decision asks the entry that will actually play, not the one being skipped', () => {
+    // Entry 0 is a spent intro with a fade-in; entry 1, the bed, has none. The
+    // lookahead must see the bed and keep the sequential timing, rather than
+    // read the intro's fade and overlap into an entry that starts at full level.
+    const map = { bgm: { name: '', volume: 90, pitch: 100, pan: 0 }, bgmSequence: { enabled: true, entries: [
+        { type: 'track', name: 'Opening', once: true, fadeIn: 3 },
+        { type: 'palette', duration: 30, fadeIn: 0, fadeOut: 5, layers: [
+            { volume: 100, pitch: 100, pan: 0, pool: [{ type: 'track', name: 'BedA' }, { type: 'track', name: 'BedB' }] }
+        ] }
+    ] } };
+    const { AudioManager, live, created, tick } = loadAudioManager({ map });
+    AudioManager.playBgm(AudioManager.mapBgmObject(map, 1));
+    created[0].end();                       // the opening is spent; the bed starts
+    assert.equal(AudioManager._bgmSequence.index, 1);
+
+    tick(30);
+    assert.equal(AudioManager._bgmSequence.palette.fading, true, 'it faded rather than overlapping');
+    assert.equal(live().length, 1, 'nothing started over the top of the outgoing bed');
+});

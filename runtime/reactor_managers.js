@@ -1983,6 +1983,23 @@ AudioManager._sweepBgmSequenceRetiring = function(state, now) {
     });
 };
 
+/**
+ * The entry that would play next, skipping any the sequence has used up -- the
+ * same walk the advance makes, without moving. Asking the raw next entry would
+ * read an intro's fade to decide a hand-over the intro is not going to take.
+ */
+AudioManager._nextBgmSequenceEntry = function(state) {
+    const total = state.entries.length;
+    let index = state.index;
+    for (let step = 0; step < total; step++) {
+        index = (index + 1) % total;
+        const candidate = state.entries[index];
+        const spent = (state.looped || index === 0) && candidate && candidate.once;
+        if (!spent) return candidate;
+    }
+    return state.entries[index];
+};
+
 /** Seconds the entry wants to swell in over; 0 for one that names none. */
 AudioManager._bgmSequenceFadeIn = function(entry) {
     return entry ? Math.max(0, Number(entry.fadeIn) || 0) : 0;
@@ -2218,7 +2235,7 @@ AudioManager.updateBgmSequence = function() {
             // it, rather than the advance waiting for silence first. An entry
             // naming no fade-in -- every sequence authored before there was one,
             // and every silence -- keeps the sequential timing it has always had.
-            const next = state.entries[(state.index + 1) % state.entries.length];
+            const next = this._nextBgmSequenceEntry(state);
             if (this._bgmSequenceFadeIn(next) > 0) {
                 this._advanceBgmSequence(palette.fadeOut);
                 return;
