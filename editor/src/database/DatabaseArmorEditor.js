@@ -150,7 +150,7 @@ class DatabaseArmorEditor {
                 <table class="traits-table" id="armor-traits-table-${armor.id}">
                     <thead>
                         <tr>
-                            <th colspan="2">${tt('Type')}</th>
+                            <th class="trait-indicator-heading" aria-hidden="true"></th><th scope="col">${tt('Type')}</th>
                             <th>${tt('Content')}</th>
                         </tr>
                     </thead>

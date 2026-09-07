@@ -179,3 +179,34 @@ test('deleting an animation being edited removes that row even when deselection 
     assert.equal(e._poses.first.editingRule, -1);
     assert.equal(e._poses.second.editingRule, 0);
 });
+
+test('copied triggered animations preview together, track working anchors, and release removed slots', () => {
+    const e=fixture(); e._object={};e._sim={};
+    e.rawEffects=[{name:'Core',animation:122,trigger:'always'}, {name:'Core (2)',animation:122,trigger:'always',anchor:{offset:[1,2,3]}}];
+    let plays=0,disposed=0;
+    e._playEffectPreview=function(raw){this._fxPreviewDef=raw; this._fxPreview={active:true,stop(){this.active=false;},dispose(){disposed++;}};plays++;};
+    e._disposeEffectQuad=()=>{};e._stopVideoPreview=()=>{};e._stopLightPreview=()=>{};
+    e._updateTriggeredEffectPreview();
+    assert.equal(plays,2);assert.equal(e._additionalEffectPreviews.size,1);
+    const second=e._additionalEffectPreviews.get(1);
+    assert.notEqual(e._fxPreview,second._fxPreview);
+    e.selectEffect(1);e._effectWork.anchor.offset[1]=4;
+    e._updateTriggeredEffectPreview();
+    assert.equal(plays,2);assert.equal(second._fxPreviewDef.anchor.offset[1],4);
+    e._effectWork.trigger='walking';e._updateTriggeredEffectPreview();
+    assert.equal(e._additionalEffectPreviews.size,0);assert.equal(disposed,1);
+    e._sim.walking=true;e._updateTriggeredEffectPreview();assert.equal(plays,3);
+    e._stopEffectPreview();assert.equal(e._additionalEffectPreviews.size,0);assert.equal(disposed,2);
+});
+
+test('additional image surfaces appear immediately, keep independent playback and follow live edits',()=>{
+ const e=fixture();e._object={};e._sim={};e._stopLightPreview=()=>{};e._disposeEffectQuad=()=>{};
+ e._stopVideoPreview=function(){this._fxVideo=null;};
+ let plays=0;e._playEffectPreview=function(raw){this._fxPreviewDef=raw;this._fxVideo={raw,file:raw.video.file};plays++;};
+ e.rawEffects=[{type:'video',trigger:'always',video:{file:'first.png'}}];e._updateTriggeredEffectPreview();assert.equal(plays,1);
+ e.rawEffects.push({type:'video',trigger:'always',video:{file:'second.png'},anchor:{offset:[1,2,3]}});e._updateTriggeredEffectPreview();assert.equal(plays,2);
+ const second=e._additionalEffectPreviews.get(1);assert.equal(second._fxVideo.file,'second.png');assert.notEqual(second._fxVideo,e._fxVideo);
+ e.selectEffect(1);e._effectWork.anchor.offset[0]=4;e._updateTriggeredEffectPreview();assert.equal(second._fxVideo.raw.anchor.offset[0],4);assert.equal(plays,2);
+ e._effectWork.video.file='replacement.png';e._updateTriggeredEffectPreview();assert.equal(second._fxVideo.file,'replacement.png');assert.equal(plays,3);
+ e.rawEffects.pop();e.selectedEffect=-1;e._updateTriggeredEffectPreview();assert.equal(e._additionalEffectPreviews.size,0);assert.equal(second._fxVideo,null);assert.equal(e._fxVideo.file,'first.png');
+});

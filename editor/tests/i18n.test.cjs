@@ -321,8 +321,8 @@ const ENGLISH_FALLBACK_KEYS = [
 const LOANWORDS_BY_LOCALE = {
     es: ['lit.id', 'lightcmd.color', 'lit.color', 'cam3d.auto', 'cam3d.fov', 'event.actor', 'event.dir', 'event.normal', 'event.tile', 'event.variable', 'forge.tab.procedural', 'mapProps.threeD', 'mapProps.tileset', 'mapProps.vol', 'menu.tilesets', 'options.editor', 'r3dfx.audio', 'theme.cascadia.name', 'toolbar.tileset', 'toolbar.title.plugins', 'workspace.zoom'],
     pt: ['lit.id', 'lit.preset.laser', 'audio.volume', 'cam3d.auto', 'cam3d.fov', 'event.item', 'event.normal', 'event.tile', 'forge.tab.procedural', 'mapProps.sizeRange', 'mapProps.threeD', 'mapProps.tileset', 'menu.classes', 'menu.tilesets', 'options.editor', 'toolbar.tileset', 'workspace.zoom'],
-    de: ['lit.id', 'lit.preset.laser', 'lit.position', 'lit.animation', 'menu.quests', 'audio.me', 'audio.pause', 'cam3d.auto', 'db.system1', 'db.system2', 'efk.frame', 'efk.framesLabel', 'efk.pause', 'event.index', 'event.normal', 'event.parallel', 'event.position', 'event.variable', 'forge.frame', 'mapProps.pause', 'mapProps.threeD', 'mapProps.tileset', 'menu.system', 'menu.tilesets', 'options.editor', 'options.palette', 'props.animation', 'r3dcard.proportional', 'r3dfx.animation', 'r3dfx.effectName', 'r3dfx.sound', 'r3dfx.typeAnimation', 'r3dfx.video', 'toolbar.tileset', 'workspace.zoom'],
-    fr: ['lit.id', 'lit.preset.laser', 'lit.position', 'lit.rotation', 'lit.animation', 'lightcmd.yaw', 'lit.type', 'audio.pause', 'audio.volume', 'cam3d.auto', 'workspace.passage', 'cam3d.mode', 'efk.orientation', 'efk.pause', 'event.conditions', 'event.image', 'event.normal', 'event.options', 'event.page', 'eventCtx.previewPage', 'mapProps.note', 'mapProps.pause', 'mapProps.threeD', 'menu.animations', 'menu.classes', 'menu.forge', 'menu.tilesets', 'menu.types', 'options.mode', 'options.palette', 'options.title', 'props.animation', 'r3dfx.animation', 'r3dfx.audio', 'r3dfx.type', 'r3dfx.typeAnimation'],
+    de: ['lit.compoundName', 'lit.id', 'lit.preset.laser', 'lit.position', 'lit.animation', 'menu.quests', 'audio.me', 'audio.pause', 'cam3d.auto', 'db.system1', 'db.system2', 'efk.frame', 'efk.framesLabel', 'efk.pause', 'event.index', 'event.normal', 'event.parallel', 'event.position', 'event.variable', 'forge.frame', 'mapProps.pause', 'mapProps.threeD', 'mapProps.tileset', 'menu.system', 'menu.tilesets', 'options.editor', 'options.palette', 'props.animation', 'r3dcard.proportional', 'r3dfx.animation', 'r3dfx.effectName', 'r3dfx.sound', 'r3dfx.typeAnimation', 'r3dfx.video', 'toolbar.tileset', 'workspace.zoom'],
+    fr: ['lit.preset.fluorescent', 'lit.id', 'lit.preset.laser', 'lit.position', 'lit.rotation', 'lit.animation', 'lightcmd.yaw', 'lit.type', 'audio.pause', 'audio.volume', 'cam3d.auto', 'workspace.passage', 'cam3d.mode', 'efk.orientation', 'efk.pause', 'event.conditions', 'event.image', 'event.normal', 'event.options', 'event.page', 'eventCtx.previewPage', 'mapProps.note', 'mapProps.pause', 'mapProps.threeD', 'menu.animations', 'menu.classes', 'menu.forge', 'menu.tilesets', 'menu.types', 'options.mode', 'options.palette', 'options.title', 'props.animation', 'r3dfx.animation', 'r3dfx.audio', 'r3dfx.type', 'r3dfx.typeAnimation'],
     it: ['lit.id', 'lit.preset.laser', 'audio.volume', 'cam3d.auto', 'cam3d.fov', 'event.dir', 'event.pattern', 'event.tile', 'mapProps.loopX', 'mapProps.loopY', 'mapProps.threeD', 'mapProps.tileset', 'mapProps.vol', 'menu.database', 'menu.file', 'options.editor', 'r3dfx.audio', 'r3dfx.video', 'theme.cascadia.name', 'toolbar.tileset', 'toolbar.title.database', 'workspace.zoom'],
     pl: ['lit.id', 'lit.preset.laser', 'cam3d.auto', 'db.system1', 'db.system2', 'mapProps.threeD', 'mapProps.tileset', 'menu.system', 'pma.model', 'r3dcard.groupModel', 'theme.cascadia.name', 'theme.ocean.name', 'toolbar.tileset'],
     id: ['lit.id', 'lit.preset.laser', 'audio.pan', 'audio.pitch', 'audio.volume', 'cam3d.event', 'cam3d.focus.event', 'cam3d.fov', 'cam3d.mode', 'cam3d.pitch', 'cam3d.yaw', 'efk.frame', 'event.item', 'event.normal', 'event.tile', 'forge.frame', 'mapProps.loopX', 'mapProps.loopY', 'mapProps.pan', 'mapProps.pitch', 'mapProps.threeD', 'mapProps.tileset', 'mapProps.vol', 'menu.database', 'menu.file', 'options.editor', 'options.mode', 'pma.model', 'r3dcard.groupModel', 'r3dfx.audio', 'r3dfx.offset', 'r3dfx.video', 'theme.cascadia.name', 'toolbar.tileset', 'toolbar.title.database', 'workspace.zoom'],
@@ -541,10 +541,48 @@ test('every database navigation category has a localized keyed title', () => {
     assert.ok(start>=0);
     const catalog=source.slice(start,source.indexOf('];',start));
     const types=[...catalog.matchAll(/type: '([^']+)'/g)].map(m=>m[1]);
-    assert.equal(types.length,19);
+    assert.equal(types.length,20);
     for(const type of types) {
         const key=dbTypes[type];assert.ok(key,`${type} needs a database title key`);
         for(const {id} of RR_LANGUAGES)assert.ok(RR_I18N_STRINGS[id][key],`${id}: ${type}`);
     }
     manager.language='ar';assert.equal(manager.tDbType('reactor3d','3D Models'),'نماذج ثلاثية الأبعاد');
+});
+
+test('battle widgets inventory labels without collecting saved IDs or CSS classes', () => {
+    const source=`class BattlePresentationEditor {
+        render(host){
+            const U=this.ui;
+            U.field(host,'Relative To',U.select([['home','Home'],['target','Target']], 'home',()=>{}));
+            U.number(host,'Duration (frames)',30,()=>{});
+            U.element('p','rr-battle-help','Battle Room Setup');
+            U.message('Actor: {name}',{name:record.name});
+            U.select([['sequence:1',record.name,true]],'sequence:1',()=>{});
+        }
+    }`;
+    const found=inventoryLocalizationSource(source,'src/battle/BattlePresentationEditor.js');
+    for(const text of ['Relative To','Home','Target','Duration (frames)','Battle Room Setup','Actor: {name}'])assert.ok(found.has(text),text);
+    for(const id of ['home','target','sequence:1','rr-battle-help','p'])assert.equal(found.has(id),false,id);
+});
+
+test('battle templates, validation and widget labels have translations in every language', () => {
+    const {manager,catalogs,RR_LANGUAGES}=loadI18nForTest();
+    const audit=auditTextTranslationCoverage(repoRoot,new Set(Object.keys(catalogs.text.ja)));
+    const phrases=audit.inventory.filter(row=>row.sources.some(file=>/BattlePresentationEditor|DatabaseActionSequenceEditor|ActionSequencePreview|MediaSurfaceManager|reactor_battle_data/.test(file))).map(row=>row.phrase);
+    assert.ok(phrases.includes('Melee Strike'));assert.ok(phrases.includes('Unknown easing.'));
+    for(const {id} of RR_LANGUAGES){if(id==='en')continue;manager.setLanguage(id,{persist:false});
+        for(const source of phrases)assert.ok(Object.hasOwn(catalogs.text[id],source)||Object.hasOwn(catalogs.commands[id],source)||Object.hasOwn(catalogs.sections[id],source),id+': '+source);
+        const value=manager.formatText('Actor: {name}',{name:'Attack $& {name} <b>name</b>'});
+        assert.ok(value.includes('Attack $& {name} <b>name</b>'),id+' inserts authored names literally once');
+    }
+});
+
+test('shared labels retain their original source and parameters through live language switches', () => {
+    const {manager,document}=loadI18nForTest();
+    const attrs=new Map([['data-i18n-text-source','Enemy: {name}'],['data-i18n-text-params',JSON.stringify({name:'Attack $& {name}'})]]);
+    const label={textContent:'',children:[],getAttribute:key=>attrs.get(key)||null,setAttribute:(key,value)=>attrs.set(key,value),hasAttribute:key=>attrs.has(key),querySelector:()=>null,closest:()=>null};
+    document.querySelectorAll=selector=>selector.includes('[data-i18n-text-source]')?[label]:[];
+    for(const locale of ['ja','de','ar','en']){manager.setLanguage(locale,{persist:false,force:true});assert.equal(label.textContent,manager.formatText('Enemy: {name}',{name:'Attack $& {name}'}));}
+    assert.equal(label.textContent,'Enemy: Attack $& {name}');
+    attrs.set('data-rr-i18n-skip','');label.textContent='Attack';manager.setLanguage('ja',{persist:false});assert.equal(label.textContent,'Attack');
 });

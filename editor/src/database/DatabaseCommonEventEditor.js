@@ -412,10 +412,10 @@ class DatabaseCommonEventEditor {
             }
 
             if (code === 357 && ['ShowVideoSurface', 'TransformVideoSurface', 'StopVideoSurface'].includes(command.reactor)
-                && typeof VideoSurfaceEditor !== 'undefined'
-                && typeof VideoSurfaceEditor.supports === 'function'
-                && VideoSurfaceEditor.supports(command.reactor)) {
-                this.getEditor('videoSurface', VideoSurfaceEditor)
+                && typeof MediaSurfaceEditor !== 'undefined'
+                && typeof MediaSurfaceEditor.supports === 'function'
+                && MediaSurfaceEditor.supports(command.reactor)) {
+                this.getEditor('videoSurface', MediaSurfaceEditor)
                     .show(null, insertAndRefresh, command.reactor, { type: 'common' });
                 return;
             }
@@ -1144,10 +1144,10 @@ class DatabaseCommonEventEditor {
         }
         if (code === 357 && command.parameters?.[0] === 'RPGReactor'
             && ['ShowVideoSurface', 'TransformVideoSurface', 'StopVideoSurface'].includes(command.parameters?.[1])
-            && typeof VideoSurfaceEditor !== 'undefined'
-            && typeof VideoSurfaceEditor.supports === 'function'
-            && VideoSurfaceEditor.supports(command.parameters?.[1])) {
-            this.getEditor('videoSurface', VideoSurfaceEditor).show(command, editedCommand => {
+            && typeof MediaSurfaceEditor !== 'undefined'
+            && typeof MediaSurfaceEditor.supports === 'function'
+            && MediaSurfaceEditor.supports(command.parameters?.[1])) {
+            this.getEditor('videoSurface', MediaSurfaceEditor).show(command, editedCommand => {
                 if (!isCurrent()) return;
                 if (!editedCommand) return;
                 ECL.replaceContiguousBlock(event.list, idx, editedCommand, 357, 657);

@@ -1,5 +1,5 @@
-/** Media attached to a flat model. Video planes share its depth buffer;
- * database animations use the existing editor playback layer at the projected anchor. */
+/** Media attached to a flat model. Videos and Effekseer effects share the
+ * model render target/depth; MV sprite animations retain their 2D overlay. */
 class ModelPropEffects2D {
     constructor(preview, entry, effects) {
         this.preview = preview;
@@ -25,7 +25,16 @@ class ModelPropEffects2D {
                 const clip = document.createElement('div');
                 clip.style.cssText = 'position:absolute;inset:0;overflow:hidden;pointer-events:none;z-index:4;';
                 parent.appendChild(clip); clip.appendChild(layer.wrap);
-                this.plays.push({ effect, layer, clip, record: records[effect.animation], project: project.path });
+                const play = { effect, layer, clip, record: records[effect.animation], project: project.path };
+                if (play.record.effectName) {
+                    play.quad = Reactor3D.EffekseerScene.quadFor(layer.fxCanvas);
+                    play.quad.texture.flipY = false;
+                    play.quad.material.uniforms.flip.value = 1;
+                    play.quad.mesh.userData.__reactorOverlay = true;
+                    entry.scene.add(play.quad.mesh);
+                    clip.style.display = 'none';
+                }
+                this.plays.push(play);
             }
         }
     }
@@ -35,6 +44,7 @@ class ModelPropEffects2D {
             play.video?.pause();
             if (play.layer?.active) play.layer.stop();
             if (play.clip) play.clip.style.display = 'none';
+            if (play.quad) { play.quad.mesh.visible = false; this.entry.dirty = true; }
             play.visible = false;
         }
     }
@@ -62,6 +72,21 @@ class ModelPropEffects2D {
                         play.frame = frame; dirty = true;
                     }
                 }
+            } else if (play.quad) {
+                if (!visible) {
+                    if (play.layer.active) play.layer.stop();
+                    if (play.quad.mesh.visible) dirty = true;
+                    play.quad.mesh.visible = false;
+                } else {
+                    // Establish world mode before starting playback, so the
+                    // layer borrows this renderer instead of drawing on top.
+                    this.placeEffect(play);
+                    if (!play.visible) play.layer.play(play.record, play.project, {
+                        loop: effect.loop !== false, transform: { rotate: effect.rotate, scale: effect.scale }
+                    });
+                    dirty = dirty || play.layer.active || play.quad.mesh.visible;
+                }
+                play.clip.style.display = 'none';
             } else if (play.layer) {
                 if (!visible) {
                     if (play.layer.active) play.layer.stop();
@@ -90,9 +115,62 @@ class ModelPropEffects2D {
         return dirty;
     }
 
+    placeEffect(play) {
+        const entry = this.entry, camera = entry.camera;
+        const renderer = this.preview.ensureViewport()?.renderer();
+        if (!renderer) return;
+        camera.updateMatrixWorld(true);
+        const world = Reactor3D.effectAnchorWorld(entry.object, play.effect, this.point || (this.point = new THREE.Vector3()));
+        const record = play.record, rotate = play.effect.rotate || [0, 0, 0];
+        const rotation = record.rotation || { x: 0, y: 0, z: 0 };
+        const axes = Reactor3D.scaleAxes(play.effect.scale);
+        const unit = Reactor3D.modelSpanTiles(entry.object) / 26 * ((record.scale || 100) / 100);
+        const r = Math.PI / 180;
+        const pixels = entry.size * entry.size;
+        const scale = pixels > MapEditor3D.EFFECT_PIXELS ? Math.sqrt(MapEditor3D.EFFECT_PIXELS / pixels) : 1;
+        play.layer.setWorld({ renderer, projection: camera.projectionMatrix.elements,
+            view: camera.matrixWorldInverse.elements, position: [world.x, world.y, world.z],
+            scale: axes.map(axis => axis * unit),
+            rotation: [(rotation.x + rotate[0]) * r,
+                (rotation.y + rotate[1]) * r + entry.object.rotation.y, (rotation.z + rotate[2]) * r],
+            rect: { x: 0, y: 0, w: entry.size, h: entry.size, scale },
+            viewWidth: entry.size, viewHeight: entry.size });
+        const uniforms = play.quad.material.uniforms;
+        uniforms.resolution.value.set(entry.size, entry.size);
+        uniforms.rectMin.value.set(0, 0); uniforms.rectSize.value.set(1, 1);
+        Reactor3D.EffekseerScene.standQuad(play.quad.mesh, world, camera);
+    }
+
+    /** Resolve effects at the model target's final size, before its draw. */
+    paint() {
+        for (const play of this.plays) {
+            if (!play.quad || !play.visible) continue;
+            this.placeEffect(play);
+            if (play.layer.fx.gpu) {
+                play.quad.mesh.visible = play.layer.drawGpuQuad(play.quad);
+                play.gpuTexture = true;
+            } else {
+                // The fallback canvas is still sampled in the model's depth
+                // pass, never placed over the map as a DOM overlay.
+                const drawn = play.layer.drawNow();
+                const canvas = play.layer.fxCanvas;
+                if (play.width !== canvas.width || play.height !== canvas.height) {
+                    play.quad.texture.dispose(); play.width = canvas.width; play.height = canvas.height;
+                }
+                play.quad.texture.needsUpdate = true;
+                play.quad.mesh.visible = !!drawn;
+            }
+        }
+    }
+
     dispose() {
         for (const play of this.plays) {
             play.layer?.dispose(); play.clip?.remove();
+            if (play.quad) {
+                play.quad.mesh.removeFromParent();
+                play.quad.mesh.geometry.dispose(); play.quad.material.dispose();
+                if (!play.gpuTexture) play.quad.texture.dispose();
+            }
             if (play.plane) {
                 play.plane.removeFromParent();
                 play.video?.pause();

@@ -1,0 +1,90 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),os=require('node:os');
+const {WebDriverClient}=require('./webdriver-client.cjs');
+const root=path.resolve(__dirname,'../../..'),source=path.join(root,'template/Demo');
+const temp=fs.mkdtempSync(path.join(os.tmpdir(),'rr-props-quality-')),project=path.join(temp,'Demo');
+const driver=new WebDriverClient(path.join(root,'nwjs-linux/chromedriver'));
+(async()=>{try {
+    fs.mkdirSync(project);
+    for(const name of ['index.html','package.json','project.rpgreactor'])fs.copyFileSync(path.join(source,name),path.join(project,name));
+    for(const name of ['data','js','icon'])fs.cpSync(path.join(source,name),path.join(project,name),{recursive:true});
+    for(const name of ['img','audio','fonts','3d','effects','css'])if(fs.existsSync(path.join(source,name)))fs.symlinkSync(path.join(source,name),path.join(project,name));
+    await driver.start();await driver.createSession({browserName:'chrome','goog:chromeOptions':{args:[`nwapp=${path.join(root,'editor')}`,`user-data-dir=${path.join(temp,'profile')}`,'no-first-run']}});
+    await driver.setScriptTimeout(90000);
+    await driver.waitForScript('return !!window.reactor?.projectController;',[],{timeout:90000});
+    const result=await driver.executeAsync(`
+        const projectPath=arguments[0],done=arguments[arguments.length-1];
+        (async()=>{
+            const app=reactor,pc=app.projectController;pc.currentProject=await app.projectManager.loadProject(projectPath);pc.projectLoaded=true;
+            nw.Window.get().resizeTo(1600,1000);nw.Window.get().focus();await app.uiManager.showEditorUI();await pc.populateProjectUI();
+            app.tilesetPaletteViewer.selectLayer('M');
+            const manager=app.modelPropsManager;
+            const prop=manager.props().find(p=>p.name.includes('RPGReactor'));
+            if(!prop)throw Error('No Reactor prop on Demo map');manager.select(prop.id);
+            window.__props=manager;
+            return {id:prop.id,name:prop.name};
+        })().then(done,e=>done({error:String(e.stack)}));
+    `,[project]);assert.ok(result.id,JSON.stringify(result));
+    await driver.waitForScript("return getComputedStyle(document.getElementById('splash-screen')).display==='none';",[],{timeout:15000});
+    await driver.waitForScript('const img=__props.panel.querySelector("#model-props-preview img");return img?.complete && img.naturalWidth>0;',[],{timeout:30000});
+    const outcome=await driver.executeAsync(`
+        const done=arguments[arguments.length-1];
+        (async()=>{
+            const app=reactor,pc=app.projectController,lights=app.lightingManager,view=app.mapEditor3D;
+            const tick=()=>new Promise(r=>setTimeout(r,150)),check=(v,m)=>{if(!v)throw Error(m);};
+            await view.setEnabled(true);pc.tilemapManager.currentMap.reactor3d.lights=[];
+            lights.setActive(true);await tick();
+            check(lights._panel.querySelectorAll('.lit-chip').length===12,'tray has three full rows');
+            const chips=[...lights._panel.querySelectorAll('.lit-chip')];
+            const rows=new Map();for(const chip of chips){const y=chip.getBoundingClientRect().top;rows.set(y,(rows.get(y)||0)+1);}
+            check(rows.size===3&&[...rows.values()].every(n=>n===4),'four presets on each row');
+            lights._addButtons.compound.click();check(!lights.lights().length,'compound choice only arms placement');
+            const rect=view.canvas.getBoundingClientRect(),px=rect.left+rect.width*.35,py=rect.top+rect.height*.5;
+            const surface=view.inputSurface||view.canvas;
+            surface.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true,button:0,clientX:px,clientY:py,pointerId:1}));
+            surface.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,cancelable:true,button:0,clientX:px,clientY:py,pointerId:1}));
+            await tick();const primary=lights.selectedId;check(primary,'compound placed');
+            check(lights.lights().length===2&&lights._listHost.children.length===1,'two components appear as one light');
+            const addRow=lights._panel.querySelector('.lit-component-add');
+            addRow.querySelector('select').value='beam';addRow.querySelector('button').click();await tick();
+            const beam=lights.selectedId;check(lights.selected().type==='beam','add Beam through component UI');
+            check(RRMapLights.members(lights.map(),primary).length===3,'all three shapes combined');
+            const position=lights._panel.querySelector('[data-light-section=position]');position.open=true;await tick();
+            const x=position.querySelector('input[type=number]');x.value=String(Number(x.value)+1);x.dispatchEvent(new Event('change',{bubbles:true}));
+            const before=RRMapLights.members(lights.map(),primary).map(p=>({id:p.id,x:p.x,y:p.y}));
+            check(before.find(p=>p.id===beam).x-before[0].x===1,'component position edits independently');
+            lights.pushUndo();lights._start3DDrag({id:primary,offsetX:0,offsetY:0});
+            window.dispatchEvent(new PointerEvent('pointermove',{clientX:px+40,clientY:py+25,bubbles:true}));
+            window.dispatchEvent(new PointerEvent('pointerup',{bubbles:true}));await tick();
+            const after=RRMapLights.members(lights.map(),primary),dx=after[0].x-before[0].x,dy=after[0].y-before[0].y;
+            check(Math.abs(dx)+Math.abs(dy)>.01,'3D drag moved compound');
+            check(after.every((p,i)=>Math.abs((p.x-before[i].x)-dx)<.001&&Math.abs((p.y-before[i].y)-dy)<.001),'3D drag preserves all component offsets');
+            lights.select(primary);lights.duplicateSelected();const copy=lights.selectedId;
+            check(RRMapLights.fixtures(lights.map()).length===2&&RRMapLights.members(lights.map(),copy).length===3,'duplicate copies complete fixture');
+            let mapDeletes=0;pc.deleteMap=()=>{mapDeletes++;};document.activeElement?.blur();
+            document.body.dispatchEvent(new KeyboardEvent('keydown',{key:'Delete',bubbles:true,cancelable:true}));
+            check(RRMapLights.fixtures(lights.map()).length===1&&lights.lights().length===3&&mapDeletes===0,'Delete removes complete duplicate only');
+            lights.undo();check(lights.lights().length===6,'undo restores all components');
+            lights.select(primary);lights._activeGroup='components';lights._syncProps();await tick();
+            const selector=lights._panel.querySelector('.lit-component-select');selector.value=beam;selector.dispatchEvent(new Event('change',{bubbles:true}));await tick();
+            check(lights.selectedId===beam,'component picker switches property target');
+            lights._panel.querySelector('.lit-component-remove').click();await tick();
+            check(RRMapLights.members(lights.map(),primary).length===2,'remove component leaves fixture');lights.undo();
+            check(RRMapLights.members(lights.map(),primary).length===3,'undo restores removed component');
+            check(await pc.saveProject(),'save compound map');
+            const id=lights.map().id;await pc.loadMap(id,{forceReload:true,skipDirtyCheck:true});await tick();
+            check(RRMapLights.fixtures(lights.map()).length===2&&RRMapLights.members(lights.map(),primary).length===3,'save/reload preserves fixture membership');
+            const resolved=lights.resolvedLights(0);check(resolved.length===6,'all six component lights render');
+            const native=Reactor3D.readMapLights(lights.map());check(native.length===6&&native.some(l=>l.type==='beam'),'game reader receives every component shape');
+            lights.select(primary);lights._activeGroup='components';lights._syncProps();lights._panel.scrollTop=0;
+            return {id,primary,copy,componentTypes:RRMapLights.members(lights.map(),primary).map(p=>p.type),rows:[...rows.values()]};
+        })().then(done,e=>done({error:String(e.stack)}));
+    `);
+    assert.ok(!outcome.error,JSON.stringify(outcome));
+    const saved=JSON.parse(fs.readFileSync(path.join(project,'data','Map'+String(outcome.id).padStart(3,'0')+'.r3d.json')));
+    assert.equal(saved.lights.length,6);assert.equal(new Set(saved.lights.map(l=>l.compoundId)).size,2);
+    fs.writeFileSync('/tmp/rr-compound-lights.png',Buffer.from(await driver.sessionRequest('GET','/screenshot'),'base64'));
+    console.log('Compound light native checks passed:',outcome);
+} catch(error) {
+    try { console.log(await driver.execute('return {preview:!!__props?.panel?.querySelector("#model-props-preview img"),token:__props?._previewToken,model:__props?.model,panel:__props?.panel?.getBoundingClientRect().toJSON()};'));fs.writeFileSync('/tmp/rr-compact-layout.png',Buffer.from(await driver.sessionRequest('GET','/screenshot'),'base64'));}catch(_){}
+    throw error;
+} finally {await driver.close();fs.rmSync(temp,{recursive:true,force:true});}})().catch(e=>{console.error(e.stack||e);process.exitCode=1;});

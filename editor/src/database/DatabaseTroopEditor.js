@@ -20,6 +20,7 @@ class DatabaseTroopEditor {
         this.battleback1Img = null;
         this.battleback2Img = null;
         this.enemySpriteImages = {};
+        this.enemyModelImages = {};
         this.selectedMemberIndex = -1;
         this.enemySpriteBounds = [];
         this.memberClipboard = null;
@@ -51,12 +52,15 @@ class DatabaseTroopEditor {
     // ==========================================
 
     showTroopDetail(container, troop) {
+        this.disposePreviewLayout();
+        this._roomPreviewCleanup?.();
         // Always fetch fresh data from database in case persisted changes replaced the reference
         const fresh = this.databaseManager.getTroop(troop.id);
         this.currentTroop = JSON.parse(JSON.stringify(fresh || troop));
         this.currentTroopId = troop.id;
         this.currentBattlePageIndex = 0;
         this.enemySpriteImages = {};
+        this.enemyModelImages = {};
         this.enemySpriteBounds = [];
         this.selectedMemberIndex = -1;
         this.selectedCommandIndices = [];
@@ -77,7 +81,7 @@ class DatabaseTroopEditor {
 
         const wrapper = document.createElement('div');
         wrapper.className = 'rr-troop-editor';
-        wrapper.style.cssText = 'display:flex;flex-direction:column;min-height:100%;padding:clamp(8px,1.2vw,14px);gap:8px;box-sizing:border-box;';
+        wrapper.style.cssText = 'display:flex;flex-direction:column;height:100%;min-height:0;overflow:hidden;padding:clamp(8px,1.2vw,14px);gap:8px;box-sizing:border-box;';
 
         // Row 1: Name
         wrapper.appendChild(this.createNameRow());
@@ -124,6 +128,7 @@ class DatabaseTroopEditor {
         battleTestBtn.onclick = () => this.openBattleTestConfig();
         bar.appendChild(battleTestBtn);
 
+        if (this.parentEditor.battlePresentationEditor) bar.appendChild(this.parentEditor.battlePresentationEditor.roomPanel(this));
         bar.appendChild(this.createMembersSection());
         bar.appendChild(this.createBattlebackSection());
 
@@ -313,6 +318,7 @@ class DatabaseTroopEditor {
     removeMember(idx) {
         if (!this.currentTroop.members || idx < 0 || idx >= this.currentTroop.members.length) return false;
         this.currentTroop.members.splice(idx, 1);
+        this.databaseManager?.data?.battlePresentation?.troops?.[this.currentTroopId]?.enemies?.splice(idx, 1);
         if (this.selectedMemberIndex === idx) this.selectedMemberIndex = -1;
         else if (this.selectedMemberIndex > idx) this.selectedMemberIndex--;
         this.persistTroop();
@@ -563,6 +569,7 @@ class DatabaseTroopEditor {
             ? afterIdx + 1
             : this.currentTroop.members.length;
         this.currentTroop.members.splice(insertAt, 0, member);
+        this.databaseManager?.data?.battlePresentation?.troops?.[this.currentTroopId]?.enemies?.splice(insertAt, 0, null);
         this.selectedMemberIndex = insertAt;
         this.persistTroop();
         this.populateMembersList();
@@ -653,7 +660,7 @@ class DatabaseTroopEditor {
     createBattlebackSection() {
         const tt = text => window.I18n ? window.I18n.tText(text) : text;
         const section = document.createElement('div');
-        section.className = 'database-section';
+        section.className = 'database-section rr-troop-battleback';
         section.style.cssText = 'width:100%;min-width:0;max-width:none;flex-shrink:0;';
 
         section.innerHTML = `<div class="database-section-header">${tt('Battleback')}</div>`;
@@ -803,6 +810,10 @@ class DatabaseTroopEditor {
         };
     }
 
+    disposePreviewLayout() {
+        this._previewResizeObserver?.disconnect();this._previewResizeObserver=null;
+    }
+
     createBattlePreview() {
         const tt = text => window.I18n ? window.I18n.tText(text) : text;
         const section = document.createElement('div');
@@ -843,16 +854,22 @@ class DatabaseTroopEditor {
         section.appendChild(header);
 
         const canvasContainer = document.createElement('div');
-        canvasContainer.style.cssText = 'position:relative;display:flex;flex:1;min-height:220px;align-items:center;justify-content:center;background:var(--color-bg-deep);border:1px solid var(--color-border);overflow:hidden;';
+        canvasContainer.style.cssText = 'position:relative;display:flex;flex:1;min-height:0;align-items:center;justify-content:center;background:var(--color-bg-deep);border:1px solid var(--color-border);overflow:hidden;';
 
         this.canvas = document.createElement('canvas');
+        this.canvas.classList.add('rr-troop-preview-canvas');
         this.canvas.width = this.screenWidth;
         this.canvas.height = this.screenHeight;
         this.canvas.tabIndex = -1;
-        this.canvas.style.cssText = 'display:block;width:auto;height:auto;max-width:100%;max-height:clamp(220px,34vh,460px);margin:0 auto;cursor:default;image-rendering:auto;outline:none;';
+        this.canvas.style.cssText = 'position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);display:block;max-width:100%;max-height:100%;cursor:default;image-rendering:auto;outline:none;';
         this.ctx = this.canvas.getContext('2d');
 
         canvasContainer.appendChild(this.canvas);
+        const canvas=this.canvas;
+        const fit=()=>{const width=Math.min(canvasContainer.clientWidth,canvasContainer.clientHeight*canvas.width/canvas.height);
+            canvas.style.width=Math.max(1,width)+'px';canvas.style.height=Math.max(1,width*canvas.height/canvas.width)+'px';};
+        this._previewResizeObserver=new ResizeObserver(fit);this._previewResizeObserver.observe(canvasContainer);
+
         section.appendChild(canvasContainer);
 
         this.canvas.addEventListener('mousedown', (e) => this.onCanvasMouseDown(e));
@@ -873,6 +890,7 @@ class DatabaseTroopEditor {
     }
 
     onCanvasMouseDown(e) {
+        if(this._roomPreviewActive)return;
         this.canvas.focus({ preventScroll: true });
         const coords = this.getCanvasCoords(e);
         for (let i = this.enemySpriteBounds.length - 1; i >= 0; i--) {
@@ -901,6 +919,7 @@ class DatabaseTroopEditor {
     }
 
     onCanvasMouseMove(e) {
+        if(this._roomPreviewActive)return;
         const coords = this.getCanvasCoords(e);
         if (this.isDragging && this.dragMemberIndex >= 0) {
             const member = this.currentTroop.members[this.dragMemberIndex];
@@ -929,6 +948,13 @@ class DatabaseTroopEditor {
     }
 
     loadAndRenderCanvas() {
+        this._roomPreviewCleanup?.();
+        const roomMode=this.databaseManager?.data?.battlePresentation?.troops?.[this.currentTroopId]?.type==='room';
+        const wrapper=this.canvas?.closest('.rr-troop-editor');if(wrapper)wrapper.dataset.battleScene=roomMode?'room':'battleback';
+        if(roomMode && this.parentEditor.battlePresentationEditor){
+            this._canvasLoadGeneration=(this._canvasLoadGeneration||0)+1;
+            return this.parentEditor.battlePresentationEditor.previewTroop(this);
+        }
         const project = this.projectManager.getCurrentProject();
         if (!project) return;
 
@@ -964,10 +990,32 @@ class DatabaseTroopEditor {
         const enemies = this.databaseManager.getEnemies();
         const members = this.currentTroop.members || [];
         this.enemySpriteImages = {};
+        this.enemyModelImages = {};
 
         members.forEach(member => {
             const enemy = enemies.find(e => e && e.id === member.enemyId);
-            if (!enemy || !enemy.battlerName || this.enemySpriteImages[enemy.battlerName]) return;
+            if (!enemy) return;
+            let spec = null;
+            try {
+                spec = typeof RRDatabase3DBindings !== 'undefined'
+                    ? RRDatabase3DBindings.get(project.path, 'enemies', enemy.id) : null;
+            } catch (error) { console.error('Could not load enemy model binding:', error); }
+            if (spec) {
+                if (this.enemyModelImages[enemy.id]) return;
+                const record = this.enemyModelImages[enemy.id] = {
+                    image: null, size: Math.max(48, Math.min(480, Math.round((spec.size || 1) * 96 * (spec.scale || 1))))
+                };
+                pending++;
+                Promise.resolve().then(() => RRDatabase3DBindings.modelThumbnail(this.parentEditor.reactor3dEditor, spec)).then(url => {
+                    if (!isCurrent() || !url) { done(); return; }
+                    const img = new Image();
+                    img.onload = () => { if (isCurrent()) record.image = img; done(); };
+                    img.onerror = done;
+                    img.src = url;
+                }).catch(error => { console.error('Could not preview enemy model:', error); done(); });
+                return;
+            }
+            if (!enemy.battlerName || this.enemySpriteImages[enemy.battlerName]) return;
 
             pending++;
             const battlerName = enemy.battlerName;
@@ -1001,6 +1049,7 @@ class DatabaseTroopEditor {
     }
 
     renderCanvas() {
+        if(this._roomPreviewActive){this._renderRoomPreview?.();return;}
         if (!this.ctx) return;
         const ctx = this.ctx;
         const w = this.canvas.width;
@@ -1027,9 +1076,16 @@ class DatabaseTroopEditor {
             if (!enemy) return;
             const home = this.battleToCanvas(member.x, member.y);
 
-            const img = enemy.battlerName ? this.enemySpriteImages[enemy.battlerName] : null;
+            const model = this.enemyModelImages[enemy.id];
+            const img = model ? model.image : (enemy.battlerName ? this.enemySpriteImages[enemy.battlerName] : null);
 
-            if (img && img.complete && img.naturalWidth) {
+            if (model && img && img.complete && img.naturalWidth) {
+                const bounds = this.getEnemyDrawRect(member, model.size, model.size);
+                if (member.hidden) ctx.globalAlpha = 0.4;
+                ctx.drawImage(img, bounds.x, bounds.y, model.size, model.size);
+                ctx.globalAlpha = 1;
+                this.enemySpriteBounds.push({ ...bounds, memberIndex: idx });
+            } else if (img && img.complete && img.naturalWidth) {
                 let drawW = img.naturalWidth;
                 let drawH = img.naturalHeight;
 
@@ -1115,7 +1171,7 @@ class DatabaseTroopEditor {
     createBattleEventsSection() {
         const tt = text => window.I18n ? window.I18n.tText(text) : text;
         const section = document.createElement('div');
-        section.className = 'database-section';
+        section.className = 'database-section rr-troop-events-section';
         section.style.cssText = 'flex:1;display:flex;flex-direction:column;min-height:clamp(180px,24vh,240px);';
 
         section.innerHTML = `<div class="database-section-header">${tt('Battle Events')}</div>`;
@@ -1465,10 +1521,10 @@ class DatabaseTroopEditor {
                 return;
             }
             if (command.code === 357 && command.reactor === 'StopVideoSurface'
-                && typeof VideoSurfaceEditor !== 'undefined'
-                && typeof VideoSurfaceEditor.supports === 'function'
-                && VideoSurfaceEditor.supports(command.reactor)) {
-                this.getCommandEditor('videoSurface', VideoSurfaceEditor)
+                && typeof MediaSurfaceEditor !== 'undefined'
+                && typeof MediaSurfaceEditor.supports === 'function'
+                && MediaSurfaceEditor.supports(command.reactor)) {
+                this.getCommandEditor('videoSurface', MediaSurfaceEditor)
                     .show(null, edited => edited && insertCommands([edited]), command.reactor, { type: 'troop' });
                 return;
             }
@@ -1539,7 +1595,7 @@ class DatabaseTroopEditor {
             const ECL = this._eventCommandListClass();
             const list = new ECL({
                 databaseManager: this.databaseManager,
-                projectController: this.projectManager
+                projectController: this.roomCommandContext()
             });
             // The whole host surface a shared dispatch touches: where a change
             // lands, and what stays selected after it. Overriding this is what
@@ -1638,9 +1694,22 @@ class DatabaseTroopEditor {
         return RREnemySlotOptions.label(index, this.enemySlotContext(), this.databaseManager);
     }
 
+    roomCommandContext() {
+        const config=this.databaseManager?.data?.battlePresentation?.troops?.[this.currentTroopId];
+        if(config?.type!=='room'||!config.mapId)return this.projectManager;
+        try {
+            const fs=require('fs'),path=require('path'),project=this.projectManager.getCurrentProject();
+            const map=RRJson.parse(fs.readFileSync(path.join(project.path,'data','Map'+String(config.mapId).padStart(3,'0')+'.json')));
+            const context=Object.create(this.projectManager);context.battleRoomMap=map;
+            context.eventManager=Object.assign(Object.create(this.projectManager.eventManager||null),{currentMap:map});
+            context.tilemapManager=Object.assign(Object.create(this.projectManager.tilemapManager||null),{currentMap:map});
+            return context;
+        } catch(error) {console.warn('Battle room event targets:',error);return this.projectManager;}
+    }
+
     getCommandEditor(name, EditorClass) {
         if (!this._editors[name]) {
-            this._editors[name] = new EditorClass(this.databaseManager, this.projectManager);
+            this._editors[name] = new EditorClass(this.databaseManager, this.roomCommandContext());
         }
         return this._editors[name];
     }
@@ -1841,10 +1910,10 @@ class DatabaseTroopEditor {
         }
         if (cmd.code === 357 && cmd.parameters?.[0] === 'RPGReactor'
             && cmd.parameters?.[1] === 'StopVideoSurface'
-            && typeof VideoSurfaceEditor !== 'undefined'
-            && typeof VideoSurfaceEditor.supports === 'function'
-            && VideoSurfaceEditor.supports(cmd.parameters?.[1])) {
-            this.getCommandEditor('videoSurface', VideoSurfaceEditor).show(cmd, edited => {
+            && typeof MediaSurfaceEditor !== 'undefined'
+            && typeof MediaSurfaceEditor.supports === 'function'
+            && MediaSurfaceEditor.supports(cmd.parameters?.[1])) {
+            this.getCommandEditor('videoSurface', MediaSurfaceEditor).show(cmd, edited => {
                 if (!isCurrent()) return;
                 if (!edited) return;
                 ECL.replaceContiguousBlock(page.list, idx, edited, 357, 657);
@@ -2774,7 +2843,8 @@ class DatabaseTroopEditor {
             const src = RRFaceSheet.sourceRect(entry.actor.faceIndex, face);
             if (src) ctx.drawImage(face, src.x, src.y, src.width, src.height, x, y, size, size);
         } else if (isEnemy) {
-            const img = entry?.battlerName ? this.enemySpriteImages[entry.battlerName] : null;
+            const img = this.enemyModelImages[entry?.id]?.image
+                || (entry?.battlerName ? this.enemySpriteImages[entry.battlerName] : null);
             if (img && img.complete && img.naturalWidth) {
                 const scale = Math.max(size / img.naturalWidth, size / img.naturalHeight);
                 const w = img.naturalWidth * scale, h = img.naturalHeight * scale;

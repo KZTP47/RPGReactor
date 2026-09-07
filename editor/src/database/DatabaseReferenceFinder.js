@@ -18,7 +18,7 @@ class DatabaseReferenceFinder {
     /** Types a lookup can be run on. */
     static get targetTypes() {
         return ['actors', 'classes', 'skills', 'items', 'weapons', 'armors',
-            'enemies', 'troops', 'states', 'animations', 'tilesets', 'commonEvents'];
+            'enemies', 'troops', 'states', 'animations', 'tilesets', 'commonEvents', 'actionSequences'];
     }
 
     /**
@@ -106,6 +106,14 @@ class DatabaseReferenceFinder {
             if (!refType || !Number.isInteger(refId) || refId <= 0) return;
             visit({ type, id, refType, refId, where, whereKind: options.whereKind || 'text', page: options.page ?? null });
         };
+
+        for(const kind of ['skills','items','weapons','actors','enemies'])for(const [id,binding] of Object.entries(this.databaseManager.data?.battlePresentation?.[kind]||{})){
+            if(binding.mode==='sequence')emit(kind,Number(id),'actionSequences',binding.sequenceId,'Action Sequence');
+            if(kind==='actors'&&binding.unarmed?.mode==='sequence')emit(kind,Number(id),'actionSequences',binding.unarmed.sequenceId,'Unarmed Attack Sequence');
+        }
+        this._records('actionSequences').forEach(sequence=>{
+            for(const step of sequence.steps||[])if(step.type==='animation')emit('actionSequences',sequence.id,'animations',step.animationId,'Animation');
+        });
 
         this._records('actors').forEach(actor => {
             emit('actors', actor.id, 'classes', actor.classId, 'Class');

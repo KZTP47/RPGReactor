@@ -103,6 +103,34 @@
         "body": true
       },
       "trigger": "always"
+    },
+    {
+      "name": "Psychronic Logo",
+      "animation": 0,
+      "anchor": {
+        "part": "part-1",
+        "offset": [
+          0.031,
+          0.502,
+          0.165
+        ]
+      },
+      "scale": 1,
+      "loop": false,
+      "rotate": [
+        -90,
+        1,
+        -1
+      ],
+      "video": {
+        "file": "Psychronic-logo-1.png",
+        "width": 0.3,
+        "height": 0.2,
+        "loop": true,
+        "audio": false,
+        "volume": 100
+      },
+      "type": "video"
     }
   ],
   "pivots": {

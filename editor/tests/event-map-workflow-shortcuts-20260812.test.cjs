@@ -14,15 +14,16 @@ function loadEventManager(overrides = {}) {
     });
 }
 
-function loadShortcutHandler(eventManager) {
+function loadShortcutHandler(eventManager, options = {}) {
     const source = fs.readFileSync(path.join(editorRoot, 'src', 'UIManager.js'), 'utf8');
     let keydownHandler;
     const document = {
-        activeElement: null,
-        getElementById: () => null,
-        querySelector: () => null,
+        activeElement: options.activeElement || null,
+        getElementById: options.getElementById || (() => null),
+        querySelector: options.querySelector || (() => null),
     };
     const window = {
+        reactor: options.reactor,
         addEventListener(type, handler) {
             if (type === 'keydown') keydownHandler = handler;
         }
@@ -150,4 +151,52 @@ test('Event context menu exposes action shortcut labels', () => {
         'shortcut: `${shortcutPrefix}+F`',
     ]) assert.match(source, new RegExp(shortcut.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     assert.match(source, /shortcut\.textContent = item\.shortcut;/);
+});
+
+test('Delete and Backspace target the active object tool and repeated keys never delete its map', () => {
+    for (const tool of ['modelPropsManager', 'lightingManager']) {
+        for (const key of ['Delete', 'Backspace']) {
+            let removed = 0, mapsDeleted = 0;
+            const manager = { active: true, selectedId: 7,
+                remove(id) { assert.equal(id, 7); removed++; this.selectedId = null; },
+                removeSelected() { this.remove(this.selectedId); } };
+            const handler = loadShortcutHandler({ eventMode: false }, {
+                reactor: { [tool]: manager, projectController: { deleteMap: () => { mapsDeleted++; } } },
+                activeElement: { tagName: 'DIV', closest: () => ({}) },
+                querySelector: () => ({ getAttribute: () => '1' })
+            });
+            const event = keyEvent(key);
+            handler(event);
+            handler(keyEvent(key, { repeat: true }));
+            assert.equal(removed, 1);
+            assert.equal(mapsDeleted, 0);
+            assert.equal(event.prevented, true);
+            assert.equal(event.stopped, true);
+        }
+    }
+});
+
+test('object delete shortcuts leave form fields and modal editors alone', () => {
+    for (const tool of ['modelPropsManager', 'lightingManager']) {
+        for (const activeElement of [{ tagName: 'INPUT' }, { tagName: 'SELECT' }, { isContentEditable: true }]) {
+            let removed = 0;
+            const handler = loadShortcutHandler({}, { activeElement,
+                reactor: { [tool]: { active: true, selectedId: 1, remove() { removed++; }, removeSelected() { removed++; } } }
+            });
+            handler(keyEvent('Delete'));
+            assert.equal(removed, 0);
+        }
+    }
+});
+
+test('modal Delete and Ctrl+X cannot remove a selected prop', () => {
+    let removed = 0;
+    const reactor = { modelPropsManager: { active: true, selectedId: 1, remove() { removed++; } } };
+    const modalHandler = loadShortcutHandler({}, { reactor,
+        getElementById: id => id === 'plugin-manager-modal' ? { style: { display: 'block' } } : null
+    });
+    modalHandler(keyEvent('Delete'));
+    const handler = loadShortcutHandler({}, { reactor });
+    handler(keyEvent('x', { ctrlKey: true }));
+    assert.equal(removed, 0);
 });

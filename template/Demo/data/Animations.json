@@ -10,8 +10,8 @@
         "duration": 30,
         "color": [
           255,
-          255,
-          255,
+          0,
+          0,
           255
         ]
       }
@@ -29,10 +29,10 @@
       {
         "frame": 0,
         "se": {
-          "name": "Blow1",
+          "name": "hit-01",
           "pan": 0,
           "pitch": 100,
-          "volume": 90
+          "volume": 100
         }
       }
     ],

@@ -11,6 +11,7 @@ test('each map remembers whether it is edited in 3D, per project, off by default
     const source = read('src/ProjectController.js');
     const store = {};
     const sandbox = {
+        RRJson: require('../src/utils/JsonFiles.js'),
         localStorage: {
             getItem: key => (key in store ? store[key] : null),
             setItem: (key, value) => { store[key] = String(value); }
@@ -42,6 +43,7 @@ test('a 3D-authored map opens in 3D by default, and an explicit "off" sticks', (
         '/proj/a/data/Map002.r3d.json': JSON.stringify({ mode: 'flat' })
     };
     const sandbox = {
+        RRJson: require('../src/utils/JsonFiles.js'),
         localStorage: {
             getItem: key => (key in store ? store[key] : null),
             setItem: (key, value) => { store[key] = String(value); }

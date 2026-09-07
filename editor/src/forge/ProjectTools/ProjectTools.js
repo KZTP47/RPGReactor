@@ -69,6 +69,9 @@ class ProjectTools {
         this.frame = null;
         this.activeTool = null;
         this._messageHandler = null;
+        this._ownership = null;
+        this._baselines = new Map();
+        this._saveInFlight = null;
     }
 
     _t(text) {
@@ -83,6 +86,7 @@ class ProjectTools {
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
     renderInto(containerEl, projectController) {
+        this._closeTool();
         this.projectController = projectController;
         this.root = containerEl;
         if (!this._syncProjectPath()) {
@@ -99,7 +103,66 @@ class ProjectTools {
     _syncProjectPath() {
         const project = this.projectController?.getCurrentProject?.() || this.projectController?.currentProject;
         this.projectPath = project?.path || null;
+        this._ownership = this.projectPath ? this.projectController.captureProjectOwnership() : null;
         return this.projectPath;
+    }
+
+    _verifyProject(requireWrite = false) {
+        this.projectController.verifyProjectOwnership(this._ownership, { requireWrite });
+    }
+
+    /** No symlinks, including parent folders. The Web filesystem has no links. */
+    _safePath(relative, allowMissing = false) {
+        const fs = require('fs'), path = require('path');
+        const parts = relative.replace(/\\/g, '/').split('/');
+        if (parts.some(part => !part || part === '.' || part === '..' || part.includes('\0') || part.includes(':'))) {
+            throw new Error('Bad project path');
+        }
+        const root = fs.realpathSync(this.projectPath);
+        let current = root;
+        for (let i = 0; i < parts.length; i++) {
+            current = path.join(current, parts[i]);
+            if (allowMissing && i === parts.length - 1 && !fs.existsSync(current)) {
+                // existsSync follows a dangling symlink; lstat must still reject it.
+                if (fs.lstatSync) {
+                    try { fs.lstatSync(current); } catch (error) {
+                        if (error.code === 'ENOENT') return current;
+                        throw error;
+                    }
+                } else return current;
+            }
+            const stat = fs.lstatSync ? fs.lstatSync(current) : fs.statSync(current);
+            if (stat.isSymbolicLink?.() || (i < parts.length - 1 && !stat.isDirectory())) {
+                throw new Error('Project tool paths must not contain symlinks');
+            }
+        }
+        const resolved = fs.realpathSync(current);
+        const prefix = root.endsWith(path.sep) ? root : root + path.sep;
+        if (!resolved.startsWith(prefix)) throw new Error('Path leaves the project');
+        return current;
+    }
+
+    _readFile(relative, encoding = null) {
+        const fs = require('fs');
+        const filename = this._safePath(relative);
+        const expected = fs.statSync(filename);
+        if (!expected.isFile()) throw new Error('Not a regular project file');
+        if (!fs.openSync) return fs.readFileSync(filename, encoding);
+        const fd = fs.openSync(filename, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0)
+            | (fs.constants.O_NONBLOCK || 0));
+        try {
+            const actual = fs.fstatSync(fd);
+            this._safePath(relative);
+            if (!actual.isFile() || actual.dev !== expected.dev || actual.ino !== expected.ino) {
+                throw new Error('Project file changed while opening it');
+            }
+            return fs.readFileSync(fd, encoding);
+        } finally { fs.closeSync(fd); }
+    }
+
+    _diskData(file) {
+        const filename = this._safePath(`data/${file}`, true);
+        return require('fs').existsSync(filename) ? this._readFile(`data/${file}`, 'utf8') : null;
     }
 
     // ── Discovery ─────────────────────────────────────────────────────────────
@@ -110,16 +173,18 @@ class ProjectTools {
         const path = require('path');
         const found = [];
         for (const folder of ProjectTools.TOOL_FOLDERS) {
-            const dir = path.join(this.projectPath, folder);
+            let dir;
             let entries;
             try {
+                this._verifyProject();
+                dir = this._safePath(folder);
                 if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) continue;
                 entries = fs.readdirSync(dir);
             } catch { continue; }
             for (const entry of entries) {
                 if (!/\.html?$/i.test(entry)) continue;
                 const absPath = path.join(dir, entry);
-                try { if (!fs.statSync(absPath).isFile()) continue; } catch { continue; }
+                try { if (!fs.statSync(this._safePath(`${folder}/${entry}`)).isFile()) continue; } catch { continue; }
                 found.push({
                     name: entry.replace(/\.html?$/i, ''),
                     relPath: `${folder}/${entry}`,
@@ -197,12 +262,14 @@ class ProjectTools {
     _openTool(tool) {
         let html;
         try {
-            html = require('fs').readFileSync(tool.absPath, 'utf8');
+            this._verifyProject();
+            html = this._readFile(tool.relPath, 'utf8');
         } catch (err) {
             alert(`${this._t('Could not read the tool file.')}\n\n${tool.relPath}\n${err.message}`);
             return;
         }
 
+        this._closeTool();
         this.activeTool = tool;
         this.root.innerHTML = '';
 
@@ -244,6 +311,8 @@ class ProjectTools {
         if (this.frame && this.frame.parentNode) this.frame.parentNode.removeChild(this.frame);
         this.frame = null;
         this.activeTool = null;
+        this._baselines = new Map();
+        this._saveInFlight = null;
     }
 
     // ── Bridge ────────────────────────────────────────────────────────────────
@@ -270,19 +339,27 @@ class ProjectTools {
     }
 
     _sendInit() {
-        const fs = require('fs');
-        const path = require('path');
+        if (this._saveInFlight) return;
         const data = {};
         const errors = [];
+        const db = this.projectController.databaseManager;
+        this._baselines = new Map();
         for (const file of ProjectTools.ALLOWED_FILES) {
-            const p = path.join(this.projectPath, 'data', file);
             try {
-                if (fs.existsSync(p)) data[file] = JSON.parse(fs.readFileSync(p, 'utf8'));
+                this._verifyProject();
+                const key = db.dataFiles.find(([, name]) => name === file)?.[0];
+                if (!key) continue;
+                const disk = this._diskData(file);
+                // Tools start from working edits, not an older disk copy.
+                const memory = JSON.stringify(db.data[key]);
+                data[file] = JSON.parse(memory);
+                this._baselines.set(file, { key, disk, memory });
             } catch (err) {
                 errors.push(`${file}: ${err.message}`);
             }
         }
-        const project = this.projectController?.getCurrentProject?.() || this.projectController?.currentProject;
+        this._databaseGeneration = db.dataGeneration;
+        const project = this._ownership?.project;
         this._post({
             type: 'reactor:init',
             data,
@@ -301,35 +378,30 @@ class ProjectTools {
      * frame never receives a filesystem path, only bytes it asked for by name.
      */
     _handleImage(msg) {
-        const fs = require('fs');
         const path = require('path');
         const reply = (ok, extra) => this._post(Object.assign({ type: 'reactor:image', request: msg.path, ok }, extra || {}));
 
         const raw = String(msg.path || '');
         if (!raw || raw.includes('\0')) return reply(false, { error: 'Bad path' });
 
-        const imgRoot = path.resolve(this.projectPath, 'img');
         const candidates = /\.[a-z0-9]+$/i.test(raw)
             ? [raw]
             : ['.png', '.jpg', '.jpeg', '.webp', '.gif'].map(ext => raw + ext);
 
         for (const rel of candidates) {
-            const abs = path.resolve(imgRoot, rel);
-            // Containment check: resolve() collapses any ".." before we compare.
-            if (abs !== imgRoot && !abs.startsWith(imgRoot + path.sep)) continue;
             try {
-                if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) continue;
-                const ext = path.extname(abs).toLowerCase();
+                this._verifyProject();
+                const ext = path.extname(rel).toLowerCase();
                 const mime = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif' }[ext];
                 if (!mime) continue;
-                const b64 = fs.readFileSync(abs).toString('base64');
+                const b64 = Buffer.from(this._readFile(`img/${rel}`)).toString('base64');
                 return reply(true, { dataUrl: `data:${mime};base64,${b64}` });
             } catch { /* try the next candidate extension */ }
         }
         return reply(false, { error: 'Not found' });
     }
 
-    _handleSave(msg) {
+    async _handleSave(msg) {
         const file = String(msg.file || '');
         if (!ProjectTools.ALLOWED_FILES.includes(file)) {
             this._post({ type: 'reactor:saved', file, ok: false, error: 'File not allowed' });
@@ -339,25 +411,81 @@ class ProjectTools {
             this._post({ type: 'reactor:saved', file, ok: false, error: 'No data supplied' });
             return;
         }
-        const confirmMsg = `${this._t('Save changes from this tool?')}\n\ndata/${file}`;
-        if (!window.confirm(confirmMsg)) {
-            this._post({ type: 'reactor:saved', file, ok: false, error: 'Cancelled' });
-            return;
-        }
+        const frame = this.frame, baselines = this._baselines;
+        const controller = this.projectController, ownership = this._ownership;
+        const current = () => this.frame === frame && this._baselines === baselines;
+        const reply = (ok, error) => {
+            if (current()) this._post({ type: 'reactor:saved', file, ok, ...(error ? { error } : {}) });
+        };
+        if (this._saveInFlight) return reply(false, 'A tool save is already in progress');
+        const token = {};
+        this._saveInFlight = token;
         try {
-            const fs = require('fs');
-            const path = require('path');
-            const target = path.join(this.projectPath, 'data', file);
-            // Two spaces: the format DatabaseManager writes, so diffs stay readable.
-            const json = JSON.stringify(msg.data, null, 2);
-            const tmp = `${target}.tmp`;
-            fs.writeFileSync(tmp, json, 'utf8');
-            fs.renameSync(tmp, target);
-            this._post({ type: 'reactor:saved', file, ok: true });
-            alert(`data/${file}\n\n${this._t('Saved. Reload the project to see the change in the editor.')}`);
+            const db = controller.databaseManager;
+            const files = file === 'System.json' || !db.data.system ? [file] : [file, 'System.json'];
+            const validate = () => {
+                if (!current()) throw new Error('The project tool was closed');
+                controller.verifyProjectOwnership(ownership, { requireWrite: true });
+                const editor = window.reactor?.databaseEditorUI;
+                if (editor?._dataSnapshot || editor?._databaseSaveInFlight) {
+                    throw new Error('Close the Database editor before saving from a project tool');
+                }
+                if (db.dataGeneration !== this._databaseGeneration) throw new Error('Database changed; reload the tool data');
+                for (const name of files) {
+                    const baseline = baselines.get(name);
+                    if (!baseline || JSON.stringify(db.data[baseline.key]) !== baseline.memory
+                        || this._diskData(name) !== baseline.disk) {
+                        throw new Error(`${name} changed; reload the tool data before saving`);
+                    }
+                }
+            };
+            validate();
+            const candidate = JSON.parse(JSON.stringify(msg.data));
+            if (file === 'System.json' ? !candidate || Array.isArray(candidate) || typeof candidate !== 'object'
+                : !Array.isArray(candidate) || (candidate.length > 0 && candidate[0] !== null)
+                    || candidate.some(row => row !== null && (typeof row !== 'object' || Array.isArray(row)))) {
+                throw new Error('Invalid database data');
+            }
+            const confirmMsg = `${this._t('Save changes from this tool?')}\n\ndata/${file}`;
+            if (!window.confirm(confirmMsg)) return reply(false, 'Cancelled');
+            validate();
+
+            const keys = files.map(name => baselines.get(name).key);
+            const savedBefore = keys.map(key => db.savedState[key]);
+            db.data[baselines.get(file).key] = candidate;
+            db.dataGeneration++;
+            db.mutationGeneration++;
+            this._databaseGeneration = db.dataGeneration;
+            const dataAtWrite = db.data, generationAtWrite = db.dataGeneration;
+            // The normal writer supplies atomic replacement, rename retries and
+            // System.versionId updates. Keep working edits on failure, as the
+            // Database editor does, so a later normal Save can persist them.
+            const saving = db.saveJSON(this.projectPath, file, candidate);
+            const written = keys.map(key => db.serialize(db.data[key]));
+            keys.forEach((key, i) => { db.savedState[key] = savedBefore[i]; });
+            for (const name of files) {
+                const baseline = baselines.get(name);
+                baseline.memory = JSON.stringify(db.data[baseline.key]);
+                baseline.disk = this._diskData(name);
+            }
+            if (!await saving) throw new Error('Database write failed; the tool changes remain unsaved in the editor');
+            const host = window.RPGReactorHost;
+            if (host?.mode === 'web') await host.flush();
+            // A flush can outlive its project. Never mark a newer record clean,
+            // replace a newer Cancel baseline, or reply to a replacement frame.
+            controller.verifyProjectOwnership(ownership);
+            if (db.data !== dataAtWrite || db.dataGeneration !== generationAtWrite) {
+                throw new Error('Database changed while the tool save was completing');
+            }
+            keys.forEach((key, i) => {
+                if (db.serialize(db.data[key]) === written[i]) db.captureSavedState(key);
+            });
+            reply(true);
         } catch (err) {
-            this._post({ type: 'reactor:saved', file, ok: false, error: err.message });
-            alert(`${this._t('Could not save.')}\n\n${err.message}`);
+            reply(false, err.message);
+            if (current()) alert(`${this._t('Could not save.')}\n\n${err.message}`);
+        } finally {
+            if (this._saveInFlight === token) this._saveInFlight = null;
         }
     }
 }

@@ -493,7 +493,7 @@ test('both viewports render the maps once a frame before the first pass, and the
     assert.match(three, /renderer\.setRenderTarget\(target\);\s*renderer\.autoClear = autoClear;\s*scene\.matrixWorldAutoUpdate = autoUpdate;\s*scene\.background = background;/);
     // Each face is scissored, cleared and, only when a caster stands in it, drawn.
     const face = three.slice(three.indexOf('_renderFaces(renderer, scene, target, size, row, origin, camera, mask) {'), three.indexOf('\n    },', three.indexOf('_renderFaces(renderer, scene, target, size, row, origin, camera, mask) {')));
-    assert.match(face, /target\.viewport\.set\(face \* size, row \* size, size, size\);\s*target\.scissor\.set\(face \* size, row \* size, size, size\);\s*target\.scissorTest = true;\s*renderer\.setRenderTarget\(target\);\s*renderer\.clear\(false, true, false\);\s*if \(!\(mask & \(1 << face\)\)\) continue;/);
+    assert.ok(face.indexOf('renderer.clear(false, true, false);') < face.indexOf('for (let face = 0;'), 'all faces are cleared before selective drawing');
     assert.match(face, /camera\.up\.set\(spec\.up\[0\], spec\.up\[1\], spec\.up\[2\]\);\s*camera\.lookAt\(origin\.x \+ spec\.dir\[0\], origin\.y \+ spec\.dir\[1\], origin\.z \+ spec\.dir\[2\]\);/);
     assert.match(face, /renderer\.render\(scene, camera\);/);
 
@@ -502,7 +502,7 @@ test('both viewports render the maps once a frame before the first pass, and the
     assert.match(editor, /if \(sprite && Reactor3D\.Shadows\) Reactor3D\.Shadows\.markCaster\(mesh, false\);/);
     assert.equal((editor.match(/Reactor3D\.Shadows\.markCaster\(object, !!template\.userData\.animated\);/g) || []).length, 2, 'event models and props');
 
-    assert.match(read('runtime/reactor_main.js'), /runtime revision: 20260904\.17/);
+    assert.match(read('runtime/reactor_main.js'), /runtime revision: 20260906\.19/);
 });
 
 test("a casting light's maps hold their origin until the light has drifted a quarter tile", () => {

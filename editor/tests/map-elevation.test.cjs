@@ -301,9 +301,11 @@ test('a rebuild does not throw away where the author is looking', () => {
     assert.match(body, /\$\{mapData\.id\}:\$\{mapData\.width\}x\$\{mapData\.height\}/,
         'and a resize counts as a different map, since the old framing will not fit');
 
-    // Double-clicking empty space is still the way home, and is now the only
-    // thing that moves the camera on the author's behalf.
-    assert.match(source, /Nothing under the cursor: put the whole map back in view/);
+    // Navigation mode retains an explicit camera reset; Event mode uses the
+    // same gesture to create an event without moving the camera.
+    const doubleClickAt = source.indexOf('    handleDoubleClick(event) {');
+    const doubleClick = source.slice(doubleClickAt, source.indexOf('\n    }', doubleClickAt));
+    assert.match(doubleClick, /if \(!this\.canSelectEvents\(\)\) \{[\s\S]{0,160}this\.frameMap\(map\)/);
 });
 
 test('a rebuild does not overwrite unsaved elevation', () => {

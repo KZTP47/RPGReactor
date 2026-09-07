@@ -192,11 +192,11 @@ test('the tray drags whole lights onto the map, presets and compounds alike', ()
     assert.match(manager, /const INK = '#01030a';/);
     assert.match(manager, /_shade\(colour, 0\.6\)/);
     assert.match(manager, /Array\.isArray\(template\.compound\)/);
-    assert.match(manager, /Object\.assign\(\{\}, part, at, \{ tag \}\)/);
-    // Placement is self-arming on an unlit map and always narrated — and a
+    assert.match(manager, /RRMapLights\.createCompound\(map, template\.compound/);
+    // Placement waits for a preset choice and is narrated — and a
     // click that routes nowhere says why, in both views, with a build stamp
     // so a stale session identifies itself.
-    assert.match(manager, /if \(!this\.lights\(\)\.length\) this\.armPlacement\('point'\);/);
+    assert.doesNotMatch(manager, /if \(!this\.lights\(\)\.length\) this\.armPlacement\('point'\);/, 'opening the tool waits for an explicit preset choice');
     assert.match(manager, /lit\.placing/);
     assert.match(manager, /_moveGhost\(at\)/);
     assert.match(manager, /static BUILD = /);
@@ -226,4 +226,120 @@ test('every panel string is a lit.* key present in the locale tables', () => {
         assert.ok(i18n.includes(JSON.stringify(key)), key + ' exists in the tables');
     }
     assert.ok(i18n.includes('"toolbar.title.lighting"'), 'the toolbar title is keyed too');
+});
+
+test('placement rejects the lighting panel and space outside the map', () => {
+    const vm = require('node:vm');
+    let hit;
+    const canvas = { contains: target => target === canvas };
+    const panel = { contains: target => target === panel };
+    const context = { document: { elementFromPoint: () => hit }, window: {} };
+    const Manager = vm.runInNewContext(read('src/LightingManager.js') + '\nLightingManager;', context);
+    const manager = Object.create(Manager.prototype);
+    manager._panel = panel;
+    manager.map = () => ({ width: 20, height: 20 });
+    let casts = 0, point = { x: 4, y: 5 };
+    manager.mapEditor3D = () => ({ isEnabled: () => true, canvas,
+        groundPointAt: () => { casts++; return point; } });
+    hit = panel;
+    assert.equal(manager._tileFromClient(500, 100), null);
+    assert.equal(casts, 0, 'the hidden ground behind UI is never raycast');
+    hit = {};
+    assert.equal(manager._tileFromClient(500, 100), null);
+    hit = canvas;
+    assert.deepEqual(manager._tileFromClient(500, 100), point);
+    point = { x: -1, y: 5 };
+    assert.equal(manager._tileFromClient(500, 100), null);
+});
+
+test('ambient refresh updates the filled rail and readout from the current map, including Day and black', () => {
+    const vm = require('node:vm');
+    const Manager = vm.runInNewContext(read('src/LightingManager.js') + '\nLightingManager;', {});
+    const manager = Object.create(Manager.prototype);
+    let ambient = { ambient: .37, ambientColour: '#c0d0e0' }, fill;
+    const level = { value: '', __rrPaint() { fill = this.value; } };
+    const readout = {}, colour = { setValue(value) { this.value = value; } };
+    manager._ambientControls = { level, readout, colour };
+    manager.ambient = () => ambient;
+    for (const value of [.37, 1, 0]) {
+        ambient = { ...ambient, ambient: value };
+        manager._syncAmbientControls();
+        assert.equal(level.value, String(value * 100));
+        assert.equal(fill, level.value);
+        assert.equal(readout.textContent, level.value + '%');
+        assert.equal(colour.value, ambient.ambientColour);
+    }
+});
+
+test('changing maps refreshes lighting state even while the 3D view owns rendering', () => {
+    const vm = require('node:vm');
+    let tick;
+    const context = { document: { hidden: false }, Reactor3D: {},
+        requestAnimationFrame(fn) { tick = fn; return 1; } };
+    const Manager = vm.runInNewContext(read('src/LightingManager.js') + '\nLightingManager;', context);
+    const manager = Object.create(Manager.prototype);
+    const currentMap = { id: 2 }, container = {}, surface = {};
+    Object.assign(manager, { active: true, _boundMap: { id: 1 }, selectedId: 'old', drag: {},
+        _undo: [1], _redo: [1], _bound3D: surface, projectController: { tilemapManager: { container } } });
+    manager.map = () => currentMap;
+    manager.mapEditor3D = () => ({ isEnabled: () => true });
+    manager._surface3D = () => surface;
+    let refreshed = 0, rebound = 0;
+    manager._syncPanel = () => { refreshed++; };
+    manager._bindPointer = () => { rebound++; };
+    manager._buildOverlay = () => { manager._overlay = { root: { parent: container } }; };
+    for (const method of ['armPlacement', '_unbindPointer', '_end3DDrag', '_destroyOverlay', '_syncDiskNotice']) manager[method] = () => {};
+    manager._startTicking();tick();
+    assert.equal(manager._boundMap, currentMap);
+    assert.equal(refreshed, 1);
+    assert.equal(rebound, 1);
+    assert.equal(manager.selectedId, null);
+    assert.equal(manager._undo.length + manager._redo.length, 0);
+    assert.equal(manager._overlay.root.visible, false, '3D still owns rendering');
+});
+
+test('compound fixtures keep mixed component types and offsets through movement, duplication and save', () => {
+    const map = { width: 30, height: 30 };
+    const first = MapLights.createCompound(map, [
+        { type: 'point', height: 2, color: '#a583ff' },
+        { type: 'spot', x: 2, y: 1, height: 3, pitch: -60 },
+        { type: 'beam', x: -1, height: 1, yaw: 30 }
+    ], 5, 6, 'Reactor lamp');
+    const unrelated = MapLights.add(map, { type: 'point', x: 20, y: 20 });
+    assert.equal(MapLights.fixtures(map).length, 2);
+    const parts = MapLights.members(map, first.id);
+    assert.deepEqual(parts.map(p => p.type), ['point', 'spot', 'beam']);
+    MapLights.moveFixture(map, parts[1].id, { x: 10, y: 12, height: 0 });
+    const moved = MapLights.members(map, first.id);
+    assert.deepEqual(moved.map(p => [p.x, p.y, p.height]), [[8, 11, 1], [10, 12, 2], [7, 11, 0]], 'shared movement stops at floor without flattening offsets');
+    assert.equal(MapLights.get(map, unrelated.id).x, 20);
+    const duplicate = MapLights.duplicateFixture(map, parts[1].id);
+    assert.notEqual(duplicate.compoundId, first.compoundId);
+    assert.equal(duplicate.compoundName, 'Reactor lamp 2');
+    assert.equal(MapLights.members(map, duplicate.id).length, 3);
+    assert.equal(MapLights.fixtures(map).length, 3);
+    const reloaded = JSON.parse(JSON.stringify(map));
+    assert.equal(MapLights.members(reloaded, first.id).length, 3);
+    assert.equal(MapLights.get(reloaded, first.id).compoundName, 'Reactor lamp');
+    const Reactor3D = require(path.join(editorRoot, '..', 'runtime', 'reactor_3d.js'));
+    const runtimeLights = Reactor3D.readMapLights(reloaded);
+    assert.equal(runtimeLights.length, 7, 'every component is a native light in game');
+    const saved = MapLights.snapshot(map);
+    MapLights.removeFixture(map, first.id);
+    assert.equal(MapLights.fixtures(map).length, 2);
+    assert.equal(MapLights.members(map, duplicate.id).length, 3, 'deleting a fixture leaves its duplicate');
+    MapLights.restore(map, saved);
+    assert.equal(MapLights.members(map, first.id).length, 3, 'undo restores complete fixture');
+});
+
+test('editing or renaming one component preserves fixture identity and leaves siblings unchanged', () => {
+    const map = {};
+    const first = MapLights.createCompound(map, [{ type: 'point' }, { type: 'spot' }], 1, 2, 'Fixture');
+    const second = MapLights.members(map, first.id)[1];
+    MapLights.update(map, second.id, { x: 4, intensity: .3, pulse: { min: .2, max: 1, period: 90 } });
+    MapLights.rename(map, second.id, 'cone');
+    assert.equal(MapLights.get(map, first.id).x, 1);
+    assert.equal(MapLights.get(map, 'cone').compoundId, first.compoundId);
+    assert.equal(MapLights.members(map, 'cone').length, 2);
+    assert.equal(MapLights.get(map, 'cone').pulse.period, 90);
 });

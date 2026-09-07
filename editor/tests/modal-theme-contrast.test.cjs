@@ -44,3 +44,11 @@ test('editor theme references resolve instead of silently using unrelated fallba
     for(const {file,text} of sources)for(const [,name] of text.matchAll(/var\((--color-[\w-]+)/g))if(!defined.has(name))missing.push(`${path.relative(__dirname,file)}: ${name}`);
     assert.deepEqual(missing,[]);
 });
+
+test('primary button foregrounds remain readable at rest and on hover in every palette',()=>{
+ for(const palette of ['gold','bubblegum','ocean','cascadia','underworld','creamsicle','royalty'])for(const mode of ['dark','light']){
+  const theme=palette==='gold'?mode:palette+'-'+mode,c=tokens(theme),base=c['--color-accent'];
+  const hover='#'+[1,3,5].map(i=>Math.round(parseInt(base.slice(i,i+2),16)*.9).toString(16).padStart(2,'0')).join('');
+  for(const background of [base,hover])assert.ok(contrast(c['--color-accent-on'],background)>=4.5,theme+' primary button contrast');
+ }
+});

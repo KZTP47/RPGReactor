@@ -29,11 +29,13 @@ Game_Temp.prototype.isPlaytest = function() {
 };
 
 Game_Temp.prototype.setDestination = function(x, y) {
+    if (x !== this._destinationX || y !== this._destinationY) this._destinationVersion = (this._destinationVersion || 0) + 1;
     this._destinationX = x;
     this._destinationY = y;
 };
 
 Game_Temp.prototype.clearDestination = function() {
+    if (this.isDestinationValid()) this._destinationVersion = (this._destinationVersion || 0) + 1;
     this._destinationX = null;
     this._destinationY = null;
 };
@@ -8450,12 +8452,26 @@ Game_Character.prototype.swap = function(character) {
     this.locate(newX, newY);
 };
 
+// Routes are transient: keeping them outside Game_Player avoids bloating saves.
+Game_Character._touchRoutes = new WeakMap();
 Game_Character.prototype.findDirectionTo = function(goalX, goalY) {
-    const searchLimit = this.searchLimit();
+    const touchRoute = typeof $gamePlayer !== "undefined" && this === $gamePlayer && $gameTemp.isDestinationValid()
+        && goalX === $gameTemp.destinationX() && goalY === $gameTemp.destinationY();
+    const routeKey = touchRoute ? [$gameMap.mapId(), goalX, goalY, $gameTemp._destinationVersion || 0].join(':') : '';
+    const cached = Game_Character._touchRoutes.get(this);
+    if (touchRoute && cached && cached.key === routeKey) {
+        // Accept the current or next step only. Teleports and plugin movement
+        // invalidate the route; moving obstacles are checked before each step.
+        if (cached.steps[cached.index + 1]?.x === this.x && cached.steps[cached.index + 1]?.y === this.y) cached.index++;
+        const step = cached.steps[cached.index];
+        if (step && step.x === this.x && step.y === this.y && this.canPass(this.x, this.y, step.direction)) return step.direction;
+    }
+    Game_Character._touchRoutes.delete(this);
+    const searchLimit = touchRoute ? Math.max(32, this.searchLimit()) : this.searchLimit();
     const mapWidth = $gameMap.width();
     const nodeList = [];
-    const openList = [];
-    const closedList = [];
+    const openList = new Map();
+    const closedList = new Set();
     const start = {};
     let best = start;
 
@@ -8469,9 +8485,10 @@ Game_Character.prototype.findDirectionTo = function(goalX, goalY) {
     start.g = 0;
     start.f = $gameMap.distance(start.x, start.y, goalX, goalY);
     nodeList.push(start);
-    openList.push(start.y * mapWidth + start.x);
+    openList.set(start.y * mapWidth + start.x, start);
 
-    while (nodeList.length > 0) {
+    let expanded = 0;
+    while (nodeList.length > 0 && (!touchRoute || expanded++ < 2048)) {
         let bestIndex = 0;
         for (let i = 0; i < nodeList.length; i++) {
             if (nodeList[i].f < nodeList[bestIndex].f) {
@@ -8486,8 +8503,8 @@ Game_Character.prototype.findDirectionTo = function(goalX, goalY) {
         const g1 = current.g;
 
         nodeList.splice(bestIndex, 1);
-        openList.splice(openList.indexOf(pos1), 1);
-        closedList.push(pos1);
+        openList.delete(pos1);
+        closedList.add(pos1);
 
         if (current.x === goalX && current.y === goalY) {
             best = current;
@@ -8504,7 +8521,7 @@ Game_Character.prototype.findDirectionTo = function(goalX, goalY) {
             const y2 = $gameMap.roundYWithDirection(y1, direction);
             const pos2 = y2 * mapWidth + x2;
 
-            if (closedList.includes(pos2)) {
+            if (closedList.has(pos2)) {
                 continue;
             }
             if (!this.canPass(x1, y1, direction)) {
@@ -8512,15 +8529,13 @@ Game_Character.prototype.findDirectionTo = function(goalX, goalY) {
             }
 
             const g2 = g1 + 1;
-            const index2 = openList.indexOf(pos2);
+            const existing = openList.get(pos2);
 
-            if (index2 < 0 || g2 < nodeList[index2].g) {
-                let neighbor = {};
-                if (index2 >= 0) {
-                    neighbor = nodeList[index2];
-                } else {
+            if (!existing || g2 < existing.g) {
+                const neighbor = existing || {};
+                if (!existing) {
                     nodeList.push(neighbor);
-                    openList.push(pos2);
+                    openList.set(pos2, neighbor);
                 }
                 neighbor.parent = current;
                 neighbor.x = x2;
@@ -8534,6 +8549,16 @@ Game_Character.prototype.findDirectionTo = function(goalX, goalY) {
         }
     }
 
+    if (touchRoute && best.x === goalX && best.y === goalY) {
+        const steps = [];
+        for (let step = best; step.parent; step = step.parent) {
+            const parent = step.parent;
+            const dx = $gameMap.deltaX(step.x, parent.x), dy = $gameMap.deltaY(step.y, parent.y);
+            steps.push({ x: parent.x, y: parent.y, direction: dy > 0 ? 2 : dx < 0 ? 4 : dx > 0 ? 6 : 8 });
+        }
+        steps.reverse();
+        Game_Character._touchRoutes.set(this, { key: routeKey, steps, index: 0 });
+    }
     let node = best;
     while (node.parent && node.parent !== start) {
         node = node.parent;

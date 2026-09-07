@@ -93,7 +93,7 @@
                 const rect = this.world.rect;
                 const width = rect ? Math.max(1, Math.round(rect.w * (rect.scale || 1))) : 512;
                 const height = rect ? Math.max(1, Math.round(rect.h * (rect.scale || 1))) : 512;
-                if (this.fxCanvas.width !== width || this.fxCanvas.height !== height) {
+                if (!this.fx.gpu && (this.fxCanvas.width !== width || this.fxCanvas.height !== height)) {
                     this.fxCanvas.width = width;
                     this.fxCanvas.height = height;
                 }
@@ -106,6 +106,14 @@
         /** Draw the playing Effekseer frame into the canvas now, on top of the loop's own draws. */
         drawNow() {
             return this._drawFrame ? this._drawFrame() : false;
+        }
+
+        /** Draw after the owning view has supplied this frame's camera and anchor. */
+        drawGpuQuad(quad) {
+            if (!this.active || !this.fx.gpu || !this.world) return false;
+            const drawn = this.drawNow();
+            if (this._gpuColourTarget) Reactor3D.GpuEffects.bindQuad(quad, this._gpuColourTarget);
+            return drawn;
         }
 
         /** Turn (degrees, x/y/z) and scale the playing animation on top of its record's own. */
@@ -146,6 +154,7 @@
             if (!animation) return false;
             this.active = true;
             this.loop = !!options.loop;
+            this.onSound = options.onSound;this.paused=false;this.mv.ready=false;
             if (animation !== this._lastPlayed) { this.visibleFrames = null; this._litPlays = 0; }
             this._lastPlayed = animation;
             if (options.transform) this.setTransform(options.transform);
@@ -162,8 +171,10 @@
             this.active = false;
             if (this.mv.raf) { cancelAnimationFrame(this.mv.raf); this.mv.raf = null; }
             if (this.fx.raf) { cancelAnimationFrame(this.fx.raf); this.fx.raf = null; }
-            if (this.fx.handle) { try { this.fx.handle.stop(); } catch (_) {} this.fx.handle = null; }
-            if (this.fx.gl) {
+            if (this.fx.handle) { try { this.fx.ctx?._makeContextCurrent?.(); this.fx.handle.stop(); } catch (_) {} this.fx.handle = null; }
+            if (this._gpuEffectTarget) { this._gpuEffectTarget.dispose(); this._gpuEffectTarget = null; }
+            if (this._gpuColourTarget) { this._gpuColourTarget.dispose(); this._gpuColourTarget = null; }
+            if (this.fx.gl && !this.fx.gpu) {
                 this.fx.gl.clearColor(0, 0, 0, 0);
                 this.fx.gl.clear(this.fx.gl.COLOR_BUFFER_BIT | this.fx.gl.DEPTH_BUFFER_BIT);
             }
@@ -177,8 +188,9 @@
         dispose() {
             this.stop();
             this._drawFrame = null;
-            if (this.fx.ctx && typeof effekseer !== 'undefined') {
-                try { effekseer.releaseContext(this.fx.ctx); } catch (_) {}
+            if (this.fx.gpu) Reactor3D.GpuEffects.release(this.fx.gpu);
+            else if (this.fx.ctx && typeof effekseer !== 'undefined') {
+                try { this.fx.ctx._makeContextCurrent?.(); effekseer.releaseContext(this.fx.ctx); } catch (_) {}
             }
             // Hand the WebGL context back now. A browser keeps a canvas's
             // context until the canvas is collected, and counts it against
@@ -186,8 +198,8 @@
             // are edited live rebuilds their effect layers on every change,
             // and sixteen edits evicted the oldest live contexts, the map
             // view's among them ("Too many active WebGL contexts").
-            if (this.fx.gl) {
-                try { this.fx.gl.getExtension('WEBGL_lose_context')?.loseContext(); } catch (_) {}
+            if (this.fx.legacyGl || (!this.fx.gpu && this.fx.gl)) {
+                try { (this.fx.legacyGl || this.fx.gl).getExtension('WEBGL_lose_context')?.loseContext(); } catch (_) {}
             }
             this.fx = { gl: null, ctx: null, ready: false, handle: null, raf: null, effects: new Map(), waiters: new Map() };
             this.wrap.parentNode?.removeChild(this.wrap);
@@ -252,16 +264,19 @@
                 if (generation !== this.generation) return;
                 const STEP = 1000 / 15;
                 let last = performance.now(), acc = 0, frame = 0;
-                draw(0);
+                this.mv.ready=true;
+                const sounds=(from,to)=>{for(const timing of animation.timings||[])if(timing.frame>=from&&timing.frame<=to&&timing.se?.name)this.onSound?.(timing.se);};
+                draw(0);sounds(0,0);
                 const loop = () => {
                     if (generation !== this.generation) return;
                     const now = performance.now();
-                    acc += now - last;
+                    if(!this.paused)acc += (now - last)*(this.speed??1);
                     last = now;
                     if (acc >= STEP) {
                         const steps = Math.floor(acc / STEP);
                         acc -= steps * STEP;
-                        frame += steps;
+                        const previous=frame;frame += steps;
+                        sounds(previous+1,Math.min(frame,animation.frames.length-1));
                         if (frame >= animation.frames.length) {
                             if (!this.loop) { this._finish(generation); return; }
                             frame %= animation.frames.length;
@@ -279,16 +294,31 @@
 
         _ensureEffekseer() {
             const fx = this.fx;
+            const renderer = this.world?.renderer;
+            if (fx.ready && (fx.gpu ? fx.gpu.renderer === renderer : !renderer)) return true;
+            if (fx.ready && fx.gpu) {
+                Reactor3D.GpuEffects.release(fx.gpu); fx.effects.clear(); fx.waiters.clear();
+                this.fx = { gl: null, ctx: null, ready: false, handle: null, raf: null, effects: new Map(), waiters: new Map() };
+                return this._ensureEffekseer();
+            }
             if (fx.ready) return true;
             if (typeof effekseer === 'undefined' || typeof RR_loadEffekseerEffectFromFile === 'undefined') return false;
             fx.gl = this.fxCanvas.getContext('webgl', { premultipliedAlpha: true, alpha: true });
             if (!fx.gl) return false;
-            fx.ctx = effekseer.createContext();
-            if (!fx.ctx) return false;
-            fx.ctx.init(fx.gl);
+            if (renderer && typeof Reactor3D !== 'undefined' && Reactor3D.GpuEffects) {
+                fx.legacyGl = fx.gl;
+                fx.gpu = Reactor3D.GpuEffects.create(renderer, fx.gl.getParameter(fx.gl.SAMPLES));
+            }
+            if (fx.gpu) { fx.gl = fx.gpu.gl; fx.ctx = fx.gpu.context; }
+            else {
+                fx.ctx = effekseer.createContext();
+                if (!fx.ctx) return false;
+                fx.ctx.init(fx.gl);
+            }
             // This context is Effekseer's alone: restore state once, and
             // again only after a focus/visibility change (see the guard).
-            if (typeof RREffekseerStateGuard !== 'undefined') RREffekseerStateGuard.attach(fx.ctx, this.fxCanvas);
+            if (fx.gpu) { /* The shared pass explicitly hands state back to Three. */ }
+            else if (typeof RREffekseerStateGuard !== 'undefined') RREffekseerStateGuard.attach(fx.ctx, this.fxCanvas);
             else fx.ctx.setRestorationOfStatesFlag(true);
             fx.ready = true;
             return true;
@@ -324,6 +354,7 @@
                 // invisible particle dies, so there is no dark gap.
                 let ticks = 0, lastLit = 0;
                 const start = () => {
+                    fx.ctx._makeContextCurrent?.();
                     this._plays = (this._plays || 0) + 1;
                     if (lastLit > 0) { this.visibleFrames = Math.max(this.visibleFrames || 0, lastLit); this._litPlays = (this._litPlays || 0) + 1; }
                     fx.handle = fx.ctx.play(effect);
@@ -367,6 +398,29 @@
                 this._drawFrame = () => {
                     if (generation !== this.generation || !fx.ctx) return false;
                     current();
+                    if (fx.gpu && this.world) {
+                        const world = this.world, rect = world.rect, s = rect?.scale || 1;
+                        const width = rect ? Math.max(1, Math.round(rect.w * s)) : 512;
+                        const height = rect ? Math.max(1, Math.round(rect.h * s)) : 512;
+                        this._applyHandleTransform();
+                        const target = Reactor3D.GpuEffects.draw(fx.gpu, this, width, height,
+                            { x: rect ? -Math.round(rect.x*s) : 0, y: rect ? -Math.round(rect.y*s) : 0,
+                              width: rect ? Math.round(world.viewWidth*s) : width, height: rect ? Math.round(world.viewHeight*s) : height },
+                            world.projection, world.view, fx.handle, true);
+                        const drawn = !!target && !!fx.handle?.exists;
+                        if (drawn && !this._gpuLitPending && (this._litPlays || 0) < 2 && (ticks === 3 || ticks % 10 === 0)) {
+                            const frame = ticks, play = this._plays;
+                            this._gpuLitPending = true;
+                            const queued = Reactor3D.GpuEffects.read(fx.gpu, target, (pixels, w, h) => {
+                                this._gpuLitPending = false;
+                                if (!pixels || generation !== this.generation || play !== this._plays) return;
+                                const data = Reactor3D.GpuEffects.downsample(pixels, w, h, LIT, LIT);
+                                for (let i=3;i<data.length;i+=4) if (data[i]>=2) { lastLit=frame; break; }
+                            });
+                            if (!queued) this._gpuLitPending = false;
+                        }
+                        return drawn;
+                    }
                     const gl = fx.gl;
                     const rect = this.world && this.world.rect;
                     if (rect) {
@@ -408,7 +462,7 @@
                 const loop = () => {
                     if (generation !== this.generation) return;
                     const now = Date.now();
-                    acc += now - last;
+                    if(!this.paused)acc += (now - last)*(this.speed??1);
                     last = now;
                     let n = 0;
                     if (acc >= step) current();
@@ -420,7 +474,7 @@
                         ticks++;
                     }
                     if (acc > step * 5) acc = 0;
-                    const drawn = this._drawFrame();
+                    const drawn = fx.gpu && this.world ? !!fx.handle?.exists : this._drawFrame();
                     if (drawn) {
                         dead = 0;
                         if (this.loop && this.visibleFrames > 0 && ticks >= this.visibleFrames && alive >= 3) start();
@@ -443,17 +497,22 @@
             }
             const path = require('path');
             const effectPath = path.join(projectRoot, 'effects', animation.effectName + '.efkefc');
+            const gpuLoad = fx.gpu;
+            if (gpuLoad) gpuLoad.loading++;
             try {
                 const effect = RR_loadEffekseerEffectFromFile(fx.ctx, effectPath, 1.0, () => {
                     for (const waiter of fx.waiters.get(animation.effectName) || []) waiter(effect);
                     fx.waiters.delete(animation.effectName);
+                    if (gpuLoad) Reactor3D.GpuEffects.loaded(gpuLoad);
                 }, () => {
                     fx.effects.delete(animation.effectName);
                     fx.waiters.delete(animation.effectName);
+                    if (gpuLoad) Reactor3D.GpuEffects.loaded(gpuLoad);
                 });
                 fx.effects.set(animation.effectName, effect);
                 fx.waiters.set(animation.effectName, [begin]);
             } catch (error) {
+                if (gpuLoad) Reactor3D.GpuEffects.loaded(gpuLoad);
                 if (error && error.rrWebWarming) {
                     // The web host is fetching the effects folder; play this
                     // effect as soon as the warm-up lands instead of logging

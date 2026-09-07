@@ -81,7 +81,10 @@
         })();
         templates.set(key, pending);
         const template = await pending;
-        if (templates.get(key) === pending) templates.set(key, template);
+        if (templates.get(key) === pending) {
+            if (template) templates.set(key, template);
+            else templates.delete(key);
+        }
         return template;
     }
 
@@ -191,7 +194,10 @@
         })();
         thumbnails.set(key, pending);
         const url = await pending;
-        if (thumbnails.get(key) === pending) thumbnails.set(key, url);
+        if (thumbnails.get(key) === pending) {
+            if (url) thumbnails.set(key, url);
+            else thumbnails.delete(key);
+        }
         return url;
     }
 

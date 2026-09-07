@@ -185,6 +185,7 @@
             check.disabled = change.disabled = false;
             name.title = '';
             name.style.color = '';
+            if (options.onSync) options.onSync(spec);
             check.checked = !!spec;
             name.textContent = spec ? spec.name : tt('(None)');
             name.style.display = spec ? '' : 'none';
@@ -282,7 +283,7 @@
         }
         if (ed._thumbPromises[spec.name]) return ed._thumbPromises[spec.name];
         const pendingCache = ed._thumbPromises;
-        const pending = ed._renderThumbnail(entry).then(url => {
+        const pending = ed._renderThumbnail(entry, { isCurrent: current }).then(url => {
             if (!current()) return null;
             if (url) {
                 ed._thumbs[spec.name] = url;
@@ -292,7 +293,7 @@
                 if (decoded) ed._writeCachedThumbnail?.(entry, url);
                 else setTimeout(() => {
                     if (!current()) return;
-                    Promise.resolve(ed._renderThumbnail(entry)).then(settled => {
+                    Promise.resolve(ed._renderThumbnail(entry, { isCurrent: current })).then(settled => {
                         if (current() && settled) {
                             ed._thumbs[spec.name] = settled;
                             ed._writeCachedThumbnail?.(entry, settled);
@@ -393,6 +394,7 @@
             check.checked = !!spec;
             label.textContent = spec ? tt(options.label) : label2d;
             canvasBox.style.display = spec ? 'none' : '';
+            if (!spec) canvasBox._load2d?.();
             pane.style.display = spec ? 'flex' : 'none';
             button.textContent = spec ? tt('Change Model') : button2d;
             if (spec) {

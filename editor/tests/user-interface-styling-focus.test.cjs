@@ -45,6 +45,32 @@ function focusWindow(id, x, y, visible = true) {
     };
 }
 
+test('title buttons without a window fill use the skin cursor, with borders only when chosen', () => {
+    const { ReactorUI, Window_ReactorUINode } = runtime();
+    const win = Object.create(Window_ReactorUINode.prototype);
+    win._uiNode = ReactorUI.normalizeNode({ type: 'button', fill: 'none' });
+    win._uiFocused = true;
+    win.contents = {};
+    win.contentsWidth = () => 216;
+    win.contentsHeight = () => 36;
+    win.setCursorRect = (...args) => { win.cursor = args; };
+    let borders = 0;
+    win.drawBorder = () => { borders++; };
+    win.drawFocus();
+    assert.deepEqual(win.cursor, [0, 0, 216, 36]);
+    assert.equal(borders, 0);
+    win._uiNode.focusedBorderColor = '#aa5500';
+    win.drawFocus();
+    assert.equal(borders, 1);
+    win._uiFocused = false;
+    win.drawFocus();
+    assert.deepEqual(win.cursor, [0, 0, 0, 0]);
+    win._uiFocused = true;
+    win._uiNode.focusedFillColor = '#123456';
+    win.drawFocus();
+    assert.deepEqual(win.cursor, [0, 0, 0, 0], 'custom selection fill replaces the default cursor');
+});
+
 test('directional overrides prefer a valid target and otherwise use geometric fallback', () => {
     const { ReactorUI, Scene_ReactorUI } = runtime();
     const current = focusWindow(1, 0, 0);

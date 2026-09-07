@@ -2,6 +2,10 @@
 // Handles project lifecycle: creating, opening, saving, closing projects
 
 class ProjectController {
+    // Legacy integrations retain access to the same preview manager.
+    get videoSurfacePreviewManager() { return this.mediaSurfacePreviewManager; }
+    set videoSurfacePreviewManager(value) { this.mediaSurfacePreviewManager = value; }
+
     // Atomic write for project data: write a temp sibling then rename over
     // the destination, so a crash/kill/full-disk mid-write can never destroy
     // the previous good file. Falls back to a plain write when the fs
@@ -431,7 +435,8 @@ class ProjectController {
         if (!this.projectLoaded) return;
         if (!await this.confirmUnsavedChanges()) return;
 
-        this.videoSurfacePreviewManager?.beforeMapChange?.();
+        if (typeof window !== 'undefined') window.reactor?.claimMapTool?.('none');
+        this.mediaSurfacePreviewManager?.beforeMapChange?.();
         if (typeof this.disableMap3DView === 'function') await this.disableMap3DView();
         this.modelPropsManager?.preview2D?.destroy();
         this.lightingManager?.setActive(false);
@@ -479,7 +484,7 @@ class ProjectController {
             if (forge && typeof forge.onProjectChanged === 'function') forge.onProjectChanged();
             const resources = reactor?.resourceManager || null;
             if (resources && typeof resources.onProjectChanged === 'function') resources.onProjectChanged();
-            this.videoSurfacePreviewManager?.onProjectChanged?.();
+            this.mediaSurfacePreviewManager?.onProjectChanged?.();
             // Event model previews cache by model name alone; two projects
             // sharing a model name would show the first one's mesh (or its
             // cached load failure) on the second.
@@ -645,7 +650,7 @@ class ProjectController {
         if (!dbLoaded) {
             this.uiManager.updateStatus('Error loading database');
             this.logProjectOpen('populate:database-failed');
-            this.videoSurfacePreviewManager?.beforeMapChange?.();
+            this.mediaSurfacePreviewManager?.beforeMapChange?.();
             if (typeof this.disableMap3DView === 'function') await this.disableMap3DView();
             this.releaseProjectLock();
             if (this.tilemapManager) this.tilemapManager.destroy();
@@ -710,7 +715,8 @@ class ProjectController {
             }
             // Clean up old TilemapManager before replacing it
             if (this.tilemapManager) {
-                this.videoSurfacePreviewManager?.beforeMapChange?.();
+                if (typeof window !== 'undefined') window.reactor?.claimMapTool?.('none');
+                this.mediaSurfacePreviewManager?.beforeMapChange?.();
                 this.tilemapManager.destroy();
             }
 
@@ -1348,8 +1354,9 @@ class ProjectController {
             document.activeElement.blur();
         }
 
-        const eventEditor = this.eventManager && this.eventManager.eventEditor;
-        if (eventEditor && eventEditor._writePendingModels) eventEditor._writePendingModels();
+        // Event drafts commit through Apply/OK. The inspector can outlive its
+        // modal (and map), so flushing it here would overwrite later map drags
+        // with cached model/elevation values from an earlier editing session.
         if (this.tilemapManager?.currentMap && this.tilemapManager.saveMap() !== true) {
             restoreSavedState();
             this.uiManager.updateStatus('Error saving current map');
@@ -1473,7 +1480,7 @@ class ProjectController {
 
         this.uiManager.updateStatus(`Loading map ${mapId}...`);
 
-        this.videoSurfacePreviewManager?.beforeMapChange?.();
+        this.mediaSurfacePreviewManager?.beforeMapChange?.();
         const success = await tilemapManager.loadMap(mapId);
         if (request !== this._mapLoadRequest || tilemapManager !== this.tilemapManager) return false;
 
@@ -1495,7 +1502,7 @@ class ProjectController {
 
             return true;
         } else {
-            this.videoSurfacePreviewManager?.setMap?.(tilemapManager.currentMap, tilemapManager);
+            this.mediaSurfacePreviewManager?.setMap?.(tilemapManager.currentMap, tilemapManager);
             this.uiManager.updateStatus(`Failed to load map ${mapId}`);
             return false;
         }
@@ -1852,7 +1859,7 @@ class ProjectController {
 
                 if (fs.existsSync(mapPath)) {
                     try {
-                        map = JSON.parse(fs.readFileSync(mapPath, 'utf8'));
+                        map = RRJson.parse(fs.readFileSync(mapPath));
                         map.id = mapId;
                         // The 3D section edits the sidecar, which lives beside
                         // the map rather than in it.
@@ -2344,7 +2351,13 @@ class ProjectController {
         // The sidecar sizes itself from the map, which may just have been resized.
         target.width = mapData.width;
         target.height = mapData.height;
-        let changed = elevation.setRoom(target, room);
+        let changed = false;
+        if (this.isCreatingNewMap) {
+            target.reactor3d = target.reactor3d || { version: 1 };
+            target.reactor3d.lighting = { ambient: 1, ambientColour: '#ffffff' };
+            changed = true;
+        }
+        changed = elevation.setRoom(target, room) || changed;
         if (typeof elevation.setCamera === 'function') {
             changed = elevation.setCamera(target, this.readMap3DCameraForm()) || changed;
         }
@@ -2880,7 +2893,7 @@ class ProjectController {
             const fs = require('fs');
             const path = require('path');
             const systemPath = path.join(this.currentProject.path, 'data', 'System.json');
-            const system = JSON.parse(fs.readFileSync(systemPath, 'utf8'));
+            const system = RRJson.parse(fs.readFileSync(systemPath));
             system.versionId = Math.floor(Math.random() * 100000000);
             this._writeFileAtomic(fs, systemPath, JSON.stringify(system, null, 2));
         } catch (error) {
@@ -3132,7 +3145,7 @@ class ProjectController {
                 'data', `Map${String(mapId).padStart(3, '0')}.r3d.json`);
             if (!fs.existsSync(file)) return false;
             try {
-                return JSON.parse(fs.readFileSync(file, 'utf8')).mode === '3d';
+                return RRJson.parse(fs.readFileSync(file)).mode === '3d';
             } catch (error) {
                 // The web host lists every file but only preloads some for
                 // synchronous reads; a sidecar it cannot open still exists,
@@ -3382,7 +3395,7 @@ class ProjectController {
             if (!fs.existsSync(mapPath)) continue;
             let mapData = null;
             try {
-                mapData = JSON.parse(fs.readFileSync(mapPath, 'utf8'));
+                mapData = RRJson.parse(fs.readFileSync(mapPath));
             } catch (error) {
                 report.unreadable.push(`${info.name || `Map ${info.id}`} (${error.message})`);
                 continue;
@@ -3672,8 +3685,14 @@ class ProjectController {
                     alert(this._tt('Map file not found.'));
                     return;
                 }
-                mapData = JSON.parse(fs.readFileSync(mapPath, 'utf8'));
+                mapData = RRJson.parse(fs.readFileSync(mapPath));
                 mapData.id = mapId;
+                const sidecarPath = mapPath.replace(/\.json$/, '.r3d.json');
+                if (fs.existsSync(sidecarPath)) {
+                    const sidecar = RRJson.parse(fs.readFileSync(sidecarPath));
+                    if (!sidecar || typeof sidecar !== 'object' || Array.isArray(sidecar)) throw new Error('Invalid map sidecar');
+                    mapData.reactor3d = sidecar;
+                }
             }
 
             const mapInfo = this.currentProject.maps?.[mapId] ? JSON.parse(JSON.stringify(this.currentProject.maps[mapId])) : null;
@@ -3698,30 +3717,39 @@ class ProjectController {
     }
 
     async pasteMap() {
-        if (!this.currentProject || typeof nw === 'undefined') return;
+        if (!this.currentProject || typeof nw === 'undefined' || this._pastingMap) return;
+        const targetProject = this.currentProject;
         const selectedMapId = this.tilemapManager?.currentMap?.id ?? null;
-
+        const token = {};
+        this._pastingMap = token;
+        const written = [];
+        let previousMaps = null;
+        let fs, path;
         try {
             const clipboardData = typeof ReactorClipboard !== 'undefined' ? await ReactorClipboard.read('map') : null;
+            if (this.currentProject !== targetProject) return;
             const payload = clipboardData?.payload || null;
-            if (!payload || !payload.mapData) {
+            if (!payload?.mapData) {
                 alert(this._tt('No map in clipboard to paste.'));
                 return;
             }
             const sizeError = this.mapDimensionError(payload.mapData.width, payload.mapData.height);
-            if (sizeError) {
-                alert(sizeError);
-                return;
+            if (sizeError) { alert(sizeError); return; }
+            const newMapData = JSON.parse(JSON.stringify(payload.mapData));
+            if (!Array.isArray(newMapData.data) || newMapData.data.length !== newMapData.width * newMapData.height * 6) {
+                throw new Error('Cannot paste malformed map tile data');
             }
-            const expectedDataLength = payload.mapData.width * payload.mapData.height * 6;
-            if (!Array.isArray(payload.mapData.data) || payload.mapData.data.length !== expectedDataLength) {
-                console.error('Cannot paste malformed map tile data');
-                alert(this._tt('Failed to paste map. Check console for details.'));
-                return;
-            }
+            const sidecar = newMapData.reactor3d;
+            if (sidecar != null && (typeof sidecar !== 'object' || Array.isArray(sidecar))) throw new Error('Invalid map sidecar');
+            delete newMapData.id;
+            delete newMapData.name;
+            delete newMapData.reactor3d;
+            if (payload.tileset) newMapData.tilesetId = await this.importCopiedTileset(payload.tileset);
+            else if (!this.databaseManager.getTileset(newMapData.tilesetId)) newMapData.tilesetId = this.databaseManager.getTilesets()[0]?.id || 1;
+            if (this.currentProject !== targetProject) return;
 
-            const fs = require('fs');
-            const path = require('path');
+            fs = require('fs'); path = require('path');
+            // Resolve the ID after asynchronous imports, which can yield to another map operation.
             const newMapId = this.getNextAvailableMapId();
             if (!newMapId) {
                 alert(`${this._tt('Map')} ${this._tt('Max:')} ${globalThis.RR_LIMITS?.MAP_COUNT || 2000}`);
@@ -3729,54 +3757,46 @@ class ProjectController {
             }
             const sourceName = payload.mapInfo?.name || payload.mapData.displayName || `Map ${payload.mapId || ''}`.trim();
             const mapName = this.getUniqueMapName(`${sourceName} Copy`);
-
-            const newMapData = JSON.parse(JSON.stringify(payload.mapData));
-            newMapData.id = newMapId;
-            delete newMapData.id;
-
-            if (payload.tileset) {
-                newMapData.tilesetId = await this.importCopiedTileset(payload.tileset);
-            } else if (!this.databaseManager.getTileset(newMapData.tilesetId)) {
-                newMapData.tilesetId = this.databaseManager.getTilesets()[0]?.id || 1;
+            if (newMapData.displayName === sourceName) newMapData.displayName = mapName;
+            const stem = path.join(targetProject.path, 'data', `Map${String(newMapId).padStart(3, '0')}`);
+            // Never overwrite an orphaned file: it may be recoverable user work.
+            if (fs.existsSync(stem + '.json') || fs.existsSync(stem + '.r3d.json')) throw new Error('Map ID already exists on disk');
+            written.push(stem + '.json');
+            this._writeFileAtomic(fs, stem + '.json', typeof RRMapJson !== 'undefined' ? RRMapJson.stringify(newMapData) : JSON.stringify(newMapData, null, 2));
+            if (sidecar) {
+                written.push(stem + '.r3d.json');
+                this._writeFileAtomic(fs, stem + '.r3d.json', JSON.stringify(sidecar, null, 2));
             }
 
-            if (newMapData.displayName && newMapData.displayName === sourceName) {
-                newMapData.displayName = mapName;
-            }
-
-            const mapPath = path.join(this.currentProject.path, 'data', `Map${String(newMapId).padStart(3, '0')}.json`);
-            const json = typeof RRMapJson !== 'undefined'
-                ? RRMapJson.stringify(newMapData)
-                : JSON.stringify(newMapData, null, 2);
-            this._writeFileAtomic(fs, mapPath, json);
-            this.bumpVersionId();
-
-            if (!this.currentProject.maps) {
-                this.currentProject.maps = [];
-            }
-
-            const sourceInfo = payload.mapInfo || {};
+            previousMaps = JSON.parse(JSON.stringify(targetProject.maps || []));
+            targetProject.maps ||= [];
             const placement = this.getMapInsertPlacement(selectedMapId);
-            this.currentProject.maps[newMapId] = {
-                id: newMapId,
-                expanded: sourceInfo.expanded !== undefined ? sourceInfo.expanded : true,
-                name: mapName,
-                order: placement.order,
-                parentId: placement.parentId,
-                scrollX: 0,
-                scrollY: 0
-            };
+            targetProject.maps[newMapId] = { id: newMapId, expanded: payload.mapInfo?.expanded ?? true,
+                name: mapName, order: placement.order, parentId: placement.parentId, scrollX: 0, scrollY: 0 };
             this.recalculateMapOrder(placement.parentId);
-
-            if (this.projectManager && this.projectManager.saveMapInfos) {
-                this.projectManager.saveMapInfos(this.currentProject.path, this.currentProject.maps);
+            if (!this.projectManager?.saveMapInfos || this.projectManager.saveMapInfos(targetProject.path, targetProject.maps) !== true) {
+                throw new Error('Could not save map metadata');
             }
-
+            if (this.databaseManager?.data) this.databaseManager.data.mapInfos = targetProject.maps;
+            // The complete map is now committed; later UI errors must not remove it.
+            written.length = 0;
+            previousMaps = null;
+            this.bumpVersionId();
             this.renderMapsList();
             this.uiManager.updateStatus(`Pasted map as ${String(newMapId).padStart(3, '0')}: ${mapName}`);
         } catch (error) {
+            if (previousMaps) {
+                targetProject.maps = previousMaps;
+                if (this.currentProject === targetProject && this.databaseManager?.data) this.databaseManager.data.mapInfos = previousMaps;
+            }
+            for (const file of written) {
+                try { if (fs.existsSync(file)) fs.unlinkSync(file); }
+                catch (cleanupError) { console.error('Could not remove incomplete map copy:', cleanupError); }
+            }
             console.error('Error pasting map:', error);
-            alert(this._tt('Failed to paste map. Check console for details.'));
+            if (this.currentProject === targetProject) alert(this._tt('Failed to paste map. Check console for details.'));
+        } finally {
+            if (this._pastingMap === token) this._pastingMap = null;
         }
     }
 
@@ -3798,34 +3818,26 @@ class ProjectController {
 
     async importCopiedTileset(sourceTileset) {
         if (!sourceTileset) return 1;
-
-        const targetTilesets = this.databaseManager.data.tilesets || [];
-        const sameName = sourceTileset.name
-            ? targetTilesets.find(tileset => tileset && tileset.name === sourceTileset.name)
-            : null;
-
-        if (sameName) {
-            return sameName.id;
-        }
-
+        const project = this.currentProject;
+        const database = this.databaseManager.data;
+        const targetTilesets = database.tilesets || [];
+        // Names are labels, not identity: two projects can use different art/flags under the same name.
+        const comparable = tileset => JSON.stringify(Object.keys(tileset).filter(key => key !== 'id').sort().map(key => [key, tileset[key]]));
+        const sourceKey = comparable(sourceTileset);
+        const matching = targetTilesets.find(tileset => tileset && comparable(tileset) === sourceKey);
+        if (matching) return matching.id;
         let targetId = sourceTileset.id;
         if (!targetId || targetTilesets[targetId]) {
-            targetId = targetTilesets.length;
-            if (targetId < 1) targetId = 1;
-            while (targetTilesets[targetId]) {
-                targetId++;
-            }
+            targetId = Math.max(1, targetTilesets.length);
+            while (targetTilesets[targetId]) targetId++;
         }
-
-        const importedTileset = JSON.parse(JSON.stringify(sourceTileset));
-        importedTileset.id = targetId;
-        targetTilesets[targetId] = importedTileset;
-        this.databaseManager.data.tilesets = targetTilesets;
-
-        if (this.currentProject?.path) {
-            await this.databaseManager.saveJSON(this.currentProject.path, 'Tilesets.json', targetTilesets);
+        const next = targetTilesets.slice();
+        next[targetId] = { ...JSON.parse(JSON.stringify(sourceTileset)), id: targetId };
+        if (project?.path && await this.databaseManager.saveJSON(project.path, 'Tilesets.json', next) !== true) {
+            throw new Error('Could not save imported tileset');
         }
-
+        if (this.currentProject !== project || this.databaseManager.data !== database) throw new Error('Project changed during tileset import');
+        database.tilesets = next;
         return targetId;
     }
 
@@ -3834,8 +3846,15 @@ class ProjectController {
         const maximumCount = globalThis.RR_LIMITS?.MAP_COUNT || 2000;
         const maximumId = globalThis.RR_LIMITS?.MAP_ID || 9999;
         if (maps.reduce((count, map) => count + (map ? 1 : 0), 0) >= maximumCount) return 0;
+        let fs, path;
+        if (this.currentProject?.path && typeof nw !== 'undefined') {
+            fs = require('fs'); path = require('path');
+        }
         for (let i = 1; i <= maximumId; i++) {
-            if (!maps[i]) return i;
+            if (maps[i]) continue;
+            const stem = fs && path.join(this.currentProject.path, 'data', `Map${String(i).padStart(3, '0')}`);
+            if (stem && (fs.existsSync(stem + '.json') || fs.existsSync(stem + '.r3d.json'))) continue;
+            return i;
         }
         return 0;
     }
@@ -3855,7 +3874,8 @@ class ProjectController {
     async deleteMap(mapId) {
         if (!this.currentProject || typeof nw === 'undefined') return;
 
-        const map = this.currentProject.maps?.[mapId];
+        const targetProject = this.currentProject;
+        const map = targetProject.maps?.[mapId];
         if (!map) return;
 
         const mapIdsToDelete = this.getMapAndDescendantIds(mapId);
@@ -3872,11 +3892,20 @@ class ProjectController {
             ? `${this._tt('Delete')} "${map.name || this._tt('Unnamed Map')}" ${this._tt('and')} ${childCount} ${childCount === 1 ? this._tt('child map') : this._tt('child maps')}?\n\n${this._tt('This removes their Map###.json files and MapInfos entries.')}`
             : `${this._tt('Delete')} "${map.name || this._tt('Unnamed Map')}"?\n\n${this._tt('This removes its')} Map${String(mapId).padStart(3, '0')}.json ${this._tt('file and MapInfos entry.')}`;
 
-        if (!confirm(message)) return;
+        const presentation=this.databaseManager?.data?.battlePresentation||(typeof window!=='undefined'?window.reactor?.databaseManager?.data?.battlePresentation:null);
+        const roomUses=Object.entries(presentation?.troops||{}).filter(([,room])=>room.type==='room'&&mapIdsToDelete.includes(room.mapId)).map(([id])=>'Troop #'+id);
+        const roomMessage=roomUses.length?'\n\nBattle Rooms using these maps: '+roomUses.join(', ')+'. Select replacement maps in Troops after deletion.':'';
+        if (!confirm(message+roomMessage)) return;
 
         const deletingLoadedMap = mapIdsToDelete.includes(this.tilemapManager?.currentMap?.id);
         if (deletingLoadedMap && !await this.confirmUnsavedChanges('map')) return;
+        if (this.currentProject !== targetProject) return;
 
+        let priorMaps = null;
+        const targetDatabase = this.databaseManager.data;
+        const priorSystem = targetDatabase?.system ? JSON.parse(JSON.stringify(targetDatabase.system)) : null;
+        let repairedSystem = false;
+        let metadataSaved = false;
         try {
             const fs = require('fs');
             const path = require('path');
@@ -3888,7 +3917,10 @@ class ProjectController {
             // Persist MapInfos BEFORE unlinking any map file — deleting the
             // files first meant a failed MapInfos save left phantom entries
             // pointing at maps that no longer exist on disk.
-            const priorMaps = JSON.parse(JSON.stringify(this.currentProject.maps || []));
+            // Repair against a draft before removing any working map entry.
+            repairedSystem = await this.repairInvalidSystemMapReferences(mapIdsToDelete, remainingMaps[0]?.id || null);
+            if (this.currentProject !== targetProject || this.databaseManager.data !== targetDatabase) return;
+            priorMaps = JSON.parse(JSON.stringify(targetProject.maps || []));
             for (const deleteId of mapIdsToDelete) {
                 this.currentProject.maps[deleteId] = null;
             }
@@ -3899,7 +3931,6 @@ class ProjectController {
                 }
             }
             this.recalculateAllMapOrders();
-            await this.repairInvalidSystemMapReferences(mapIdsToDelete, remainingMaps[0]?.id || null);
 
             if (this.projectManager && this.projectManager.saveMapInfos) {
                 if (!this.projectManager.saveMapInfos(this.currentProject.path, this.currentProject.maps)) {
@@ -3909,12 +3940,15 @@ class ProjectController {
                 this.savedMapInfosState = JSON.stringify(this.currentProject.maps || []);
             }
 
+            metadataSaved = true;
             // MapInfos is safely on disk — now drop the orphaned map files.
             for (const deleteId of mapIdsToDelete) {
                 const mapPath = path.join(dataDir, `Map${String(deleteId).padStart(3, '0')}.json`);
                 if (fs.existsSync(mapPath)) {
                     fs.unlinkSync(mapPath);
                 }
+                const sidecarPath = mapPath.replace(/\.json$/, '.r3d.json');
+                if (fs.existsSync(sidecarPath)) fs.unlinkSync(sidecarPath);
             }
             if (this.databaseManager?.data) {
                 this.databaseManager.data.mapInfos = this.currentProject.maps;
@@ -3934,8 +3968,20 @@ class ProjectController {
 
             this.uiManager.updateStatus(`Deleted map: ${map.name || String(mapId).padStart(3, '0')}`);
         } catch (error) {
+            if (!metadataSaved) {
+                if (priorMaps) {
+                    targetProject.maps = priorMaps;
+                    targetDatabase.mapInfos = priorMaps;
+                }
+                if (repairedSystem && priorSystem) {
+                    try {
+                        if (await this.databaseManager.saveJSON(targetProject.path, 'System.json', priorSystem) !== true) throw new Error('System rollback failed');
+                        targetDatabase.system = priorSystem;
+                    } catch (rollbackError) { console.error('Could not restore previous starting positions:', rollbackError); }
+                }
+            }
             console.error('Error deleting map:', error);
-            alert(this._tt('Failed to delete map. Check console for details.'));
+            if (this.currentProject === targetProject) alert(this._tt('Failed to delete map. Check console for details.'));
         }
     }
 
@@ -3966,8 +4012,11 @@ class ProjectController {
     }
 
     async repairInvalidSystemMapReferences(deletedMapIds = [], fallbackMapId = null) {
-        const system = this.databaseManager?.data?.system;
-        if (!this.currentProject || !system || typeof nw === 'undefined') return false;
+        const project = this.currentProject;
+        const database = this.databaseManager?.data;
+        const sourceSystem = database?.system;
+        if (!project || !sourceSystem || typeof nw === 'undefined') return false;
+        const system = JSON.parse(JSON.stringify(sourceSystem));
 
         const validMapId = fallbackMapId || this.getFirstPlayableMapId(deletedMapIds);
         if (!validMapId) return false;
@@ -3997,9 +4046,11 @@ class ProjectController {
         });
 
         if (changed && this.databaseManager.saveJSON) {
-            if (!await this.databaseManager.saveJSON(this.currentProject.path, 'System.json', system)) {
+            if (!await this.databaseManager.saveJSON(project.path, 'System.json', system)) {
                 throw new Error('System.json could not be saved after repairing deleted map references');
             }
+            if (this.currentProject !== project || this.databaseManager.data !== database) throw new Error('Project changed during starting-position repair');
+            Object.assign(sourceSystem, system);
             this.uiManager.updateStatus(`Updated starting positions to avoid deleted maps`);
         }
 
@@ -4048,7 +4099,7 @@ class ProjectController {
                 return;
             }
 
-            const mapData = JSON.parse(fs.readFileSync(mapPath, 'utf8'));
+            const mapData = RRJson.parse(fs.readFileSync(mapPath));
             const tileSize = this.tilemapManager?.TILE_SIZE || 48;
             const pixelWidth = (mapData.width || 0) * tileSize;
             const pixelHeight = (mapData.height || 0) * tileSize;

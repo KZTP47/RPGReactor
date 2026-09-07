@@ -1,6 +1,6 @@
 # Model face points, speech and prop playback
 
-Available in development runtime **20260904.17**. Restart the editor/playtest to
+Updated in development runtime **20260906.3**. Restart the editor/playtest to
 load updated scripts; existing projects receive runtime updates through the
 normal project runtime sync.
 
@@ -13,18 +13,30 @@ the standard character eye-height fallback. The player's 3D body and followers
 remain visible; looking down reveals the body.
 
 In **Database → 3D Models**, select a model and click the **eye icon** for
-**Face points**. Choose Eyes / camera, Mouth, Upper lip or Lower lip. Drag the
-selected marker, or enter its X/Y/Z coordinates. **Follow** chooses the bone or
-part it follows. Click **Save face points**. Editing uses the rest pose and
+**Face points**. The compact right-hand card uses the same placement conventions
+as model transforms and effects. Choose Eyes / camera, Mouth, Upper lip or
+Lower lip. Drag the selected marker freely, drag its colored axis arrows to
+move along one viewport axis, or use the X/Y/Z sliders and numeric steppers
+(0.001 increments). Numeric positions use model coordinates; controls and markers
+update together. Double-click a slider to restore that coordinate to its value
+when face editing began. **Follow** chooses the bone or part it follows.
+Click **Save face points** to save all four markers. Editing uses the rest pose and
 preserves existing skeleton, weights, carved parts and other sidecar fields.
 Imported rigs and carved models both support these markers.
+
+Mouth and lip targets also show **Mouth interior**, its color, and a **Preview
+mouth** slider. Scrub the preview to check closed/open positions before saving.
+Moving a marker or changing its interior resets the preview to the rest pose.
+The lip dots are smaller than the mouth/eye dots, with a larger invisible hit
+area retained for dragging. The preview uses the same speech geometry as the
+game and never writes generated meshes into the source GLB.
 
 The optional top-level `model.json` field uses bone/part-local coordinates:
 
 ```json
 "landmarks": {
   "eyes": { "part": "Head", "offset": [0, 0.1, 0.08] },
-  "mouth": { "part": "Head", "offset": [0, 0, 0.1] },
+  "mouth": { "part": "Head", "offset": [0, 0, 0.1], "interior": "dark", "interiorColor": "#080808" },
   "upperLip": { "part": "Head", "offset": [0, 0.01, 0.1] },
   "lowerLip": { "part": "Head", "offset": [0, -0.01, 0.1] }
 }
@@ -37,16 +49,41 @@ than reinterpreting their offsets at the model's feet.
 ## Spoken dialogue
 
 Use **Events → Reactor 3D → Speak 3D Dialogue**. Select the speaking event,
-player or follower; choose a voice clip under `audio/se`, optionally enter a
-speaker name and dialogue, and set volume/pitch/pan and whether to wait for the
-voice. Dialogue uses the regular message window. **Stop** ends the target's
-voice and resets its mouth. Scene exit also cleans up speech.
+player or follower and choose a voice clip under `audio/se`. Volume, pitch and
+pan are edited in the voice picker; reopening it preserves all three values.
+The command controls voice playback and mouth animation only. For dialogue,
+uncheck **Wait for voice to finish**, then add a normal **Show Text** command
+with the speaker and message. The voice can play alongside that message;
+closing the message does not stop the voice. With waiting enabled, the next
+event command runs after audio ends. **Stop** ends the target's voice and
+resets its mouth. Scene exit also cleans up speech.
+
+Legacy `speaker`/`text` arguments are ignored at runtime and removed when the
+command is edited and accepted. Move any previously embedded dialogue into
+Show Text. Existing project event data is not rewritten automatically.
 
 Speech prefers an existing `mouthOpen`, `jawOpen` or `viseme_a`/`viseme_aa` morph,
 then a Jaw/LowerJaw bone. Otherwise, designated mouth/lip points generate a
-small local lip morph on that model instance. Position the markers on the
-actual mouth for useful results. This deforms existing geometry; it does not
-create teeth or a mouth cavity.
+local lip morph on that model instance. All three mouth/lip points allow the
+fallback to split triangles along the lip line and open a real seam. A dark,
+inset lining fills that opening; **None** leaves it unfilled. The geometry,
+interpolated skin weights and morph are generated once per instance. Shared
+geometry and the source model stay unchanged. A mouth point alone retains the
+older deformation-only fallback.
+
+Put **Mouth** on the closed lip seam, **Upper lip** just above it and **Lower
+lip** just below it. Their separation sizes the local deformation. Preview the
+result: a point on the chin opens the chin, and a point in empty space cannot
+find a mouth surface. The generated opening is a stylized fallback for ordinary
+front-facing character meshes, not an anatomical reconstruction. It does not
+generate teeth or a tongue, infer the intended gum line from a texture, or
+replace a properly authored human mouth. For close-up human characters, supply
+an open-mouth morph or jaw rig with teeth, tongue and inner-mouth geometry in
+the asset. Existing mouth morphs and jaw rigs retain their own interiors.
+
+The September 6 fix refreshes skinned bind transforms before capturing the
+speech rest pose. Previously the mascot's fresh imported mesh was sampled at
+the wrong scale, selecting no mouth vertices even with saved face points.
 
 Movement follows the audio's amplitude envelope, closing during silence and
 following playback pitch and the audio clock. It is **not phoneme recognition**.

@@ -4501,6 +4501,9 @@
         installFinalBattleLogCompatibility();
         installFinalAnimationCompatibility();
         installFinalLightingCompatibility();
+        installFinalFogCompatibility();
+        installFinalPictureChoicesCompatibility();
+        installFinalChoiceIconCompatibility();
         installFinalBattleHudCompatibility();
         installFinalDamagePopupCompatibility();
         installFinalTreasurePopupCompatibility();
@@ -4509,6 +4512,101 @@
         installJsonExCompatibility();
         installDataManagerCompatibility();
         installStorageManagerCompatibility();
+    }
+
+    function installFinalChoiceIconCompatibility() {
+        if (!global.Window_ChoiceList || !global.ImageManager) return;
+        const proto = Window_ChoiceList.prototype;
+        if (!proto.refresh || proto.refresh.__reactorChoiceIcons) return;
+        const refresh = proto.refresh;
+        proto.refresh = function() {
+            const result = refresh.apply(this, arguments);
+            // MV cache/preload plugins may evict IconSet after boot. A choice
+            // drawn while it reloads has text but no icons until its next refresh.
+            if (!this._list?.some(command => /(?:\\|\x1b)i\[/i.test(command.name))) return result;
+            const bitmap = ImageManager.loadSystem("IconSet");
+            if (!bitmap.isReady() && this._reactorChoiceIconLoad !== bitmap) {
+                this._reactorChoiceIconLoad = bitmap;
+                bitmap.addLoadListener(() => {
+                    if (this._reactorChoiceIconLoad !== bitmap) return;
+                    this._reactorChoiceIconLoad = null;
+                    // Rebuild current choices, rather than paint an obsolete
+                    // icon into contents that have since been cleared/replaced.
+                    if (!this.destroyed && this.contents) this.refresh();
+                });
+            }
+            return result;
+        };
+        proto.refresh.__reactorChoiceIcons = true;
+    }
+
+    function installFinalPictureChoicesCompatibility() {
+        if (!global.Imported?.PSYCHRONIC_PictureChoices || !global.PSYCHRONIC_PictureChoices || !global.Window_ChoiceList) return;
+        const proto = Window_ChoiceList.prototype;
+        if (!proto.createChoiceSprites || proto.__reactorPictureChoiceOwnership) return;
+        proto.__reactorPictureChoiceOwnership = true;
+        const create = proto.createChoiceSprites, clear = proto.clearChoiceSprites;
+        const destroy = proto.destroy, update = proto.update;
+        const images = () => PSYCHRONIC_PictureChoices.choiceImages || [];
+        // The plugin adds sprites to the scene but only remembers them in its
+        // global choice definitions. Scene destruction nulls their PIXI scale,
+        // and the next choice window tries to animate those dead references.
+        proto.createChoiceSprites = function() {
+            const result = create.apply(this, arguments);
+            this._reactorOwnedChoices = images().filter(data => data?.sprite).map(data => ({ data, sprite: data.sprite }));
+            this._choiceSprites = this._reactorOwnedChoices.map(entry => entry.sprite);
+            return result;
+        };
+        proto.clearChoiceSprites = function() {
+            for (const {data, sprite} of this._reactorOwnedChoices || []) {
+                if (data.sprite === sprite) data.sprite = null;
+                sprite.parent?.removeChild(sprite);
+                if (!sprite.destroyed) sprite.destroy({children:true, texture:false, textureSource:false, baseTexture:false});
+            }
+            this._reactorOwnedChoices = [];
+            this._choiceSprites = [];
+            return clear.apply(this, arguments);
+        };
+        proto.destroy = function() {
+            this.clearChoiceSprites();
+            return destroy.apply(this, arguments);
+        };
+        proto.update = function() {
+            for (const data of images()) {
+                if (data?.sprite && (data.sprite.destroyed || !data.sprite.scale)) data.sprite = null;
+            }
+            return update.apply(this, arguments);
+        };
+    }
+
+    function installFinalFogCompatibility() {
+        // VE's MV plugin and its MZ port compare the numeric Game_Fog blend
+        // against a PIXI 8 string. That recreates every layer every frame,
+        // then writes the scroll/opacity onto the discarded sprite.
+        const imported = global.Imported;
+        if (!imported || !(imported["VE - Fog And Overlay"] || imported["PSYCHRONIC_MZRX-FogAndOverlay"])) return;
+        if (!global.PIXI?.TextureSource || !PIXI.__reactorBlendModeName || !global.Spriteset_Base) return;
+        const proto = Spriteset_Base.prototype;
+        if (!proto.updateFog || proto.updateFog.__reactorFogBlend) return;
+        proto.updateFog = function(fogId) {
+            let sprite = this._fogEffects[fogId];
+            const fog = $gameScreen.fog(fogId);
+            if (!sprite || !fog) return;
+            const blendName = PIXI.__reactorBlendModeName;
+            if (sprite.fogName !== fog.name || sprite.fogHue !== fog.hue ||
+                    blendName(sprite.blendMode) !== blendName(fog.blend) || sprite.z !== fog.z) {
+                this.deleteFog(fogId);
+                this.createFog(fogId);
+                sprite = this._fogEffects[fogId];
+                if (!sprite) return;
+            }
+            sprite.origin.x = Math.floor(fog.x);
+            sprite.origin.y = Math.floor(fog.y);
+            sprite.scale.x = fog.zoom;
+            sprite.scale.y = fog.zoom;
+            sprite.opacity = fog.opacity;
+        };
+        proto.updateFog.__reactorFogBlend = true;
     }
 
     function installFinalTreasurePopupCompatibility() {

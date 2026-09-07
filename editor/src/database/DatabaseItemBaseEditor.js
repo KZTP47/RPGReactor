@@ -17,7 +17,7 @@ class DatabaseItemBaseEditor {
         const tt = text => window.I18n ? window.I18n.tText(text) : text;
         const iconSection = document.createElement('div');
         iconSection.className = 'database-section';
-        iconSection.style.borderBottom = '2px solid var(--color-link)';
+        iconSection.style.borderBottom = '2px solid var(--color-accent)';
         iconSection.innerHTML = `<div class="database-section-header">${tt('Icon')}</div>`;
         const iconContent = document.createElement('div');
         iconContent.className = 'database-section-content';

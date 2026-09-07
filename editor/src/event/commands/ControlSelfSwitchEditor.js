@@ -116,9 +116,9 @@ class ControlSelfSwitchEditor {
             btn.textContent = letter;
             btn.style.cssText = `
                 padding: 8px 16px;
-                background-color: ${this.selfSwitchId === letter ? 'var(--color-link)' : 'var(--color-bg-panel)'};
-                color: ${this.selfSwitchId === letter ? 'var(--color-text-strong)' : 'var(--color-text)'};
-                border: 1px solid ${this.selfSwitchId === letter ? 'var(--color-link)' : 'var(--color-border-input)'};
+                background-color: ${this.selfSwitchId === letter ? 'var(--color-accent)' : 'var(--color-bg-panel)'};
+                color: ${this.selfSwitchId === letter ? 'var(--color-accent-on)' : 'var(--color-text)'};
+                border: 1px solid ${this.selfSwitchId === letter ? 'var(--color-accent)' : 'var(--color-border-input)'};
                 border-radius: 3px;
                 cursor: pointer;
                 font-size: 13px;
@@ -150,9 +150,9 @@ class ControlSelfSwitchEditor {
         onBtn.textContent = tt('ON');
         onBtn.style.cssText = `
             padding: 8px 16px;
-            background-color: ${this.value === 0 ? 'var(--color-link)' : 'var(--color-bg-panel)'};
-            color: ${this.value === 0 ? 'var(--color-text-strong)' : 'var(--color-text)'};
-            border: 1px solid ${this.value === 0 ? 'var(--color-link)' : 'var(--color-border-input)'};
+            background-color: ${this.value === 0 ? 'var(--color-accent)' : 'var(--color-bg-panel)'};
+            color: ${this.value === 0 ? 'var(--color-accent-on)' : 'var(--color-text)'};
+            border: 1px solid ${this.value === 0 ? 'var(--color-accent)' : 'var(--color-border-input)'};
             border-radius: 3px;
             cursor: pointer;
             font-size: 13px;
@@ -167,9 +167,9 @@ class ControlSelfSwitchEditor {
         offBtn.textContent = tt('OFF');
         offBtn.style.cssText = `
             padding: 8px 16px;
-            background-color: ${this.value === 1 ? 'var(--color-link)' : 'var(--color-bg-panel)'};
-            color: ${this.value === 1 ? 'var(--color-text-strong)' : 'var(--color-text)'};
-            border: 1px solid ${this.value === 1 ? 'var(--color-link)' : 'var(--color-border-input)'};
+            background-color: ${this.value === 1 ? 'var(--color-accent)' : 'var(--color-bg-panel)'};
+            color: ${this.value === 1 ? 'var(--color-accent-on)' : 'var(--color-text)'};
+            border: 1px solid ${this.value === 1 ? 'var(--color-accent)' : 'var(--color-border-input)'};
             border-radius: 3px;
             cursor: pointer;
             font-size: 13px;

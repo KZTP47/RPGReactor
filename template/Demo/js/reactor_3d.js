@@ -24,8 +24,8 @@
  *    so there is no per-frame copy and PIXI keeps drawing windows, pictures,
  *    weather and every plugin-authored sprite over the world exactly as it
  *    does in 2D. If that handover fails, `_initializeCanvas` falls back to a
- *    separate 3D canvas at z-index 0 under the game canvas (Effekseer keeps
- *    its own WebGL1 canvas at z-index 2 in both cases).
+ *    separate 3D canvas at z-index 0 under the game canvas. Screen effects keep
+ *    their WebGL1 overlay; attached effects share the view GPU when supported.
  */
 
 //-----------------------------------------------------------------------------
@@ -38,6 +38,11 @@ function Reactor3D() {
 }
 
 Reactor3D.LIB_URL = "js/libs/three.js";
+/** The editor supplies same-origin URLs for its externally loaded runtime. */
+Reactor3D.workerUrl = function(name) {
+    return this.resolveWorkerUrl ? this.resolveWorkerUrl(name)
+        : new URL(name, new URL(this.LIB_URL, document.baseURI)).href;
+};
 Reactor3D.SIDECAR_SUFFIX = ".r3d.json";
 
 // Radians per frame an event model may visibly turn; 90 degrees takes about a
@@ -669,12 +674,265 @@ Reactor3D.Viewport.prototype.targetHandle = function(target) {
 };
 
 /** Draw a scene into a target, each side forgetting what the other did to the context. */
+/**
+ * Index-only levels for dense rigid models, prepared by one lazy worker.
+ * The camera chooses a subpixel error estimate. Close views, unsupported or
+ * changing geometry and worker failures use the full mesh. Only the colour
+ * draw swaps geometry: collision, animation and shadow maps see the original.
+ */
+Reactor3D.GeometryDetail = {
+    enabled: true,
+    pixelError: 0.35,
+    _states: new WeakMap(),
+    _queue: [],
+    _serial: 0,
+    eligible(object) {
+        const g = object.geometry, m = object.material;
+        return object.isMesh && !object.isSkinnedMesh && !object.isInstancedMesh
+            && g?.index?.count >= 100000 && !g.groups.length
+            && g.drawRange.start === 0 && g.drawRange.count >= g.index.count
+            && !Object.values(g.morphAttributes || {}).some(a => a.length)
+            && m?.isMeshBasicMaterial && m.__reactorModel && !m.transparent && !m.alphaTest && !m.envMap
+            && !m.__reactorBillboard && !g.attributes.position.isInterleavedBufferAttribute
+            && g.attributes.position.array instanceof Float32Array
+            && Object.keys(g.attributes).every(k => /^(position|normal|tangent|uv\d*|color)$/.test(k));
+    },
+    signature(g) {
+        return [g.index, g.index.version, ...Object.entries(g.attributes).flatMap(([k, a]) => [k, a, a.version, a.data?.version, a.count])];
+    },
+    fresh(state) {
+        const now = this.signature(state.source);
+        return !state.dead && now.length === state.signature.length && now.every((v, i) => v === state.signature[i]);
+    },
+    release(state) {
+        state.dead = true;
+        for (const level of state.levels) level.geometry.dispose();
+        state.levels.length = 0;
+        state.source.removeEventListener('dispose', state.onDispose);
+    },
+    state(g) {
+        let state = this._states.get(g);
+        if (state && this.fresh(state)) return state;
+        if (state) this.release(state);
+        state = { source: g, signature: this.signature(g), levels: [], id: ++this._serial, dead: false };
+        state.onDispose = () => this.release(state);
+        g.addEventListener('dispose', state.onDispose);
+        this._states.set(g, state);
+        this._queue.push(state);
+        this.dispatch();
+        return state;
+    },
+    dispatch() {
+        if (this._busy || this._failed || !this._queue.length) return;
+        const state = this._queue.shift();
+        if (!this.fresh(state)) return this.dispatch();
+        try {
+            if (!this._worker) {
+                const url = Reactor3D.workerUrl('reactor_geometry_worker.js');
+                this._worker = new Worker(url, { type: 'module', name: 'Reactor geometry' });
+                this._worker.onmessage = event => this.receive(event.data);
+                this._worker.onerror = () => this.fail();
+                this._worker.onmessageerror = () => this.fail();
+            }
+            const g = state.source, positions = g.attributes.position.array.slice();
+            const indices = new Uint32Array(g.index.array);
+            const attributes = Object.entries(g.attributes).filter(([k]) => /^(uv\d*|color)$/.test(k));
+            const stride = attributes.reduce((n, [, a]) => n + a.itemSize, 0);
+            const packed = new Float32Array(g.attributes.position.count * stride);
+            for (let v = 0; v < g.attributes.position.count; v++) {
+                let at = v * stride;
+                for (const [, a] of attributes) for (let c = 0; c < a.itemSize; c++) packed[at++] = a.getComponent(v, c);
+            }
+            this._busy = state;
+            this._worker.postMessage({ id: state.id, positions, indices, attributes: packed, stride,
+                weights: new Array(stride).fill(1) }, [positions.buffer, indices.buffer, packed.buffer]);
+        } catch (error) { this.fail(); }
+    },
+    receive(message) {
+        const state = this._busy;
+        this._busy = null;
+        if (!state || message.id !== state.id) return this.fail();
+        if (message.error) return this.fail();
+        if (this.fresh(state)) {
+            for (const level of message.levels) {
+                const g = new THREE.BufferGeometry();
+                // Sharing immutable vertex buffers avoids duplicating textures,
+                // attributes, bone data or the authored GLB on disk.
+                for (const [key, value] of Object.entries(state.source.attributes)) g.setAttribute(key, value);
+                g.setIndex(new THREE.BufferAttribute(level.indices, 1));
+                g.boundingBox = state.source.boundingBox?.clone() || null;
+                g.boundingSphere = state.source.boundingSphere?.clone() || null;
+                state.levels.push({ geometry: g, error: level.error });
+            }
+        }
+        this.dispatch();
+    },
+    fail() {
+        this._failed = true;
+        this._worker?.terminate();
+        this._worker = null;
+        this._busy = null;
+        this._queue.length = 0;
+    },
+    /** Upper bound on scale, including sheared nonuniform parent transforms. */
+    scaleBound(e) {
+        const a = e[0] * e[0] + e[1] * e[1] + e[2] * e[2];
+        const b = e[4] * e[4] + e[5] * e[5] + e[6] * e[6];
+        const c = e[8] * e[8] + e[9] * e[9] + e[10] * e[10];
+        const ab = Math.abs(e[0] * e[4] + e[1] * e[5] + e[2] * e[6]);
+        const ac = Math.abs(e[0] * e[8] + e[1] * e[9] + e[2] * e[10]);
+        const bc = Math.abs(e[4] * e[8] + e[5] * e[9] + e[6] * e[10]);
+        return Math.sqrt(Math.max(a + ab + ac, b + ab + bc, c + ac + bc));
+    },
+    pixelsPerUnit(object, camera, height) {
+        const g = object.geometry;
+        if (!g.boundingSphere) g.computeBoundingSphere();
+        const scale = this.scaleBound(object.matrixWorld.elements);
+        const center = (this._center || (this._center = new THREE.Vector3())).copy(g.boundingSphere.center)
+            .applyMatrix4(object.matrixWorld).applyMatrix4(camera.matrixWorldInverse);
+        const depth = camera.isPerspectiveCamera ? Math.max(camera.near, -center.z - g.boundingSphere.radius * scale) : 1;
+        return height * 0.5 * Math.abs(camera.projectionMatrix.elements[5]) * scale / depth;
+    },
+    begin(scene, camera, height) {
+        const swapped = [];
+        if (!this.enabled || this._failed || scene.overrideMaterial || typeof Worker === 'undefined' || Reactor3D.tier() !== 'weak') return swapped;
+        scene.traverseVisible(object => {
+            if (!this.eligible(object)) return;
+            const state = this.state(object.geometry);
+            if (!state.levels.length) return;
+            const pixels = this.pixelsPerUnit(object, camera, height);
+            let selected = null;
+            for (const level of state.levels) if (level.error * pixels <= this.pixelError) selected = level.geometry;
+            if (!selected) return;
+            swapped.push([object, object.geometry]);
+            object.geometry = selected;
+        });
+        return swapped;
+    },
+    end(swapped) {
+        for (const [object, geometry] of swapped) object.geometry = geometry;
+    },
+    withOriginal(draw) {
+        const active = this._active || [], restore = [];
+        for (const [object, original] of active) { restore.push([object, object.geometry]); object.geometry = original; }
+        try { return draw(); } finally { for (const [object, geometry] of restore) object.geometry = geometry; }
+    }
+};
+
+/** Avoid rebuilding and uploading an unchanged bone palette for every pass. */
+Reactor3D.SkeletonUpdates = {
+    enabled: true,
+    install(skeleton) {
+        if (!skeleton || skeleton.__rrPaletteCache || skeleton.update !== THREE.Skeleton.prototype.update) return;
+        const original = skeleton.update;
+        const state = { valid: false, texture: null, matrices: null, pose: null, values: null };
+        skeleton.__rrPaletteCache = state;
+        skeleton.update = function() {
+            if (!Reactor3D.SkeletonUpdates.enabled) { state.valid = false; return original.call(this); }
+            const n = this.bones.length, matrices = this.boneMatrices;
+            let same = Reactor3D.SkeletonUpdates.enabled && state.valid && state.matrices === matrices
+                && state.texture === this.boneTexture && state.pose.length === n * 32;
+            if (same) {
+                for (let i = 0; i < n && same; i++) {
+                    const world = this.bones[i]?.matrixWorld.elements;
+                    const inverse = this.boneInverses[i].elements;
+                    for (let j = 0; j < 16; j++) {
+                        const value = world ? world[j] : (j % 5 === 0 ? 1 : 0);
+                        if (state.pose[i * 32 + j] !== value || state.pose[i * 32 + 16 + j] !== inverse[j]) { same = false; break; }
+                    }
+                }
+                // Respect callers that directly edit the exposed palette too.
+                for (let i = 0; same && i < matrices.length; i++) if (state.values[i] !== matrices[i]) same = false;
+            }
+            if (same) return;
+            original.call(this);
+            if (!state.pose || state.pose.length !== n * 32) state.pose = new Float64Array(n * 32);
+            if (!state.values || state.values.length !== matrices.length) state.values = new Float32Array(matrices.length);
+            for (let i = 0; i < n; i++) {
+                const world = this.bones[i]?.matrixWorld.elements;
+                for (let j = 0; j < 16; j++) state.pose[i * 32 + j] = world ? world[j] : (j % 5 === 0 ? 1 : 0);
+                state.pose.set(this.boneInverses[i].elements, i * 32 + 16);
+            }
+            state.values.set(matrices); state.matrices = matrices; state.texture = this.boneTexture; state.valid = true;
+        };
+    },
+    prepare(scene) {
+        scene.traverseVisible(object => { if (object.isSkinnedMesh) this.install(object.skeleton); });
+    }
+};
+
+/** A cleared shared target can be reused while a pass has nothing to draw. */
+Reactor3D.EmptyPass = {
+    enabled: true,
+    hasWork(scene, camera) {
+        if (scene.background || scene.onBeforeRender !== THREE.Object3D.prototype.onBeforeRender
+            || scene.onAfterRender !== THREE.Object3D.prototype.onAfterRender) return true;
+        const visit = object => {
+            if (!object.visible) return false;
+            if (object.layers.test(camera.layers)) {
+                if (object === Reactor3D.Shadows._sentinel) {
+                    if (Reactor3D.Shadows._pending) return true;
+                } else if (object.onBeforeRender !== THREE.Object3D.prototype.onBeforeRender
+                    || object.onAfterRender !== THREE.Object3D.prototype.onAfterRender) return true;
+                if (object.isSprite || object.isBatchedMesh) return true;
+                const g = object.geometry;
+                if (g && (g.index?.count || g.attributes?.position?.count) > 0 && g.drawRange.count !== 0) return true;
+            }
+            for (const child of object.children) if (visit(child)) return true;
+            return false;
+        };
+        return visit(scene);
+    },
+    render(viewport, target, scene, camera, draw) {
+        const renderer = viewport._renderer;
+        const cache = viewport._emptyPasses || (viewport._emptyPasses = new WeakSet());
+        const watched = viewport._emptyPassTargets || (viewport._emptyPassTargets = new WeakSet());
+        if (!watched.has(target)) {
+            watched.add(target);
+            target.addEventListener('dispose', () => cache.delete(target));
+        }
+        const empty = this.enabled && viewport._shared && renderer.autoClear && renderer.autoClearColor
+            && renderer.autoClearDepth && renderer.autoClearStencil
+            && renderer.getClearAlpha() === 0 && !this.hasWork(scene, camera);
+        if (empty && cache.has(target)) return;
+        cache.delete(target);
+        draw();
+        if (empty) cache.add(target);
+    }
+};
+
+/** The game, editor map and model previews use the same colour-draw path. */
+Reactor3D.renderScene = function(renderer, scene, camera) {
+    this.SkeletonUpdates.prepare(scene);
+    const detail = this.GeometryDetail;
+    if (!detail.enabled || detail._failed || this.tier() !== 'weak') return renderer.render(scene, camera);
+    const sceneAuto = scene.matrixWorldAutoUpdate, cameraAuto = camera.matrixWorldAutoUpdate;
+    const previous = detail._active;
+    let swaps = [];
+    try {
+        // Do the renderer's normal update before choosing an index level.
+        // Suppress its duplicate walk, then restore the caller's settings.
+        if (sceneAuto) { scene.updateMatrixWorld(); scene.matrixWorldAutoUpdate = false; }
+        if (camera.parent === null && cameraAuto) { camera.updateMatrixWorld(); camera.matrixWorldAutoUpdate = false; }
+        const target = renderer.getRenderTarget?.();
+        const height = target?.height || renderer.domElement?.height || 1080;
+        swaps = detail.begin(scene, camera, height);
+        detail._active = swaps;
+        return renderer.render(scene, camera);
+    } finally {
+        detail.end(swaps); detail._active = previous;
+        scene.matrixWorldAutoUpdate = sceneAuto; camera.matrixWorldAutoUpdate = cameraAuto;
+    }
+};
+
+
 Reactor3D.Viewport.prototype.renderInto = function(target, scene, camera) {
-    this._renderer.resetState();
-    this._renderer.setRenderTarget(target);
-    this._renderer.render(scene, camera);
-    this._renderer.setRenderTarget(null);
-    this._resetPixi();
+    Reactor3D.EmptyPass.render(this, target, scene, camera, () => {
+        this._renderer.resetState();
+        this._renderer.setRenderTarget(target);
+        try { Reactor3D.renderScene(this._renderer, scene, camera); }
+        finally { this._renderer.setRenderTarget(null); this._resetPixi(); }
+    });
 };
 
 /** The three.js renderer, for anything that has to upload a texture on the spot. */
@@ -1036,7 +1294,7 @@ Reactor3D.Viewport.prototype.render = function(slot) {
     if (!this._scene || !this._camera) return;
     this._renderCount = (this._renderCount || 0) + 1;
     if (!this._shared) {
-        this._renderer.render(this._scene, this._camera);
+        Reactor3D.renderScene(this._renderer, this._scene, this._camera);
         return;
     }
     this._trackFrame();
@@ -1105,6 +1363,8 @@ Reactor3D.Viewport.prototype.isDetached = function() {
 };
 
 Reactor3D.Viewport.prototype.destroy = function() {
+    Reactor3D.EffekseerScene?.stopScene(this._scene);
+    Reactor3D.GpuEffects?.release(Reactor3D.GpuEffects._runtime.get(this._renderer));
     if (this._shared) this._disposeTargets();
     if (this._renderer && Reactor3D.Shadows._renderer === this._renderer) Reactor3D.Shadows.dispose();
     if (this._renderer) {
@@ -5598,6 +5858,7 @@ Reactor3D.MapScene.prototype.build = function(mapData, bitmaps, options) {
         this._meshes.push(coreMesh);
         this._materials.push(opaqueCore);
 
+        Reactor3D.TransparentPixels.install(material);
         const mesh = new THREE.Mesh(geometry, material);
         // Two passes: the ground, and the part the 2D tilemap would have drawn
         // over the characters. They are separate groups so the renderer can
@@ -6135,6 +6396,9 @@ Reactor3D.MapScene.prototype.syncVolumeLights = function(declared, focus) {
     const fy = focus ? focus.y : 0;
     let count = 0;
     let bodyCount = 0;
+    // Bounds belong to this light update only: every beam sees the same pose,
+    // but the next update must see movement, animation and replaced models.
+    let beamBounds = null;
     for (const light of list) {
         const radius = light.radius > 0 ? light.radius : 0;
         if (!(radius > 0) || count >= max) continue;
@@ -6185,7 +6449,8 @@ Reactor3D.MapScene.prototype.syncVolumeLights = function(declared, focus) {
         let reach = radius;
         let hit = null;
         if (beam) {
-            const landed = Reactor3D.beamHit(light.x, light.y, y, ax, ay, az, radius, this);
+            const landed = Reactor3D.beamHit(light.x, light.y, y, ax, ay, az, radius, this,
+                beamBounds || (beamBounds = new Map()));
             if (landed !== null) {
                 reach = landed;
                 hit = { x: x + ax * reach, y: y + ay * reach, z: z + az * reach };
@@ -6242,6 +6507,7 @@ Reactor3D.MapScene.prototype.syncVolumeLights = function(declared, focus) {
         count++;
     }
     uniforms.rrLightCount.value = count;
+    Reactor3D.LightGrid.update(uniforms, focus);
     bodies.trim(bodyCount);
     Reactor3D.Shadows.setCandidates(candidates);
 };
@@ -6473,6 +6739,8 @@ Reactor3D.lightBodyMaterial = function() {
         depthWrite: false,
         depthTest: true,
         side: THREE.DoubleSide,
+        // Both faces contribute additively; one draw retains both surfaces.
+        forceSinglePass: true,
         fog: false
     });
 };
@@ -6506,12 +6774,14 @@ Reactor3D.beamBodyMaterial = function() {
 };
 
 Reactor3D.MapScene.prototype.clear = function() {
+    Reactor3D.EffekseerScene?.stopScene(this._scene);
     this._animated = [];
     this._frame = -1;
     this._facade = null;
     // Disposed with the rest below, since it is in `_meshes`; dropped by name
     // so a late-arriving load listener does not attach it to a cleared scene.
     this._parallaxGround = null;
+    this._destinationMarker = null;
     // Counted per build: a load listener taken out during one build must not
     // lay its quad into the next.
     this._build = (this._build || 0) + 1;
@@ -6556,6 +6826,58 @@ Reactor3D.MapScene.prototype.destroy = function() {
 // player is a matter of handing over its position rather than tracking a
 // separate camera object.
 
+/** Pick the nearest horizontal ground surface, including elevated tiles. */
+Reactor3D.groundTileFromRay = function(map, origin, direction) {
+    if (!map || Math.abs(direction.y) < 1e-8) return null;
+    const heights = new Set([0]);
+    for (const height of map.reactor3d?.elevation || []) if (Number.isFinite(height)) heights.add(height);
+    let nearest = Infinity, result = null;
+    for (const height of heights) {
+        const distance = (height - origin.y) / direction.y;
+        if (distance < 0 || distance >= nearest) continue;
+        const x = Math.floor(origin.x + direction.x * distance);
+        const y = Math.floor(origin.z + direction.z * distance);
+        if (x < 0 || y < 0 || x >= map.width || y >= map.height) continue;
+        if (Math.abs(Reactor3D.elevationAt(map, x, y) - height) > 1e-6) continue;
+        nearest = distance;
+        result = { x, y };
+    }
+    return result;
+};
+
+Reactor3D.screenToGroundTile = function(map, camera, x, y) {
+    camera.updateMatrixWorld();
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(new THREE.Vector2(x / Graphics.width * 2 - 1, 1 - y / Graphics.height * 2), camera);
+    return Reactor3D.groundTileFromRay(map, raycaster.ray.origin, raycaster.ray.direction);
+};
+
+Reactor3D.MapScene.prototype.updateDestination = function(temp, map, frame) {
+    if (!temp || !temp.isDestinationValid()) {
+        if (this._destinationMarker) this._destinationMarker.visible = false;
+        this._destinationStartFrame = frame;
+        return;
+    }
+    if (!this._destinationMarker) {
+        const material = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true,
+            opacity: 0.4, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1,
+            polygonOffsetUnits: -1, blending: THREE.AdditiveBlending });
+        const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), material);
+        mesh.rotation.x = -Math.PI / 2;
+        this.belowGroup().add(mesh);
+        this._meshes.push(mesh);
+        this._materials.push(material);
+        this._destinationMarker = mesh;
+        this._destinationStartFrame = frame;
+    }
+    const mesh = this._destinationMarker, x = temp.destinationX(), y = temp.destinationY();
+    const phase = ((frame - this._destinationStartFrame) % 20) / 20;
+    mesh.position.set(x + 0.5, Reactor3D.elevationAt(map, x, y) + 0.015, y + 0.5);
+    mesh.scale.setScalar(1 + phase);
+    mesh.material.opacity = (1 - phase) * 0.5;
+    mesh.visible = true;
+};
+
 Reactor3D.createCamera = function(settings) {
     const fov = (settings && settings.fov) || 30;
     const camera = new THREE.PerspectiveCamera(fov, 1, 0.1, 500);
@@ -6596,7 +6918,7 @@ Reactor3D.defaultCameraDistance = function(camera) {
 Reactor3D.aimCamera = function(camera, focus, settings) {
     if (!camera) return;
     const opts = settings || {};
-    const pitch = ((opts.pitch || 55) * Math.PI) / 180;
+    const pitch = ((opts.pitch ?? 55) * Math.PI) / 180;
     const yaw = ((opts.yaw || 0) * Math.PI) / 180;
     const distance = opts.distance || Reactor3D.defaultCameraDistance(camera);
 
@@ -6886,6 +7208,180 @@ Reactor3D.lightModeFor = function(mapData) {
  * written once a frame by `syncVolumeLights`; three uploads them per program.
  * Plain arrays rather than THREE vectors so they exist before three loads.
  */
+/**
+ * Conservative cells of light indices. This only rejects lights whose sphere,
+ * cone or beam cannot touch a cell; the fragment keeps the authored falloff and
+ * shadow calculation. Outside this small window the original loop is used.
+ * Packing stays synchronous: yesterday's mask would lose moving lights.
+ */
+Reactor3D.LightGrid = {
+    enabled: true,
+    size: [16, 8, 16],
+    step: 4,
+    ensure(uniforms) {
+        if (!uniforms.rrLightGrid) {
+            uniforms.rrLightGrid = { value: null };
+            uniforms.rrLightGridEnabled = { value: 0 };
+            uniforms.rrLightGridOrigin = { value: new Float32Array(3) };
+        }
+        if (!uniforms.rrLightGrid.value && typeof THREE !== "undefined" && THREE.Data3DTexture) {
+            const [nx, ny, nz] = this.size;
+            const texture = new THREE.Data3DTexture(new Uint32Array(nx * ny * nz), nx, ny, nz);
+            texture.format = THREE.RedIntegerFormat;
+            texture.type = THREE.UnsignedIntType;
+            texture.minFilter = texture.magFilter = THREE.NearestFilter;
+            texture.generateMipmaps = false;
+            texture.needsUpdate = true;
+            uniforms.rrLightGrid.value = texture;
+        }
+        return uniforms.rrLightGrid.value;
+    },
+    /** Pure array packer, also used by geometry/light-intersection regressions. */
+    fill(data, origin, count, pos, color, aim, slot = -1, cells = null) {
+        const [nx, ny, nz] = this.size, step = this.step, half = step / 2;
+        const cellRadius = Math.sqrt(3) * half;
+        if (data) data.fill(0);
+        if (cells) cells.length = 0;
+        const begin = slot < 0 ? 0 : slot, end = slot < 0 ? count : slot + 1;
+        for (let i = begin; i < end; i++) {
+            const a = i * 4, x = pos[a], y = pos[a + 1], z = pos[a + 2];
+            // Padding covers Float32 shader arithmetic at cell/cone boundaries.
+            const pad = 0.002 + (Math.abs(x) + Math.abs(y) + Math.abs(z) + Math.abs(pos[a + 3])) * 0.000002;
+            const radius = Math.max(pos[a + 3], 0.001) + pad;
+            const r2 = radius * radius, sr = cellRadius + pad, bit = (1 << i) >>> 0;
+            const x0 = Math.max(0, Math.floor((x - radius - origin[0]) / step));
+            const x1 = Math.min(nx - 1, Math.floor((x + radius - origin[0]) / step));
+            const y0 = Math.max(0, Math.floor((y - radius - origin[1]) / step));
+            const y1 = Math.min(ny - 1, Math.floor((y + radius - origin[1]) / step));
+            const z0 = Math.max(0, Math.floor((z - radius - origin[2]) / step));
+            const z1 = Math.min(nz - 1, Math.floor((z + radius - origin[2]) / step));
+            const kind = color[a + 3], ax = aim[a], ay = aim[a + 1], az = aim[a + 2];
+            const length = Math.hypot(ax, ay, az);
+            const shaped = kind > 0.5 && Math.abs(length - 1) < 0.0001;
+            const cosine = aim[a + 3] / length;
+            const sine = Math.sqrt(Math.max(0, 1 - cosine * cosine));
+            for (let iz = z0; iz <= z1; iz++) {
+                const dz = origin[2] + (iz + 0.5) * step - z;
+                const bz = Math.max(Math.abs(dz) - half, 0);
+                for (let iy = y0; iy <= y1; iy++) {
+                    const dy = origin[1] + (iy + 0.5) * step - y;
+                    const by = Math.max(Math.abs(dy) - half, 0), yz2 = by * by + bz * bz;
+                    if (yz2 > r2) continue;
+                    const row = (iz * ny + iy) * nx;
+                    for (let ix = x0; ix <= x1; ix++) {
+                        const dx = origin[0] + (ix + 0.5) * step - x;
+                        const bx = Math.max(Math.abs(dx) - half, 0);
+                        if (bx * bx + yz2 > r2) continue;
+                        if (shaped) {
+                            const along = (dx * ax + dy * ay + dz * az) / length;
+                            const perp = Math.sqrt(Math.max(0, dx * dx + dy * dy + dz * dz - along * along));
+                            if (kind > 1.5) {
+                                // A tiny aim-length error must not narrow the shader's beam.
+                                const beamPad = sr + radius * Math.abs(length - 1) * 2;
+                                if (along + beamPad < 0 || along - beamPad > radius || perp - beamPad > aim[a + 3]) continue;
+                            } else if (cosine > 0 && cosine < 1 && perp * cosine - along * sine > sr) continue;
+                        }
+                        if (cells) cells.push(row + ix);
+                        else data[row + ix] |= bit;
+                    }
+                }
+            }
+        }
+    },
+    update(uniforms, focus) {
+        if (this.cacheEnabled) return this.updateCached(uniforms, focus);
+        const texture = this.ensure(uniforms);
+        if (texture) this._cells.delete(texture);
+        uniforms.rrLightGridEnabled.value = 0;
+        const count = uniforms.rrLightCount.value;
+        if (!this.enabled || !texture || count < 8) return;
+        const origin = uniforms.rrLightGridOrigin.value;
+        origin[0] = Math.floor(((focus?.x || 0) - 32) / 8) * 8;
+        origin[1] = Math.floor(((focus?.groundY || 0) - 4) / 8) * 8;
+        origin[2] = Math.floor(((focus?.y || 0) - 32) / 8) * 8;
+        this.fill(texture.image.data, origin, count, uniforms.rrLightPos.value, uniforms.rrLightColor.value, uniforms.rrLightAim.value);
+        texture.needsUpdate = true;
+        uniforms.rrLightGridEnabled.value = 1;
+    },
+    glsl(source) {
+        return "uniform highp usampler3D rrLightGrid;\nuniform int rrLightGridEnabled;\nuniform vec3 rrLightGridOrigin;\n" + source
+            .replace("vec3 sum = rrAmbient;", "vec3 sum = rrAmbient;\n"
+                + "\tivec3 cell = ivec3(floor((p - rrLightGridOrigin) * 0.25));\n"
+                + "\tbool grid = rrLightGridEnabled != 0 && all(greaterThanEqual(cell, ivec3(0))) && all(lessThan(cell, ivec3(16, 8, 16)));\n"
+                + "\tuint mask = grid ? texelFetch(rrLightGrid, cell, 0).r : 0u;\n")
+            .replace("for (int i = 0; i < 32; i++) {\n\t\tif (i >= rrLightCount) break;",
+                "for (int j = 0; j < 32; j++) {\n\t\tint i = j;\n"
+                + "\t\tif (grid) {\n\t\t\tif (mask == 0u) break;\n"
+                // A power of two is represented exactly, including bit 31.
+                // log2 avoids scanning all the zero bits between nearby lights.
+                + "\t\t\tuint bit = mask & (~mask + 1u);\n"
+                + "\t\t\ti = int(log2(float(bit)) + 0.5);\n\t\t\tmask ^= bit;\n\t\t}\n"
+                + "\t\tif (i >= rrLightCount) break;");
+    }
+};
+
+
+
+/** Repack only lights whose exact intersection inputs changed. */
+Reactor3D.LightGrid.cacheEnabled = true;
+Reactor3D.LightGrid._cells = new WeakMap();
+/** Update only cells entered or left by a light; intersection maths is shared with fill(). */
+Reactor3D.LightGrid.updateCached = function(uniforms, focus) {
+    const texture = this.ensure(uniforms), count = uniforms.rrLightCount.value;
+    uniforms.rrLightGridEnabled.value = 0;
+    if (!this.enabled || !texture || count < 8) { if (texture) this._cells.delete(texture); return; }
+    const origin = uniforms.rrLightGridOrigin.value;
+    origin[0] = Math.floor(((focus?.x || 0) - 32) / 8) * 8;
+    origin[1] = Math.floor(((focus?.groundY || 0) - 4) / 8) * 8;
+    origin[2] = Math.floor(((focus?.y || 0) - 32) / 8) * 8;
+    const data = texture.image.data, pos = uniforms.rrLightPos.value, color = uniforms.rrLightColor.value, aim = uniforms.rrLightAim.value;
+    let state = this._cells.get(texture), changed = false;
+    if (!state || !state.cellLists || state.data !== data || state.step !== this.step
+        || state.size.some((value, i) => value !== this.size[i]) || state.origin.some((value, i) => value !== origin[i])) {
+        state = { cellLists: true, data, origin: origin.slice(), step: this.step, size: this.size.slice(), entries: [], scratch: [], generation: 0, mask: new Uint32Array(data.length), dirty: [] };
+        this._cells.set(texture, state); data.fill(0); changed = true;
+    }
+    const dirty = state.dirty; dirty.length = 0;
+    for (let i = 0; i < count; i++) {
+        const at = i * 4;
+        let entry = state.entries[i], key = entry?.key;
+        if (key && key[0] === pos[at] && key[1] === pos[at+1] && key[2] === pos[at+2] && key[3] === pos[at+3]
+            && key[4] === color[at+3] && key[5] === aim[at] && key[6] === aim[at+1] && key[7] === aim[at+2] && key[8] === aim[at+3]) continue;
+        if (!entry) { entry = state.entries[i] = { key: new Float64Array(9), cells: [], generation: state.generation }; key = entry.key; }
+        key[0] = pos[at]; key[1] = pos[at+1]; key[2] = pos[at+2]; key[3] = pos[at+3]; key[4] = color[at+3];
+        key[5] = aim[at]; key[6] = aim[at+1]; key[7] = aim[at+2]; key[8] = aim[at+3];
+        dirty.push(i);
+    }
+    if (dirty.length > count * 0.75) {
+        this.fill(state.mask, origin, count, pos, color, aim);
+        for (let cell = 0; cell < data.length; cell++) if (data[cell] !== state.mask[cell]) { data[cell] = state.mask[cell]; changed = true; }
+        state.generation++;
+    } else for (const i of dirty) {
+        const entry = state.entries[i], cells = state.scratch, previous = entry.cells, bit = 1 << i;
+        // After a bulk rebuild, reconstruct only a changed light's old cells.
+        if (entry.generation !== state.generation) {
+            previous.length = 0;
+            for (let cell = 0; cell < data.length; cell++) if (data[cell] & bit) previous.push(cell);
+            entry.generation = state.generation;
+        }
+        this.fill(null, origin, count, pos, color, aim, i, cells);
+        let same = cells.length === previous.length;
+        for (let j = 0; same && j < cells.length; j++) if (cells[j] !== previous[j]) same = false;
+        if (same) continue;
+        for (const cell of previous) data[cell] &= ~bit;
+        for (const cell of cells) data[cell] |= bit;
+        entry.cells = cells; state.scratch = previous; changed = true;
+    }
+    if (count < state.entries.length) {
+        const valid = count === 32 ? 0xffffffff : (1 << count) - 1;
+        for (let cell = 0; cell < data.length; cell++) { const value = (data[cell] & valid) >>> 0; if (data[cell] !== value) { data[cell] = value; changed = true; } }
+    }
+    state.entries.length = count;
+    if (changed) texture.needsUpdate = true;
+    uniforms.rrLightGridEnabled.value = 1;
+};
+
+
 Reactor3D.lightUniforms = function() {
     if (this._lightUniforms) return this._lightUniforms;
     const n = this.SHADER_LIGHTS;
@@ -7000,6 +7496,9 @@ Reactor3D.lightGlsl = function(shadows, taps) {
         "\t\tif (i >= rrLightCount) break;",
         "\t\tvec4 lp = rrLightPos[i];",
         "\t\tvec3 d = p - lp.xyz;",
+        // Outside the enclosing cube the spherical falloff is already zero.
+        // Reject there before length/division; retain the exact falloff inside.
+        "\t\tif (max(max(abs(d.x), abs(d.y)), abs(d.z)) >= max(lp.w, 0.001)) continue;",
         "\t\tfloat dist = length(d);",
         // The same falloff the flat pool's picture carries: (1 - d/r)^2.
         "\t\tfloat fall = 1.0 - dist / max(lp.w, 0.001);",
@@ -7046,11 +7545,12 @@ Reactor3D.LIGHT_GLSL = Reactor3D.lightGlsl(false);
  * facades, no view culling. What a preview outside a MapScene needs — the
  * 3D database lights a model with the game's own shader this way. Lights
  * are placed by the scene packer's rule (x + 0.5, ground + height, y + 1),
- * with `groundY` absolute. Returns how many were packed; the caller keeps
- * the previous ambient and count if it means to put them back.
+ * with `groundY` absolute. An optional private uniform set lets retained
+ * previews pack lights without changing another viewport. Returns how many
+ * were packed; shared-uniform callers restore their previous state as needed.
  */
-Reactor3D.packLightUniforms = function(lights, ambient) {
-    const uniforms = this.lightUniforms();
+Reactor3D.packLightUniforms = function(lights, ambient, uniforms = this.lightUniforms()) {
+    if (uniforms.rrLightGridEnabled) uniforms.rrLightGridEnabled.value = 0;
     const pos = uniforms.rrLightPos.value;
     const col = uniforms.rrLightColor.value;
     const aim = uniforms.rrLightAim.value;
@@ -7097,6 +7597,7 @@ Reactor3D.packLightUniforms = function(lights, ambient) {
 
 Reactor3D.injectLightShader = function(shader, renderer) {
     const uniforms = this.lightUniforms();
+    this.LightGrid.ensure(uniforms);
     for (const key of Object.keys(uniforms)) shader.uniforms[key] = uniforms[key];
     // After projection, where `transformed` is final: skinned, billboarded,
     // or plain. (Anchored on the include, which every three material has;
@@ -7113,7 +7614,7 @@ Reactor3D.injectLightShader = function(shader, renderer) {
     // same texture object uploads it afresh as an empty colour cube, which a
     // shadow sampler cannot be bound to, and every draw there is dropped.
     const shadows = this.Shadows.appliesTo(renderer);
-    shader.fragmentShader = (shadows ? this.lightGlsl(true, this.Shadows.quality().taps) : this.LIGHT_GLSL)
+    shader.fragmentShader = this.LightGrid.glsl(shadows ? this.lightGlsl(true, this.Shadows.quality().taps) : this.LIGHT_GLSL)
         + shader.fragmentShader.replace(
             "vec4 diffuseColor = vec4( diffuse, opacity );",
             "vec4 diffuseColor = vec4( diffuse * rrLight(vRRWorldPos), opacity );"
@@ -7127,6 +7628,33 @@ Reactor3D.injectLightShader = function(shader, renderer) {
  * unlit one. A lit material's `color` stays its base colour: ambient reaches
  * it through the uniform, not through `syncLights`'s multiply.
  */
+/** Zero-alpha blended tile pixels cannot affect colour or depth. */
+Reactor3D.TransparentPixels = {
+    enabled: true,
+    install(material) {
+        if (!material || material.__rrInvisiblePixels) return material;
+        const flag = { value: 0 };
+        material.__rrInvisiblePixels = flag;
+        const compile = material.onBeforeCompile, key = material.customProgramCacheKey;
+        const before = material.onBeforeRender;
+        material.onBeforeRender = function(...args) {
+            before.apply(this, args);
+            flag.value = Reactor3D.TransparentPixels.enabled && this.transparent && !this.depthWrite
+                && !this.stencilWrite && !this.alphaToCoverage && this.blending === THREE.NormalBlending ? 1 : 0;
+        };
+        material.onBeforeCompile = function(shader, renderer) {
+            compile.call(this, shader, renderer);
+            shader.uniforms.rrInvisiblePixels = flag;
+            shader.fragmentShader = 'uniform int rrInvisiblePixels;\n' + shader.fragmentShader.replace(
+                '#include <alphatest_fragment>',
+                '#include <alphatest_fragment>\nif (rrInvisiblePixels != 0 && diffuseColor.a == 0.0) discard;');
+        };
+        material.customProgramCacheKey = function() { return key.call(this) + '|invisible-pixels'; };
+        material.needsUpdate = true;
+        return material;
+    }
+};
+
 Reactor3D.litMaterial = function(material) {
     if (!material || material.__reactorLit) return material;
     material.__reactorLit = true;
@@ -8053,6 +8581,10 @@ Reactor3D.Shadows = {
 
     /** Static casters at their coarsest level for the duration of `fn`. */
     _atCoarsestLod(fn) {
+        return Reactor3D.GeometryDetail.withOriginal(() => this._atAuthoredCoarsestLod(fn));
+    },
+
+    _atAuthoredCoarsestLod(fn) {
         const swapped = [];
         const cache = Reactor3D._lodCache;
         if (cache) {
@@ -8371,7 +8903,29 @@ Reactor3D.Shadows = {
         }
     },
 
+    rowClearEnabled: true,
     _renderFaces(renderer, scene, target, size, row, origin, camera, mask) {
+        if (!this.rowClearEnabled) return this._renderFacesOriginal(renderer, scene, target, size, row, origin, camera, mask);
+        target.viewport.set(0, row * size, size * 6, size);
+        target.scissor.copy(target.viewport);
+        target.scissorTest = true;
+        renderer.setRenderTarget(target);
+        // Disjoint faces share one depth clear; excluded faces still become empty.
+        renderer.clear(false, true, false);
+        for (let face = 0; face < 6; face++) {
+            if (!(mask & (1 << face))) continue;
+            target.viewport.set(face * size, row * size, size, size);
+            target.scissor.copy(target.viewport);
+            renderer.setRenderTarget(target);
+            const spec = Reactor3D.SHADOW_FACES[face];
+            camera.up.set(spec.up[0], spec.up[1], spec.up[2]);
+            camera.lookAt(origin.x + spec.dir[0], origin.y + spec.dir[1], origin.z + spec.dir[2]);
+            camera.updateMatrixWorld(true);
+            renderer.render(scene, camera);
+        }
+    },
+
+    _renderFacesOriginal(renderer, scene, target, size, row, origin, camera, mask) {
         for (let face = 0; face < 6; face++) {
             target.viewport.set(face * size, row * size, size, size);
             target.scissor.set(face * size, row * size, size, size);
@@ -8394,6 +8948,10 @@ Reactor3D.Shadows = {
      * shadow sampler bound to no depth texture fails the draw outright.
      */
     _flush() {
+        return Reactor3D.GeometryDetail.withOriginal(() => this._flushOriginal());
+    },
+
+    _flushOriginal() {
         const pending = this._pending;
         if (!pending) return;
         this._pending = null;
@@ -8675,7 +9233,7 @@ Reactor3D.lightSegmentBlocked = function(x0, y0, h0, x1, y1, h1) {
  * the world height the beam leaves from, `length` its reach.
  */
 Reactor3D.BEAM_MARCH_STEP = 1 / 6;
-Reactor3D.beamHit = function(x, y, h, ax, ay, az, length, scene) {
+Reactor3D.beamHit = function(x, y, h, ax, ay, az, length, scene, bounds) {
     let best = null;
     const step = this.BEAM_MARCH_STEP;
     for (let d = step; d <= length; d += step) {
@@ -8692,9 +9250,14 @@ Reactor3D.beamHit = function(x, y, h, ax, ay, az, length, scene) {
         for (const holder of instances.values()) {
             const object = holder && holder.object;
             if (!object || !object.visible) continue;
-            box.setFromObject(object);
-            if (box.isEmpty() || box.containsPoint(ray.origin)) continue;
-            if (!ray.intersectBox(box, hit)) continue;
+            let worldBox = bounds && bounds.get(object);
+            if (!worldBox) {
+                worldBox = bounds ? new THREE.Box3() : box;
+                worldBox.setFromObject(object);
+                if (bounds) bounds.set(object, worldBox);
+            }
+            if (worldBox.isEmpty() || worldBox.containsPoint(ray.origin)) continue;
+            if (!ray.intersectBox(worldBox, hit)) continue;
             const d = hit.distanceTo(ray.origin);
             if (d > 0.05 && d < length && (best === null || d < best)) best = d;
         }
@@ -13084,6 +13647,7 @@ Reactor3D.prepareModelInstance = function(object, clips) {
     object.add(inner);
     const meshes = [];
     inner.traverse(child => {
+        if (child.isSkinnedMesh) Reactor3D.SkeletonUpdates.install(child.skeleton);
         // Rig bones register as parts too: rotating a bone's local
         // transform about its own origin is bone FK, and the bone
         // hierarchy carries parent motion to children on its own.
@@ -13448,7 +14012,7 @@ Reactor3D.applyModelAnimation = function(binding, rules, state) {
             const rule = clipRules.find(r => r.trigger === "action" && r.name === state.action.name);
             if (rule) {
                 desired = rule.clip;
-                once = true;
+                once = !rule.repeat;
                 key = rule.clip + ":" + state.action.frame;
                 rate = rule.rate || 1;
             }
@@ -13519,7 +14083,18 @@ Reactor3D.applyModelAnimation = function(binding, rules, state) {
             ? 1
             : Math.max(0, Math.min(10 * Math.max(1, state.playbackRate || 1), state.frame - binding.clipFrame));
         binding.clipFrame = state.frame;
-        binding.mixer.update(step / 60);
+        if (state.seek) {
+            // Timeline scrubbing samples an exact pose, including backwards
+            // seeks. Runtime playback keeps its normal crossfades below.
+            binding.mixer.stopAllAction();
+            const action = binding.clipAction;
+            if (action) {
+                const elapsed = Math.max(0, (state.frame - (state.action?.frame || 0)) / 60 * rate);
+                action.reset().setEffectiveWeight(1).play();
+                action.time = once ? Math.min(elapsed, action.getClip().duration) : elapsed % Math.max(.001, action.getClip().duration);
+            }
+            binding.mixer.update(0);
+        } else binding.mixer.update(step / 60);
     }
     const scratch = pool.scratch;
     const outPos = pool.outPos;
@@ -13719,16 +14294,13 @@ Reactor3D.updateEnemyModelSprite = function(sprite) {
         return;
     }
     if (!state.ready) return;
-    const spriteset = typeof SceneManager !== "undefined" && SceneManager._scene?._spriteset;
-    if (spriteset) {
-        if (!spriteset._reactorFlatModelInstances) spriteset._reactorFlatModelInstances = new Map();
-        spriteset._reactorFlatModelInstances.set(this.modelInstanceKey(character), state);
-    }
-    this.resumeModelPlayback(state, character, this.currentFrame());
-    sprite._reactorSortY = this.flatModelSortY(character);
     if (sprite.bitmap !== state.bitmap) {
         sprite.bitmap = state.bitmap;
     }
+    // Plugin battlers may crop every bitmap as a character sheet. A model
+    // texture is one complete frame; preserve only the stock collapse crop.
+    sprite.setFrame(0, 0, state.size, sprite._effectType === "bossCollapse"
+        ? Math.max(0, Math.min(state.size, sprite._effectDuration)) : state.size);
     state.frame++;
     const pending = this._modelActions && this._modelActions["b" + enemyId];
     if (pending) {
@@ -14471,8 +15043,10 @@ Reactor3D.readEffectLight = function(raw) {
  */
 Reactor3D.effectLight = function(object, effect, key) {
     if (!object || !effect || !effect.light || typeof THREE === "undefined") return null;
-    const world = this.effectAnchorWorld(object, effect, this._fxLightScratch || (this._fxLightScratch = new THREE.Vector3()));
-    if (!world) return null;
+    const transform = this.effectAnchorTransform(object, effect, this._fxLightTransform, effect.light.type !== this.LIGHT_POINT);
+    if (!transform) return null;
+    this._fxLightTransform = transform;
+    const world = transform.world;
     const spec = effect.light;
     // Reach and width were authored on the model as the database shows it
     // — longest side EFFECT_PREVIEW_SPAN tiles — and scale with the
@@ -14483,7 +15057,7 @@ Reactor3D.effectLight = function(object, effect, key) {
     const span = extent ? Math.max(extent.x || 0, extent.y || 0, extent.z || 0) : 0;
     let grow = 1;
     if (span > 0) {
-        const worldScale = object.getWorldScale(this._fxLightScale || (this._fxLightScale = new THREE.Vector3())).x;
+        const worldScale = transform.scale.x;
         const size = worldScale * span / this.EFFECT_PREVIEW_SPAN;
         if (size > 0) grow = size;
     }
@@ -14496,8 +15070,8 @@ Reactor3D.effectLight = function(object, effect, key) {
         // turns with the turret and a light on a head nods with the head. A
         // bone's own axes never enter it: they point wherever the rig's
         // author left them, which is nowhere an author can reason about.
-        const turn = object.getWorldQuaternion(this._fxLightQuat || (this._fxLightQuat = new THREE.Quaternion()));
-        const pose = this.effectAnchorQuaternion(object, effect, this._fxLightPose || (this._fxLightPose = new THREE.Quaternion()));
+        const turn = transform.turn;
+        const pose = transform.pose;
         const y = (spec.yaw * Math.PI) / 180;
         const p = (spec.pitch * Math.PI) / 180;
         const aim = (this._fxLightAim || (this._fxLightAim = new THREE.Vector3()))
@@ -14576,10 +15150,39 @@ Reactor3D.effectAnchorQuaternion = function(object, effect, out) {
     const part = object
         ? this.effectAnchorNode(object, effect && effect.anchor ? effect.anchor.part : "") : null;
     if (!part || !part.userData.__restQuaternion || !part.parent) return target;
-    const world = part.getWorldQuaternion(new THREE.Quaternion());
-    const rest = part.parent.getWorldQuaternion(new THREE.Quaternion())
-        .multiply(part.userData.__restQuaternion);
-    return target.copy(world).multiply(rest.invert());
+    // Refresh the part and its ancestors once. getWorldQuaternion on the
+    // parent would walk the same chain a second time. Keep Three's matrix
+    // decomposition so scaled parents retain the existing rotation result.
+    part.updateWorldMatrix(true, false);
+    const scratch = this._effectQuaternionScratch || (this._effectQuaternionScratch = {
+        position: new THREE.Vector3(), scale: new THREE.Vector3(), rest: new THREE.Quaternion()
+    });
+    part.matrixWorld.decompose(scratch.position, target, scratch.scale);
+    part.parent.matrixWorld.decompose(scratch.position, scratch.rest, scratch.scale);
+    scratch.rest.multiply(part.userData.__restQuaternion);
+    return target.multiply(scratch.rest.invert());
+};
+
+/** Resolve one fresh attachment frame for position, scale and rotation together. */
+Reactor3D.effectAnchorTransform = function(object, effect, out, wantPose = true) {
+    if (!object || typeof THREE === 'undefined') return null;
+    const result = out || { world: new THREE.Vector3(), scale: new THREE.Vector3(),
+        turn: new THREE.Quaternion(), pose: new THREE.Quaternion(),
+        position: new THREE.Vector3(), scratchScale: new THREE.Vector3(), rest: new THREE.Quaternion() };
+    const part = this.effectAnchorNode(object, effect?.anchor?.part || '');
+    const node = part || object;
+    node.updateWorldMatrix(true, false);
+    const offset = effect?.anchor?.offset || [0, 0, 0];
+    result.world.set(offset[0] || 0, offset[1] || 0, offset[2] || 0).applyMatrix4(node.matrixWorld);
+    object.matrixWorld.decompose(result.position, result.turn, result.scale);
+    result.pose.identity();
+    if (wantPose && part?.userData.__restQuaternion && part.parent) {
+        part.matrixWorld.decompose(result.position, result.pose, result.scratchScale);
+        part.parent.matrixWorld.decompose(result.position, result.rest, result.scratchScale);
+        result.rest.multiply(part.userData.__restQuaternion);
+        result.pose.multiply(result.rest.invert());
+    }
+    return result;
 };
 
 Reactor3D.effectAnchorWorld = function(object, effect, out) {
@@ -14601,6 +15204,10 @@ Reactor3D.readModelLandmarks = function(json) {
         if (!point || !Array.isArray(point.offset) || point.offset.length !== 3
             || !point.offset.every(value => typeof value === "number" && Number.isFinite(value))) continue;
         points[name] = { part: typeof point.part === "string" ? point.part : "", offset: point.offset.slice() };
+        if (name === "mouth") {
+            if (point.interior === "none" || point.interior === "dark") points[name].interior = point.interior;
+            if (typeof point.interiorColor === "string" && /^#[0-9a-f]{6}$/i.test(point.interiorColor)) points[name].interiorColor = point.interiorColor;
+        }
     }
     return points;
 };
@@ -14632,7 +15239,13 @@ Reactor3D.bindModelLandmarks = function(object, points) {
     // Rest-space landmarks and mesh transforms are captured once for optional
     // procedural lip morphs; animated vertices are never scanned per frame.
     const rest = object.__reactorLandmarkRest = { points: {}, meshes: [] };
-    object.updateWorldMatrix(true, true);
+    rest.interior = points?.mouth?.interior === "none" ? "none" : "dark";
+    rest.interiorColor = /^#[0-9a-f]{6}$/i.test(points?.mouth?.interiorColor || "") ? points.mouth.interiorColor : "#080808";
+    object.updateWorldMatrix(true, false);
+    // SkinnedMesh refreshes bindMatrixInverse in updateMatrixWorld, not
+    // updateWorldMatrix. A freshly cloned/import-scaled mesh otherwise keeps
+    // its old inverse until the first render and speech samples the wrong size.
+    object.updateMatrixWorld(true);
     const inverse = new THREE.Matrix4().copy(object.matrixWorld).invert();
     for (const name of Object.keys(bound)) {
         const point = this.modelLandmarkWorld(object, name, new THREE.Vector3());
@@ -14919,7 +15532,7 @@ Reactor3D.videoEffectId = function(character, effect) {
 };
 
 Reactor3D.spawnVideoEffect = function(effect, character, holder) {
-    const surfaces = typeof RPGReactorVideoSurfaces !== "undefined" ? RPGReactorVideoSurfaces : null;
+    const surfaces = typeof RPGReactorMediaSurfaces !== "undefined" ? RPGReactorMediaSurfaces : null;
     if (!surfaces || !surfaces.manager || !character || !character.eventId && !(typeof Game_Player !== "undefined" && character instanceof Game_Player)) return;
     const video = effect.video;
     const id = this.videoEffectId(character, effect);
@@ -14947,7 +15560,7 @@ Reactor3D.spawnVideoEffect = function(effect, character, holder) {
 };
 
 Reactor3D.stopVideoEffect = function(effect, character, holder) {
-    const surfaces = typeof RPGReactorVideoSurfaces !== "undefined" ? RPGReactorVideoSurfaces : null;
+    const surfaces = typeof RPGReactorMediaSurfaces !== "undefined" ? RPGReactorMediaSurfaces : null;
     if (!surfaces || !surfaces.manager) return;
     const id = holder && holder.videos && holder.videos[effect.name];
     if (id) {
@@ -14981,7 +15594,11 @@ Reactor3D.spawnAnchoredAnimation = function(effect, character, holder) {
     // entry of the spriteset's own list.
     const list = spriteset._animationSprites || [];
     const count = list.length;
-    spriteset.createAnimationSprite([character], animation, false, 0);
+    const previousContext = this._spawningEffectContext;
+    try {
+        this._spawningEffectContext = animation.effectName ? this.GpuEffects.forViewport(spriteset._reactor3d?.viewport) : null;
+        spriteset.createAnimationSprite([character], animation, false, 0);
+    } finally { this._spawningEffectContext = previousContext; }
     const sprite = list.length > count ? list[list.length - 1] : null;
     if (!sprite) {
         spriteset._effectsContainer.removeChild(standIn);
@@ -15083,6 +15700,295 @@ Reactor3D.MAX_ANCHORED_PER_MODEL = 8;
  * screen of pixels. The sprite itself stays hidden and keeps the record's
  * sound and flash timings and its lifetime.
  */
+/** Attached effects stay on the view's GPU; normal screen effects retain their overlay. */
+Reactor3D.GpuEffects = {
+    enabled: true,
+    _runtime: new Map(),
+    _reads: new Set(),
+    restoreDefault() {
+        if (typeof Graphics !== 'undefined') Graphics.effekseer?._makeContextCurrent?.();
+    },
+    create(renderer, samples) {
+        if (!this.enabled || !renderer || typeof effekseer === 'undefined') return null;
+        const gl = renderer.getContext();
+        if (!gl || typeof gl.fenceSync !== 'function' || gl.isContextLost()) return null;
+        // Match the original context's antialiasing, including a device that supplies none.
+        samples = Math.max(0, samples || 0);
+        if (samples && !Array.from(gl.getInternalformatParameter(gl.RENDERBUFFER, gl.RGBA8, gl.SAMPLES)).includes(samples)) return null;
+        let context;
+        try {
+            renderer.resetState();
+            context = effekseer.createContext();
+            context.init(gl);
+            // This pass owns GL until it invalidates Three/PIXI's caches below.
+            context.setRestorationOfStatesFlag(false);
+            return { renderer, gl, context, samples, cache: new Map(), targets: new Set(), disposed: false, loading: 0 };
+        } catch (error) {
+            if (context) { try { context._makeContextCurrent(); effekseer.releaseContext(context); } catch (_) {} }
+            return null;
+        } finally { this.restoreDefault(); renderer.resetState(); }
+    },
+    forViewport(viewport) {
+        if (!this.enabled || !viewport?._shared) return null;
+        const renderer = viewport.renderer();
+        let entry = this._runtime.get(renderer);
+        if (entry) return entry.disposed ? null : entry;
+        const gl = Graphics._effekseerGL;
+        entry = this.create(renderer, gl.getParameter(gl.SAMPLES));
+        if (entry) { entry.viewport = viewport; this._runtime.set(renderer, entry); }
+        viewport._resetPixi();
+        return entry;
+    },
+    load(entry, name) {
+        if (!name || entry.disposed) return null;
+        if (entry.cache.has(name)) return entry.cache.get(name);
+        entry.loading++;
+        try {
+            entry.context._makeContextCurrent();
+            const url = EffectManager.makeUrl(name);
+            const effect = entry.context.loadEffect(url, 1, () => this.loaded(entry), () => {
+                const cancelled = entry.disposed; this.loaded(entry); if (!cancelled) EffectManager.onError(url);
+            });
+            entry.cache.set(name, effect);
+            return effect;
+        } catch (error) { this.loaded(entry); throw error; }
+        finally { this.restoreDefault(); }
+    },
+    loaded(entry) {
+        entry.loading = Math.max(0, entry.loading - 1);
+        if (entry.disposed && !entry.loading) this.releaseContext(entry);
+        this.restoreDefault();
+    },
+    update() {
+        try {
+            for (const entry of this._runtime.values()) {
+                if (!entry.disposed && !entry.gl.isContextLost()) { entry.context._makeContextCurrent(); entry.context.update(); }
+            }
+        } finally { this.restoreDefault(); }
+    },
+    release(entry) {
+        if (!entry || entry.disposed) return;
+        entry.disposed = true;
+        if (this._runtime.get(entry.renderer) === entry) this._runtime.delete(entry.renderer);
+        for (const read of Array.from(this._reads)) if (read.entry === entry) read.cancel();
+        for (const target of entry.targets) target.dispose();
+        entry.targets.clear();
+        entry.colourMaterial?.dispose(); entry.colourMesh?.geometry.dispose();
+        entry.cache.clear();
+        // Native image callbacks finish their reload before invoking loaded(); keep
+        // the native context alive until then rather than reloading a freed pointer.
+        if (!entry.loading) this.releaseContext(entry);
+    },
+    releaseContext(entry) {
+        if (entry.released) return; entry.released = true;
+        try { entry.context._makeContextCurrent(); effekseer.releaseContext(entry.context); }
+        finally { this.restoreDefault(); entry.renderer.resetState(); }
+    },
+    target(entry, holder, width, height, colour = false) {
+        const key = colour ? '_gpuColourTarget' : '_gpuEffectTarget';
+        let target = holder[key];
+        if (!target) {
+            target = holder[key] = new THREE.WebGLRenderTarget(width, height, {
+                minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: !colour,
+                stencilBuffer: false, generateMipmaps: false, samples: colour ? 0 : entry.samples
+            });
+            if (colour) target.texture.colorSpace = THREE.SRGBColorSpace;
+            entry.targets.add(target);
+            target.addEventListener('dispose', () => entry.targets.delete(target));
+        } else if (target.width !== width || target.height !== height) {
+            target.setSize(width, height);
+            entry.targets.add(target);
+        }
+        return target;
+    },
+    draw(entry, holder, width, height, box, projection, view, handle, premultiplied = false) {
+        if (entry.disposed || entry.gl.isContextLost()) return null;
+        const renderer = entry.renderer, gl = entry.gl, context = entry.context;
+        const previous = renderer.getRenderTarget(), target = this.target(entry, holder, width, height);
+        try {
+            renderer.resetState(); renderer.setRenderTarget(target);
+            for (const flag of [gl.STENCIL_TEST, gl.RASTERIZER_DISCARD, gl.SAMPLE_ALPHA_TO_COVERAGE, gl.SAMPLE_COVERAGE]) gl.disable(flag);
+            gl.colorMask(true, true, true, true); gl.depthMask(true); gl.clearDepth(1);
+            gl.viewport(box.x, box.y, box.width, box.height);
+            gl.enable(gl.SCISSOR_TEST); gl.scissor(0, 0, width, height);
+            gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+            context._makeContextCurrent(); context.setProjectionMatrix(projection); context.setCameraMatrix(view);
+            context.beginDraw(); if (handle?.exists) context.drawHandle(handle); context.endDraw();
+            gl.disable(gl.SCISSOR_TEST);
+            if (target.samples) {
+                const props = renderer.properties.get(target);
+                gl.bindFramebuffer(gl.READ_FRAMEBUFFER, props.__webglMultisampledFramebuffer);
+                gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, props.__webglFramebuffer);
+                gl.blitFramebuffer(0, 0, width, height, 0, 0, width, height, gl.COLOR_BUFFER_BIT, gl.NEAREST);
+            }
+            return this.convert(entry, holder, target, premultiplied);
+        } finally {
+            renderer.resetState(); renderer.setRenderTarget(previous);
+            entry.viewport?._resetPixi(); this.restoreDefault();
+        }
+    },
+    convert(entry, holder, source, premultiplied) {
+        const renderer = entry.renderer;
+        const target = this.target(entry, holder, source.width, source.height, true);
+        if (!entry.colourMaterial) {
+            entry.colourMaterial = new THREE.ShaderMaterial({
+                uniforms: { map: { value: null }, premultiplied: { value: 0 } },
+                vertexShader: 'varying vec2 tc;void main(){tc=uv;gl_Position=vec4(position.xy,0.0,1.0);}',
+                // A linear native attachment keeps Effekseer's encoded bytes unchanged.
+                // Decode once at its own resolution, then let the sRGB attachment encode
+                // for storage. The quad can use the original hardware sRGB filtering.
+                fragmentShader: 'varying vec2 tc;uniform sampler2D map;uniform float premultiplied;void main(){vec4 c=texture2D(map,tc);' +
+                    'if(premultiplied>0.5)c.rgb=c.a>0.0?clamp(floor(c.rgb/c.a*255.0+0.5)/255.0,0.0,1.0):vec3(0.0);' +
+                    'c.rgb=mix(pow(c.rgb*0.9478672986+0.0521327014,vec3(2.4)),c.rgb*0.0773993808,lessThanEqual(c.rgb,vec3(0.04045)));gl_FragColor=c;}',
+                depthTest: false, depthWrite: false, blending: THREE.NoBlending
+            });
+            entry.colourMesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), entry.colourMaterial);
+            entry.colourMesh.frustumCulled = false;
+            entry.colourScene = new THREE.Scene(); entry.colourScene.add(entry.colourMesh);
+            entry.colourCamera = new THREE.Camera();
+        }
+        entry.colourMaterial.uniforms.map.value = source.texture;
+        entry.colourMaterial.uniforms.premultiplied.value = premultiplied ? 1 : 0;
+        renderer.resetState(); renderer.setRenderTarget(target);
+        renderer.render(entry.colourScene, entry.colourCamera);
+        return target;
+    },
+    bindQuad(quad, target) {
+        if (quad.texture === target.texture) return;
+        quad.texture.dispose(); quad.texture = target.texture;
+        quad.material.uniforms.map.value = target.texture;
+        quad.material.uniforms.flip.value = 0;
+    },
+    /** Never wait on the GPU on the main thread, including timeout and context-loss paths. */
+    read(entry, target, callback) {
+        if (entry.disposed || entry.gl.isContextLost() || this._reads.size >= 4) return false;
+        const gl = entry.gl, width = target.width, height = target.height;
+        const previous = gl.getParameter(gl.READ_FRAMEBUFFER_BINDING), pack = gl.getParameter(gl.PIXEL_PACK_BUFFER_BINDING);
+        const buffer = gl.createBuffer(); let fence, timer, finished = false;
+        const read = { entry, cancel: () => finish(null) };
+        const finish = pixels => {
+            if (finished) return; finished = true; clearTimeout(timer);
+            if (fence) gl.deleteSync(fence); if (buffer) gl.deleteBuffer(buffer);
+            this._reads.delete(read); callback(pixels, width, height);
+        };
+        try {
+            gl.bindFramebuffer(gl.READ_FRAMEBUFFER, entry.renderer.properties.get(target).__webglFramebuffer);
+            gl.bindBuffer(gl.PIXEL_PACK_BUFFER, buffer); gl.bufferData(gl.PIXEL_PACK_BUFFER, width * height * 4, gl.STREAM_READ);
+            gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, 0);
+            fence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0); gl.flush();
+        } catch (_) { finish(null); return false; }
+        finally { gl.bindBuffer(gl.PIXEL_PACK_BUFFER, pack); gl.bindFramebuffer(gl.READ_FRAMEBUFFER, previous); }
+        if (!fence) { finish(null); return false; }
+        this._reads.add(read);
+        const deadline = performance.now() + 2000;
+        const poll = () => {
+            if (finished) return;
+            if (entry.disposed || gl.isContextLost() || performance.now() >= deadline) { finish(null); return; }
+            const result = gl.clientWaitSync(fence, 0, 0);
+            if (result === gl.TIMEOUT_EXPIRED) { timer = setTimeout(poll, 4); return; }
+            if (result !== gl.ALREADY_SIGNALED && result !== gl.CONDITION_SATISFIED) { finish(null); return; }
+            const saved = gl.getParameter(gl.PIXEL_PACK_BUFFER_BINDING);
+            let pixels = null;
+            try { pixels = new Uint8Array(width * height * 4); gl.bindBuffer(gl.PIXEL_PACK_BUFFER, buffer); gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, pixels); }
+            catch (_) { pixels = null; }
+            finally { gl.bindBuffer(gl.PIXEL_PACK_BUFFER, saved); }
+            finish(pixels);
+        };
+        timer = setTimeout(poll, 4); return true;
+    },
+    downsample(pixels, width, height, mw, mh) {
+        const source = this._source || (this._source = document.createElement('canvas'));
+        const mini = this._mini || (this._mini = document.createElement('canvas'));
+        source.width = width; source.height = height; mini.width = mw; mini.height = mh;
+        const flipped = new Uint8ClampedArray(pixels.length), row = width * 4;
+        for (let y = 0; y < height; y++) flipped.set(pixels.subarray(y * row, (y + 1) * row), (height - y - 1) * row);
+        source.getContext('2d').putImageData(new ImageData(flipped, width, height), 0, 0);
+        const context = mini.getContext('2d', { willReadFrequently: true });
+        context.drawImage(source, 0, 0, mw, mh);
+        return context.getImageData(0, 0, mw, mh).data;
+    },
+    measure(play, entry, target, rect, width, height, anchor, pxPerUnit, limit, upY) {
+        const M = Reactor3D.EffectMeasure, track = play.track;
+        if (track._measurePending || M._pending.size >= 4) return;
+        const mw = Math.max(1, Math.min(64, Math.round(64 * rect.w / Math.max(rect.w, rect.h))));
+        const mh = Math.max(1, Math.min(64, Math.round(64 * rect.h / Math.max(rect.w, rect.h))));
+        const id = ++M._serial, job = { play, track, frame: play.frames, mw, mh,
+            args: [{ ...rect }, width, height, { ...anchor }, pxPerUnit, limit, upY] };
+        M._pending.set(id, job); track._measurePending = id;
+        const queued = this.read(entry, target, (pixels, sourceWidth, sourceHeight) => {
+            if (!pixels || play.done || play.track !== track || !M._pending.has(id)) { M.finish(id); return; }
+            try {
+                if (M.enabled && !M._failed && typeof Worker !== 'undefined' && typeof OffscreenCanvas !== 'undefined') {
+                    if (!M._worker) {
+                        M._worker = new Worker(Reactor3D.workerUrl('reactor_effect_measure_worker.js'), { name: 'Reactor effect coverage' });
+                        M._worker.onmessage = event => M.receive(event.data);
+                        M._worker.onerror = M._worker.onmessageerror = () => M.fail();
+                    }
+                    M._worker.postMessage({ id, pixels, sourceWidth, sourceHeight, width: mw, height: mh }, [pixels.buffer]);
+                    return;
+                }
+            } catch (_) { M.fail(); }
+            M.finish(id);
+            const data = this.downsample(pixels, sourceWidth, sourceHeight, mw, mh);
+            if (Reactor3D.EffekseerScene.measurePixels(track, data, mw, mh, ...job.args)) play.lastLit = job.frame;
+        });
+        if (!queued) M.finish(id);
+    }
+};
+
+/** Effect coverage is advisory; drawing never waits for a readback. */
+Reactor3D.EffectMeasure = {
+    enabled: true,
+    _pending: new Map(),
+    _serial: 0,
+    request(play, source, rect, width, height, anchor, pxPerUnit, limit, upY) {
+        if (!this.enabled || this._failed || typeof Worker === 'undefined'
+            || typeof OffscreenCanvas === 'undefined' || typeof createImageBitmap !== 'function') return false;
+        if (play.track._measurePending || this._pending.size >= 4) return true;
+        try {
+            if (!this._worker) {
+                const url = Reactor3D.workerUrl('reactor_effect_measure_worker.js');
+                this._worker = new Worker(url, { name: 'Reactor effect coverage' });
+                this._worker.onmessage = event => this.receive(event.data);
+                this._worker.onerror = () => this.fail();
+                this._worker.onmessageerror = () => this.fail();
+            }
+            const mw = Math.max(1, Math.min(64, Math.round(64 * rect.w / Math.max(rect.w, rect.h))));
+            const mh = Math.max(1, Math.min(64, Math.round(64 * rect.h / Math.max(rect.w, rect.h))));
+            const id = ++this._serial, track = play.track;
+            const job = { play, track, frame: play.frames, mw, mh,
+                args: [{ ...rect }, width, height, { ...anchor }, pxPerUnit, limit, upY] };
+            this._pending.set(id, job); track._measurePending = id;
+            createImageBitmap(source).then(bitmap => {
+                if (!this._pending.has(id) || this._failed || play.done || play.track !== track) {
+                    bitmap.close(); this.finish(id); return;
+                }
+                this._worker.postMessage({ id, bitmap, width: mw, height: mh }, [bitmap]);
+            }).catch(() => this.fail());
+            return true;
+        } catch (error) { this.fail(); return false; }
+    },
+    finish(id) {
+        const job = this._pending.get(id);
+        if (job?.track._measurePending === id) delete job.track._measurePending;
+        this._pending.delete(id);
+        return job;
+    },
+    receive(message) {
+        const job = this.finish(message.id);
+        if (message.error) return this.fail();
+        if (!job || job.play.done || job.play.track !== job.track) return;
+        const lit = Reactor3D.EffekseerScene.measurePixels(job.track, message.pixels, job.mw, job.mh, ...job.args);
+        if (lit) job.play.lastLit = job.frame;
+    },
+    fail() {
+        this._failed = true;
+        this._worker?.terminate(); this._worker = null;
+        for (const id of this._pending.keys()) this.finish(id);
+    }
+};
+
+
 Reactor3D.EffekseerScene = {
     /** The most pixels one effect draws and copies per frame, as a fraction of the screen. */
     BUDGET: 0.25,
@@ -15172,6 +16078,7 @@ Reactor3D.EffekseerScene = {
     QUAD_SPAN: 600,
     _live: [],
     _pass: "all",
+    scissorEnabled: true,
 
     /** The screen-sized quad that carries one effect's picture at its anchor's depth. */
     quadFor(scratch) {
@@ -15222,7 +16129,37 @@ Reactor3D.EffekseerScene = {
         mesh.renderOrder = 5000;
         mesh.visible = false;
         mesh.userData.reactorEffectQuad = true;
-        return { mesh, texture, material };
+        const quad = { mesh, texture, material };
+        this.installQuadScissor(quad);
+        return quad;
+    },
+
+    /** Reject the pixels the effect shader already discards, before rasterization. */
+    installQuadScissor(quad) {
+        const mesh = quad.mesh, saved = new THREE.Vector4(), crop = new THREE.Vector4();
+        mesh.onBeforeRender = function(renderer) {
+            this._effectScissorActive = false;
+            if (!Reactor3D.EffekseerScene.scissorEnabled || !renderer.state?.scissor) return;
+            const target = renderer.getRenderTarget(), uniforms = quad.material.uniforms, size = uniforms.resolution.value;
+            const width = target?.width || renderer.domElement.width, height = target?.height || renderer.domElement.height;
+            // Leave custom scissors and other passes (including shadows) to their owners.
+            if (width !== size.x || height !== size.y || target?.scissorTest || renderer.getScissorTest()) return;
+            if (target) saved.copy(target.scissor);
+            else renderer.getScissor(saved).multiplyScalar(renderer.getPixelRatio()).floor();
+            const x = Math.max(0, Math.floor(uniforms.rectMin.value.x * width));
+            const y = Math.max(0, Math.floor(uniforms.rectMin.value.y * height));
+            const right = Math.min(width, Math.ceil((uniforms.rectMin.value.x + uniforms.rectSize.value.x) * width));
+            const top = Math.min(height, Math.ceil((uniforms.rectMin.value.y + uniforms.rectSize.value.y) * height));
+            crop.set(x, y, Math.max(0, right - x), Math.max(0, top - y));
+            // Touch the GL state cache, not the caller's saved target/default scissor settings.
+            renderer.state.scissor(crop); renderer.state.setScissorTest(true);
+            this._effectScissorActive = true;
+        };
+        mesh.onAfterRender = function(renderer) {
+            if (!this._effectScissorActive) return;
+            renderer.state.setScissorTest(false); renderer.state.scissor(saved);
+            this._effectScissorActive = false;
+        };
     },
 
     /** Begin an anchored animation in the scene for `sprite`'s handle; null when it cannot. */
@@ -15238,7 +16175,7 @@ Reactor3D.EffekseerScene = {
         scene.add(quad.mesh);
         // The sprite keeps its hands off the handle: the anchor owns its place.
         sprite._reactorInScene = true;
-        const play = { viewport, animation, sprite, scratch, done: false, quad, world: new THREE.Vector3(), scale: [1, 1, 1], rotation: [0, 0, 0], placed: false, ready: false, track: this.boxTracker(), frames: 0, lastLit: 0 };
+        const play = { scene, viewport, animation, sprite, scratch, done: false, quad, world: new THREE.Vector3(), scale: [1, 1, 1], rotation: [0, 0, 0], placed: false, ready: false, track: this.boxTracker(), frames: 0, lastLit: 0 };
         this._live.push(play);
         return play;
     },
@@ -15263,6 +16200,8 @@ Reactor3D.EffekseerScene = {
     stop(play) {
         if (!play || play.done) return;
         play.done = true;
+        if (play._gpuEffectTarget) { play._gpuEffectTarget.dispose(); play._gpuEffectTarget = null; }
+        if (play._gpuColourTarget) { play._gpuColourTarget.dispose(); play._gpuColourTarget = null; }
         // Where this play's picture ended: the next loop starts over there.
         // The longest seen, since a play the camera looked away from ends
         // early on screen and the picture's length does not change.
@@ -15276,6 +16215,25 @@ Reactor3D.EffekseerScene = {
         }
         const at = this._live.indexOf(play);
         if (at >= 0) this._live.splice(at, 1);
+    },
+
+    /** A map owns its attached effects, including native handles and GPU pictures. */
+    stopScene(scene) {
+        if (!scene) return;
+        for (const play of this._live.slice()) {
+            if (play.scene !== scene) continue;
+            const sprite = play.sprite;
+            try {
+                if (sprite?._handle && !sprite._effectContext?.disposed) {
+                    (sprite._effectContext?.context || Graphics.effekseer)?._makeContextCurrent?.();
+                    sprite._handle.stop();
+                }
+            } catch (_) { /* A lost native context still needs all of its pictures released. */ }
+            finally {
+                if (sprite) { sprite._handle = null; sprite._playing = false; }
+                this.stop(play); Reactor3D.GpuEffects.restoreDefault();
+            }
+        }
     },
 
     /** Stand the plane on the anchor, facing the camera about the vertical. */
@@ -15409,6 +16367,11 @@ Reactor3D.EffekseerScene = {
         ctx.drawImage(source, 0, 0, source.width, source.height, 0, 0, mw, mh);
         let data;
         try { data = ctx.getImageData(0, 0, mw, mh).data; } catch (e) { return false; }
+        return this.measurePixels(track, data, mw, mh, rect, width, height, anchor, pxPerUnit, limit, upY);
+    },
+
+    measurePixels(track, data, mw, mh, rect, width, height, anchor, pxPerUnit, limit, upY) {
+        if (!track || !data || data.length !== mw * mh * 4) return false;
         let minX = mw, minY = mh, maxX = -1, maxY = -1;
         for (let y = 0; y < mh; y++) {
             for (let x = 0; x < mw; x++) {
@@ -15535,7 +16498,7 @@ Reactor3D.EffekseerScene = {
         const clip = this._clip || (this._clip = new THREE.Vector4());
         try {
             for (const play of this._live) {
-                if (play.done || !play.placed) continue;
+                if (play.done || !play.placed || play.viewport !== viewport || play.scene !== viewport._scene) continue;
                 const handle = play.sprite && play.sprite._handle;
                 if (!handle || !handle.exists) { play.ready = false; play.quad.mesh.visible = false; continue; }
                 handle.setLocation(play.world.x, play.world.y, play.world.z);
@@ -15571,41 +16534,58 @@ Reactor3D.EffekseerScene = {
                 const drawY = Math.round(rect.y * s);
                 // The whole screen's viewport at scale `s` keeps the camera's
                 // projection honest; the scissor limits the work to the box.
-                gl.viewport(0, 0, Math.round(screenW * s), Math.round(screenH * s));
-                gl.enable(gl.SCISSOR_TEST);
-                gl.scissor(drawX, drawY, drawW, drawH);
-                gl.clearColor(0, 0, 0, 0);
-                gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-                efx.setProjectionMatrix(camera.projectionMatrix.elements);
-                efx.setCameraMatrix(camera.matrixWorldInverse.elements);
-                efx.beginDraw();
-                efx.drawHandle(handle);
-                efx.endDraw();
-                if (typeof Graphics !== "undefined" && Graphics.settleEffekseerState) Graphics.settleEffekseerState();
-                gl.disable(gl.SCISSOR_TEST);
-                // The box, copied out before the next play draws over it: the
-                // GL origin is the bottom left, the canvas's the top left.
-                const scratch = play.scratch;
-                if (scratch.width !== drawW || scratch.height !== drawH) {
-                    scratch.width = drawW;
-                    scratch.height = drawH;
-                    // three allocates a canvas texture once, at its first
-                    // size (immutable storage on WebGL 2); a bigger box
-                    // would not upload. Let go of the GL texture so the
-                    // next upload allocates it at the new size.
-                    play.quad.texture.dispose();
+                const entry = play.sprite._effectContext;
+                if (entry) {
+                    const target = Reactor3D.GpuEffects.draw(entry, play, drawW, drawH,
+                        { x: -drawX, y: -drawY, width: Math.round(screenW * s), height: Math.round(screenH * s) },
+                        camera.projectionMatrix.elements, camera.matrixWorldInverse.elements, handle);
+                    if (!target) { play.ready = false; play.quad.mesh.visible = false; continue; }
+                    Reactor3D.GpuEffects.bindQuad(play.quad, target, false);
+                    play.frames++;
+                    if (this.shouldMeasure(play.frames, play.track)) {
+                        const anchor = { x: (clip.x / clip.w + 1) * 0.5 * screenW, y: (clip.y / clip.w + 1) * 0.5 * screenH };
+                        const pxPerUnit = camera.projectionMatrix.elements[5] * screenH * 0.5 / (camera.isPerspectiveCamera ? clip.w : 1);
+                        Reactor3D.GpuEffects.measure(play, entry, target, rect, screenW, screenH, anchor, pxPerUnit, play.radius || 1, camera.matrixWorld.elements[5]);
+                    }
+                } else {
+                    efx._makeContextCurrent?.();
+                    gl.viewport(0, 0, Math.round(screenW * s), Math.round(screenH * s));
+                    gl.enable(gl.SCISSOR_TEST);
+                    gl.scissor(drawX, drawY, drawW, drawH);
+                    gl.clearColor(0, 0, 0, 0);
+                    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+                    efx.setProjectionMatrix(camera.projectionMatrix.elements);
+                    efx.setCameraMatrix(camera.matrixWorldInverse.elements);
+                    efx.beginDraw();
+                    efx.drawHandle(handle);
+                    efx.endDraw();
+                    if (typeof Graphics !== "undefined" && Graphics.settleEffekseerState) Graphics.settleEffekseerState();
+                    gl.disable(gl.SCISSOR_TEST);
+                    // The box, copied out before the next play draws over it: the
+                    // GL origin is the bottom left, the canvas's the top left.
+                    const scratch = play.scratch;
+                    if (scratch.width !== drawW || scratch.height !== drawH) {
+                        scratch.width = drawW;
+                        scratch.height = drawH;
+                        // three allocates a canvas texture once, at its first
+                        // size (immutable storage on WebGL 2); a bigger box
+                        // would not upload. Let go of the GL texture so the
+                        // next upload allocates it at the new size.
+                        play.quad.texture.dispose();
+                    }
+                    const ctx = scratch.getContext("2d");
+                    ctx.clearRect(0, 0, drawW, drawH);
+                    ctx.drawImage(overlay, drawX, overlay.height - drawY - drawH, drawW, drawH, 0, 0, drawW, drawH);
+                    play.frames++;
+                    if (this.shouldMeasure(play.frames, play.track)) {
+                        const anchor = { x: (clip.x / clip.w + 1) * 0.5 * screenW, y: (clip.y / clip.w + 1) * 0.5 * screenH };
+                        const pxPerUnit = camera.projectionMatrix.elements[5] * screenH * 0.5 / (camera.isPerspectiveCamera ? clip.w : 1);
+                        const queued = Reactor3D.EffectMeasure.request(play, scratch, rect, screenW, screenH, anchor, pxPerUnit, play.radius || 1, camera.matrixWorld.elements[5]);
+                        if (!queued && this.measure(play.track, scratch, rect, screenW, screenH, anchor, pxPerUnit, play.radius || 1, camera.matrixWorld.elements[5])) play.lastLit = play.frames;
+                    }
+                    play.quad.texture.needsUpdate = true;
+                    renderer.initTexture(play.quad.texture);
                 }
-                const ctx = scratch.getContext("2d");
-                ctx.clearRect(0, 0, drawW, drawH);
-                ctx.drawImage(overlay, drawX, overlay.height - drawY - drawH, drawW, drawH, 0, 0, drawW, drawH);
-                play.frames++;
-                if (this.shouldMeasure(play.frames, play.track)) {
-                    const anchor = { x: (clip.x / clip.w + 1) * 0.5 * screenW, y: (clip.y / clip.w + 1) * 0.5 * screenH };
-                    const pxPerUnit = camera.projectionMatrix.elements[5] * screenH * 0.5 / (camera.isPerspectiveCamera ? clip.w : 1);
-                    if (this.measure(play.track, scratch, rect, screenW, screenH, anchor, pxPerUnit, play.radius || 1, camera.matrixWorld.elements[5])) play.lastLit = play.frames;
-                }
-                play.quad.texture.needsUpdate = true;
-                renderer.initTexture(play.quad.texture);
                 this.standQuad(play.quad.mesh, play.world, camera);
                 const uniforms = play.quad.material.uniforms;
                 uniforms.resolution.value.set(size.width, size.height);
@@ -17355,8 +18335,13 @@ Reactor3D.installPropHooks = function() {
     function relativeMove() {
         const forward = (held.has("forward") ? 1 : 0) - (held.has("back") ? 1 : 0);
         const strafe = (held.has("right") ? 1 : 0) - (held.has("left") ? 1 : 0);
+        return moveForView(forward, strafe, look.yaw);
+    }
+
+    /** Rotate screen-relative input into the nearest of eight map directions. */
+    function moveForView(forward, strafe, yawDegrees) {
         if (!forward && !strafe) return null;
-        const yaw = look.yaw * DEG;
+        const yaw = yawDegrees * DEG;
         // Camera yaw 0 looks north (-z on the map, direction 8).
         const fx = Math.sin(yaw), fy = -Math.cos(yaw);
         const rx = Math.cos(yaw), ry = Math.sin(yaw);
@@ -17790,11 +18775,23 @@ Reactor3D.installPropHooks = function() {
             // way the camera faced, which is unplayable from the shoulder.
             Game_Player.prototype.moveByInput = function() {
                 const state = currentState();
-                if (!isRelativeMode(state.mode)) return baseMoveByInput.apply(this, arguments);
-                // Touch-to-move has no meaning with the camera in hand.
-                $gameTemp.clearDestination();
+                const live = typeof SceneManager !== "undefined" && SceneManager._scene?._spriteset?._reactor3d;
+                const isometric = state.mode === "isometric" && !!live;
+                if (!isRelativeMode(state.mode) && !isometric) return baseMoveByInput.apply(this, arguments);
+                let move;
+                if (isometric) {
+                    // Arrows/gamepad and WASD use screen axes, including pairs
+                    // of keys. Use the rendered yaw during camera transitions.
+                    const dir = typeof Input !== "undefined" ? Input.dir8 || Input.dir4 : 0;
+                    const forward = Number(held.has("forward") || [7,8,9].includes(dir)) - Number(held.has("back") || [1,2,3].includes(dir));
+                    const strafe = Number(held.has("right") || [3,6,9].includes(dir)) - Number(held.has("left") || [1,4,7].includes(dir));
+                    move = moveForView(forward, strafe, live.cameraCurrent?.yaw ?? state.yaw ?? MODES.isometric.yaw);
+                } else move = relativeMove();
+                // Ground clicks use map directions; manual movement remains
+                // relative to the camera and takes over immediately.
+                if (!move && $gameTemp.isDestinationValid()) return baseMoveByInput.apply(this, arguments);
+                if (move) $gameTemp.clearDestination();
                 if (this.isMoving() || !this.canMove()) return;
-                const move = relativeMove();
                 if (!move) {
                     // Standing still in first person, the body turns with the look.
                     if (state.mode === "firstPerson") {
@@ -17839,6 +18836,22 @@ Reactor3D.installPropHooks = function() {
             // Escape (the browser's own) gives it back.
             document.addEventListener("mousedown", event => {
                 if (event.button !== 0 || !isRelativeMode(currentState().mode)) return;
+                // Pointer lock clears TouchInput. Pick before taking the mouse
+                // so the initial click is retained even if lock arrives first.
+                const scene = typeof SceneManager !== "undefined" && SceneManager._scene;
+                const clickX = Graphics.pageToCanvasX(event.pageX), clickY = Graphics.pageToCanvasY(event.pageY);
+                const menu = scene && scene._menuButton;
+                if (menu && menu.isClickEnabled()) {
+                    const point = menu.worldTransform.applyInverse({ x: clickX, y: clickY });
+                    if (menu.hitTest(point.x, point.y)) return;
+                }
+                if (scene && typeof Scene_Map !== "undefined" && scene instanceof Scene_Map
+                    && scene._spriteset?._reactor3d && scene.isMapTouchOk() && !scene.isAnyButtonPressed()) {
+                    scene.onMapTouch(clickX, clickY);
+                    scene._reactor3dTouchConsumed = true;
+                    scene._touchCount = 0;
+                    TouchInput.clear();
+                }
                 requestLook();
             });
             document.addEventListener("fullscreenchange", () => { look.suppressMenuUntil = Date.now() + 1500; });
@@ -17906,6 +18919,7 @@ Reactor3D.installPropHooks = function() {
         look: look,
         held: held,
         relativeMove: relativeMove,
+        moveForView: moveForView,
         turnLook: turnLook,
         lookLean: lookLean,
         hidesPlayer: hidesPlayer,

@@ -6,10 +6,10 @@ const test = require('node:test');
 
 const editorRoot = path.resolve(__dirname, '..');
 const read = relative => fs.readFileSync(path.join(editorRoot, relative), 'utf8');
-const VideoSurfaceEditor = require(path.join(
-    editorRoot, 'src', 'event', 'commands', 'VideoSurfaceEditor.js'));
-const VideoSurfacePreviewManager = require(path.join(
-    editorRoot, 'src', 'VideoSurfacePreviewManager.js'));
+const MediaSurfaceEditor = require(path.join(
+    editorRoot, 'src', 'event', 'commands', 'MediaSurfaceEditor.js'));
+const MediaSurfacePreviewManager = require(path.join(
+    editorRoot, 'src', 'MediaSurfacePreviewManager.js'));
 
 test('picker exposes all native Reactor video-surface commands', () => {
     const EventCommandPicker = require(path.join(editorRoot, 'src', 'event', 'EventCommandPicker.js'));
@@ -28,8 +28,8 @@ test('picker exposes all native Reactor video-surface commands', () => {
 
 test('the editor script loads before EventCommandList', () => {
     const html = read('index.html');
-    const editor = html.indexOf('src/event/commands/VideoSurfaceEditor.js');
-    const previews = html.indexOf('src/VideoSurfacePreviewManager.js');
+    const editor = html.indexOf('src/event/commands/MediaSurfaceEditor.js');
+    const previews = html.indexOf('src/MediaSurfacePreviewManager.js');
     const list = html.indexOf('src/event/EventCommandList.js');
     assert.ok(editor >= 0 && editor < previews && previews < list);
 });
@@ -42,22 +42,22 @@ test('map preview scanning reduces sparse command sequences and retains exact so
             id: 4, target: 'thisEvent', movie: 'panel.webm', width: 320, height: 180
         }]
     };
-    const width = VideoSurfaceEditor.build('TransformVideoSurface', {
-        ...VideoSurfaceEditor.defaults(), id: 4, width: 500
+    const width = MediaSurfaceEditor.build('TransformVideoSurface', {
+        ...MediaSurfaceEditor.defaults(), id: 4, width: 500
     }, 0, { changedFields: new Set(['width']) });
-    const showCustom = VideoSurfaceEditor.build('ShowVideoSurface', {
-        ...VideoSurfaceEditor.defaults(), id: 7, target: 'map', movie: 'warp.webm',
+    const showCustom = MediaSurfaceEditor.build('ShowVideoSurface', {
+        ...MediaSurfaceEditor.defaults(), id: 7, target: 'map', movie: 'warp.webm',
         corners: [{ x: -5, y: -4 }, { x: 6, y: -3 }, { x: 7, y: 5 }, { x: -8, y: 4 }]
     });
-    const resizeCustom = VideoSurfaceEditor.build('TransformVideoSurface', {
-        ...VideoSurfaceEditor.defaults(), id: 7, width: 640
+    const resizeCustom = MediaSurfaceEditor.build('TransformVideoSurface', {
+        ...MediaSurfaceEditor.defaults(), id: 7, width: 640
     }, 0, { changedFields: new Set(['width']) });
-    const stop = VideoSurfaceEditor.build('StopVideoSurface', { id: 4 });
+    const stop = MediaSurfaceEditor.build('StopVideoSurface', { id: 4 });
     const map = {
         id: 12,
         events: [null, { id: 9, x: 2, y: 3, pages: [{ list: [show, width, showCustom, resizeCustom, stop, { code: 0 }] }] }]
     };
-    const records = VideoSurfacePreviewManager.scanMap(map);
+    const records = MediaSurfacePreviewManager.scanMap(map);
     assert.equal(records.length, 2);
     assert.deepEqual(records[0].source, { mapId: 12, eventId: 9, pageIndex: 0, commandIndex: 0 });
     assert.equal(records[0].state.target, 'event');
@@ -74,23 +74,23 @@ test('map preview scanning reduces sparse command sequences and retains exact so
 });
 
 test('live-map preview integration owns lifecycle, authoring, edge handles, and source navigation', () => {
-    const manager = read('src/VideoSurfacePreviewManager.js');
+    const manager = read('src/MediaSurfacePreviewManager.js');
     const main = read('src/main.js');
     const controller = read('src/ProjectController.js');
     const map3d = read('src/MapEditor3D.js');
-    const editor = read('src/event/commands/VideoSurfaceEditor.js');
-    assert.match(main, /new VideoSurfacePreviewManager/);
-    assert.match(controller, /videoSurfacePreviewManager\?\.beforeMapChange/);
-    assert.match(map3d, /videoSurfacePreviewManager\?\.attachThree/);
-    assert.match(map3d, /videoSurfacePreviewManager\?\.detachThree/);
+    const editor = read('src/event/commands/MediaSurfaceEditor.js');
+    assert.match(main, /new MediaSurfacePreviewManager/);
+    assert.match(controller, /mediaSurfacePreviewManager\?\.beforeMapChange/);
+    assert.match(map3d, /mediaSurfacePreviewManager\?\.attachThree/);
+    assert.match(map3d, /mediaSurfacePreviewManager\?\.detachThree/);
     assert.match(manager, /new PIXI\.PerspectiveMesh/);
     assert.match(manager, /new THREE\.VideoTexture/);
-    assert.match(manager, /Top video surface edge/);
+    assert.match(manager, /Top media surface edge/);
     assert.match(manager, /_syncPixiAnchor/);
     assert.match(manager, /commandIndex/);
     assert.match(manager, /scrollIntoView/);
     assert.match(editor, /_beginLiveMapAuthoring/);
-    assert.match(editor, /Drag the video on the map to move it/);
+    assert.match(editor, /Drag the media surface on the map to move it/);
 });
 
 test('all three code-357 encodings round-trip and retain indent', () => {
@@ -125,15 +125,15 @@ test('all three code-357 encodings round-trip and retain indent', () => {
         wait: true
     };
 
-    for (const operation of Object.keys(VideoSurfaceEditor.OPERATIONS)) {
-        const built = VideoSurfaceEditor.buildCommand(operation, data, 3);
+    for (const operation of Object.keys(MediaSurfaceEditor.OPERATIONS)) {
+        const built = MediaSurfaceEditor.buildCommand(operation, data, 3);
         assert.equal(built.code, 357);
         assert.equal(built.indent, 3);
         assert.deepEqual(Array.from(built.parameters.slice(0, 3)), [
-            'RPGReactor', operation, VideoSurfaceEditor.OPERATIONS[operation]
+            'RPGReactor', operation, MediaSurfaceEditor.OPERATIONS[operation]
         ]);
-        const parsed = VideoSurfaceEditor.parseCommand(built);
-        const rebuilt = VideoSurfaceEditor.buildCommand(operation, parsed, built.indent);
+        const parsed = MediaSurfaceEditor.parseCommand(built);
+        const rebuilt = MediaSurfaceEditor.buildCommand(operation, parsed, built.indent);
         assert.deepEqual(rebuilt, built);
         assert.equal('placementMode' in built.parameters[3], false);
         if (operation !== 'StopVideoSurface') {
@@ -145,7 +145,7 @@ test('all three code-357 encodings round-trip and retain indent', () => {
 });
 
 test('2D coordinates use local corners and target-specific runtime anchors', () => {
-    const defaults = VideoSurfaceEditor.defaults();
+    const defaults = MediaSurfaceEditor.defaults();
     assert.deepEqual(defaults.corners, [
         { x: -160, y: -90 }, { x: 160, y: -90 },
         { x: 160, y: 90 }, { x: -160, y: 90 }
@@ -153,7 +153,7 @@ test('2D coordinates use local corners and target-specific runtime anchors', () 
     assert.equal(defaults.x, 0);
     assert.equal(defaults.y, 0);
 
-    const editor = Object.create(VideoSurfaceEditor.prototype);
+    const editor = Object.create(MediaSurfaceEditor.prototype);
     editor.context = { type: 'map', event: { id: 7, x: 2, y: 3 } };
     editor.snapshotMetrics = null;
     editor.databaseManager = null;
@@ -198,48 +198,48 @@ test('Transform is a sparse alias-normalizing patch that preserves unknown args'
             placementMode: '3d', scaleX: 2, mapId: 99
         }]
     };
-    const parsed = VideoSurfaceEditor.parseCommand(command);
+    const parsed = MediaSurfaceEditor.parseCommand(command);
     assert.equal(parsed.id, 9);
     assert.equal(parsed.x, 4);
     parsed.x = 12.5;
-    const built = VideoSurfaceEditor.buildCommand('TransformVideoSurface', parsed, 2, {
+    const built = MediaSurfaceEditor.buildCommand('TransformVideoSurface', parsed, 2, {
         changedFields: new Set(['x'])
     });
     assert.deepEqual(built.parameters[3], { scaleX: 2, vendorFlag: 'keep-me', id: 9, x: 12.5 });
     assert.equal(built.indent, 2);
 
-    const fresh = VideoSurfaceEditor.defaults();
+    const fresh = MediaSurfaceEditor.defaults();
     fresh.id = 4;
-    const idOnly = VideoSurfaceEditor.buildCommand('TransformVideoSurface', fresh, 0, {
+    const idOnly = MediaSurfaceEditor.buildCommand('TransformVideoSurface', fresh, 0, {
         changedFields: new Set()
     });
     assert.deepEqual(idOnly.parameters[3], { id: 4 });
 
-    const sparseWidth = VideoSurfaceEditor.parseCommand({
+    const sparseWidth = MediaSurfaceEditor.parseCommand({
         code: 357, indent: 0,
         parameters: ['RPGReactor', 'TransformVideoSurface', 'Transform Video Surface', { id: 4, width: 500 }]
     });
-    const widthPatch = VideoSurfaceEditor.buildCommand('TransformVideoSurface', sparseWidth, 0, {
+    const widthPatch = MediaSurfaceEditor.buildCommand('TransformVideoSurface', sparseWidth, 0, {
         changedFields: new Set(['width'])
     });
     assert.deepEqual(widthPatch.parameters[3], { id: 4, width: 500 },
         'a size-only patch does not invent custom corners');
 
-    const targetEditor = Object.create(VideoSurfaceEditor.prototype);
+    const targetEditor = Object.create(MediaSurfaceEditor.prototype);
     targetEditor.operation = 'TransformVideoSurface';
-    targetEditor.data = { ...VideoSurfaceEditor.defaults(), id: 4, target: 'event', eventId: 7 };
+    targetEditor.data = { ...MediaSurfaceEditor.defaults(), id: 4, target: 'event', eventId: 7 };
     targetEditor.context = { type: 'map', event: { id: 7 } };
     targetEditor.fields = { id: { value: '4' }, eventId: { value: '7' } };
     targetEditor.changedFields = new Set(['target']);
     targetEditor._resolveBinding();
-    const targetPatch = VideoSurfaceEditor.buildCommand('TransformVideoSurface', targetEditor.data, 0, {
+    const targetPatch = MediaSurfaceEditor.buildCommand('TransformVideoSurface', targetEditor.data, 0, {
         changedFields: targetEditor.changedFields
     });
     assert.deepEqual(targetPatch.parameters[3], { id: 4, target: 'event', eventId: 7 });
 });
 
 test('runtime aliases and nested payloads normalize without losing behavior', () => {
-    const parsed = VideoSurfaceEditor.parseCommand({
+    const parsed = MediaSurfaceEditor.parseCommand({
         code: 357,
         indent: 0,
         parameters: ['RPGReactor', 'ShowVideoSurface', 'Show Video Surface', JSON.stringify({
@@ -255,14 +255,14 @@ test('runtime aliases and nested payloads normalize without losing behavior', ()
     assert.equal(parsed.target, 'map');
     assert.equal(parsed.x, 3);
     assert.deepEqual(parsed.corners[0], { x: -2, y: -1 });
-    const rebuilt = VideoSurfaceEditor.buildCommand('ShowVideoSurface', parsed);
+    const rebuilt = MediaSurfaceEditor.buildCommand('ShowVideoSurface', parsed);
     assert.equal(rebuilt.parameters[3].vendorFlag, 17);
     assert.equal(rebuilt.parameters[3].movie, 'nested/panel.mp4');
     assert.equal(rebuilt.parameters[3].target, 'map');
 });
 
 test('legacy alpha, named layers, and audible aliases keep their runtime meaning', () => {
-    const parsed = VideoSurfaceEditor.parseCommand({
+    const parsed = MediaSurfaceEditor.parseCommand({
         code: 357,
         indent: 0,
         parameters: ['RPGReactor', 'ShowVideoSurface', 'Show Video Surface', {
@@ -273,7 +273,7 @@ test('legacy alpha, named layers, and audible aliases keep their runtime meaning
     assert.equal(parsed.opacity, 127.5);
     assert.equal(parsed.layer, 5);
     assert.equal(parsed.muted, false);
-    const rebuilt = VideoSurfaceEditor.build('ShowVideoSurface', parsed);
+    const rebuilt = MediaSurfaceEditor.build('ShowVideoSurface', parsed);
     assert.equal(rebuilt.parameters[3].opacity, 127.5);
     assert.equal(rebuilt.parameters[3].layer, 5);
     assert.equal(rebuilt.parameters[3].muted, false);
@@ -286,7 +286,9 @@ test('movie discovery is recursive, keeps extensions, and excludes symlinks', t 
     fs.mkdirSync(path.join(movies, 'chapter 1'), { recursive: true });
     fs.writeFileSync(path.join(movies, 'intro.webm'), 'video');
     fs.writeFileSync(path.join(movies, 'clip#1.webm'), 'video');
-    fs.writeFileSync(path.join(movies, 'clip?take=1.mp4'), 'video');
+    // Windows filenames cannot contain '?'; the lexical path check below
+    // still exercises it on every platform, and POSIX also tests discovery.
+    if (process.platform !== 'win32') fs.writeFileSync(path.join(movies, 'clip?take=1.mp4'), 'video');
     fs.writeFileSync(path.join(movies, 'clip%25.webm'), 'video');
     fs.writeFileSync(path.join(movies, 'chapter 1', 'arrival.mp4'), 'video');
     fs.writeFileSync(path.join(movies, 'chapter 1', 'ignore.txt'), 'text');
@@ -298,40 +300,41 @@ test('movie discovery is recursive, keeps extensions, and excludes symlinks', t 
         if (process.platform !== 'win32') throw error;
     }
 
-    const editor = new VideoSurfaceEditor({ currentProject: { path: root } });
+    const editor = new MediaSurfaceEditor({ currentProject: { path: root } });
     const found = editor.discoverMovies().map(file => file.relativePath);
     assert.deepEqual(new Set(found), new Set([
-        'chapter 1/arrival.mp4', 'clip#1.webm', 'clip?take=1.mp4', 'clip%25.webm', 'intro.webm'
+        'chapter 1/arrival.mp4', 'clip#1.webm', 'clip%25.webm', 'intro.webm',
+        ...(process.platform !== 'win32' ? ['clip?take=1.mp4'] : [])
     ]));
-    assert.equal(VideoSurfaceEditor.safeMoviePath('../escape.webm'), false);
-    assert.equal(VideoSurfaceEditor.safeMoviePath('https://example.test/a.webm'), false);
-    assert.equal(VideoSurfaceEditor.safeMoviePath('ordinary#cut?100%.webm'), true);
+    assert.equal(MediaSurfaceEditor.safeMoviePath('../escape.webm'), false);
+    assert.equal(MediaSurfaceEditor.safeMoviePath('https://example.test/a.webm'), false);
+    assert.equal(MediaSurfaceEditor.safeMoviePath('ordinary#cut?100%.webm'), true);
 });
 
 test('validation blocks invalid Show data and enforces contexts and loop/wait exclusion', () => {
     const valid = {
-        ...VideoSurfaceEditor.defaults(), id: 2, target: 'screen', x: 408, y: 312,
+        ...MediaSurfaceEditor.defaults(), id: 2, target: 'screen', x: 408, y: 312,
         movie: 'clips/intro.webm', loop: false, wait: true
     };
-    assert.deepEqual(VideoSurfaceEditor.validate('ShowVideoSurface', valid, { type: 'map' }), []);
-    assert.match(VideoSurfaceEditor.validate('ShowVideoSurface', {
+    assert.deepEqual(MediaSurfaceEditor.validate('ShowVideoSurface', valid, { type: 'map' }), []);
+    assert.match(MediaSurfaceEditor.validate('ShowVideoSurface', {
         ...valid, id: 0, movie: '', width: 0
     }, { type: 'map' }).join('\n'), /Surface ID[\s\S]*Select a safe[\s\S]*Width/);
-    assert.match(VideoSurfaceEditor.validate('ShowVideoSurface', {
+    assert.match(MediaSurfaceEditor.validate('ShowVideoSurface', {
         ...valid, target: 'event', eventId: 0
     }, { type: 'map' }).join('\n'), /positive event ID/);
-    assert.match(VideoSurfaceEditor.validate('ShowVideoSurface', {
+    assert.match(MediaSurfaceEditor.validate('ShowVideoSurface', {
         ...valid, target: 'thisEvent'
     }, { type: 'common' }).join('\n'), /explicit target/);
-    assert.match(VideoSurfaceEditor.validate('ShowVideoSurface', valid, { type: 'troop' }).join('\n'), /map-only/);
-    assert.match(VideoSurfaceEditor.validate('ShowVideoSurface', {
+    assert.match(MediaSurfaceEditor.validate('ShowVideoSurface', valid, { type: 'troop' }).join('\n'), /map-only/);
+    assert.match(MediaSurfaceEditor.validate('ShowVideoSurface', {
         ...valid, loop: true, wait: true
     }, { type: 'map' }).join('\n'), /cannot both/);
 
-    const editor = Object.create(VideoSurfaceEditor.prototype);
+    const editor = Object.create(MediaSurfaceEditor.prototype);
     editor.operation = 'ShowVideoSurface';
     editor.context = { type: 'common' };
-    editor.data = { ...VideoSurfaceEditor.defaults(), id: 2, loop: true, wait: true };
+    editor.data = { ...MediaSurfaceEditor.defaults(), id: 2, loop: true, wait: true };
     editor.fields = { id: { value: '2' }, loop: { checked: true }, wait: { checked: true } };
     editor.changedFields = new Set();
     editor._applyContextDefaults(null);
@@ -340,7 +343,7 @@ test('validation blocks invalid Show data and enforces contexts and loop/wait ex
     assert.equal(editor.data.loop, false);
     assert.equal(editor.data.wait, true);
 
-    const source = read('src/event/commands/VideoSurfaceEditor.js');
+    const source = read('src/event/commands/MediaSurfaceEditor.js');
     assert.match(source, /if \(errors\.length\)[\s\S]*?_showValidation\(errors\)[\s\S]*?return;/);
 });
 
@@ -349,22 +352,22 @@ test('map/common contexts route safely and troop allows Stop only', () => {
     const common = read('src/database/DatabaseCommonEventEditor.js');
     const troop = read('src/database/DatabaseTroopEditor.js');
 
-    assert.match(list, /VideoSurfaceEditor\.supports\(name\)/);
+    assert.match(list, /MediaSurfaceEditor\.supports\(name\)/);
     assert.match(list, /_reactorCommandEditor\(command\.reactor\)/);
     assert.match(list, /_reactorCommandEditor\(command\.parameters\[1\]\)/);
     assert.match(list, /_videoSurfaceContext\(page, pageIndex, (?:insertIndex|index)\)/);
-    assert.match(common, /VideoSurfaceEditor\.supports\(command\.reactor\)[\s\S]*?getEditor\('videoSurface'/);
-    assert.match(common, /VideoSurfaceEditor\.supports\(command\.parameters\?\.\[1\]\)[\s\S]*?getEditor\('videoSurface'/);
+    assert.match(common, /MediaSurfaceEditor\.supports\(command\.reactor\)[\s\S]*?getEditor\('videoSurface'/);
+    assert.match(common, /MediaSurfaceEditor\.supports\(command\.parameters\?\.\[1\]\)[\s\S]*?getEditor\('videoSurface'/);
     assert.match(common, /\{ type: 'common' \}/);
     assert.match(troop, /command\.reactor === 'StopVideoSurface'/);
     assert.match(troop, /\['ShowVideoSurface', 'TransformVideoSurface'\]\.includes\(command\.reactor\)/);
     assert.match(troop, /warnVideoSurfaceMapOnly\(\)/);
     assert.match(troop, /\{ type: 'troop' \}/);
 
-    const commonSpecialized = common.indexOf("getEditor('videoSurface', VideoSurfaceEditor)", common.indexOf('// Plugin Command'));
+    const commonSpecialized = common.indexOf("getEditor('videoSurface', MediaSurfaceEditor)", common.indexOf('// Plugin Command'));
     const commonGeneric = common.indexOf("getEditor('pluginCommand', PluginCommandEditor)", commonSpecialized);
     assert.ok(commonSpecialized >= 0 && commonSpecialized < commonGeneric);
-    const troopSpecialized = troop.indexOf("getCommandEditor('videoSurface', VideoSurfaceEditor)", troop.indexOf("cmd.parameters?.[1] === 'StopVideoSurface'"));
+    const troopSpecialized = troop.indexOf("getCommandEditor('videoSurface', MediaSurfaceEditor)", troop.indexOf("cmd.parameters?.[1] === 'StopVideoSurface'"));
     const troopGeneric = troop.indexOf("getCommandEditor('pluginCommand', PluginCommandEditor)", troopSpecialized);
     assert.ok(troopSpecialized >= 0 && troopSpecialized < troopGeneric);
 
@@ -382,7 +385,7 @@ test('troop display uses the Reactor human label', () => {
 });
 
 test('visual tooling contains a true quad, event anchor, 3D controls, and deterministic cleanup', () => {
-    const source = read('src/event/commands/VideoSurfaceEditor.js');
+    const source = read('src/event/commands/MediaSurfaceEditor.js');
     assert.match(source, /video-surface-placement-workspace/);
     assert.match(source, /clipPath = `polygon\(/);
     assert.match(source, /vs-corner-handle/);
@@ -403,7 +406,7 @@ test('visual tooling contains a true quad, event anchor, 3D controls, and determ
     let removed = 0;
     let paused = 0;
     let loaded = 0;
-    const editor = new VideoSurfaceEditor();
+    const editor = new MediaSurfaceEditor();
     editor.cleanupHandlers.push(() => { removed += 1; });
     editor.video = {
         pause() { paused += 1; },
@@ -426,18 +429,18 @@ test('edge handles resize along the edge normal instead of shearing', () => {
     ];
     const corners = original.map(corner => ({ ...corner }));
     // Right edge dragged diagonally: only the horizontal component applies.
-    VideoSurfacePreviewManager.resizeEdge(corners, original, [1, 2], { x: 160, y: 0 }, { x: 200, y: 30 });
+    MediaSurfacePreviewManager.resizeEdge(corners, original, [1, 2], { x: 160, y: 0 }, { x: 200, y: 30 });
     assert.deepEqual(corners, [
         { x: -160, y: -90 }, { x: 200, y: -90 }, { x: 200, y: 90 }, { x: -160, y: 90 }
     ]);
     // Bottom edge dragged diagonally: only the vertical component applies.
     const snapshot = corners.map(corner => ({ ...corner }));
-    VideoSurfacePreviewManager.resizeEdge(corners, snapshot, [2, 3], { x: 0, y: 90 }, { x: -20, y: 115 });
+    MediaSurfacePreviewManager.resizeEdge(corners, snapshot, [2, 3], { x: 0, y: 90 }, { x: -20, y: 115 });
     assert.deepEqual(corners.slice(2), [{ x: 200, y: 115 }, { x: -160, y: 115 }]);
     // A rotated edge still moves along its own normal.
     const tilted = [{ x: 0, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 200 }, { x: -100, y: 100 }];
     const warped = tilted.map(corner => ({ ...corner }));
-    VideoSurfacePreviewManager.resizeEdge(warped, tilted, [0, 1], { x: 50, y: 50 }, { x: 50 + 10, y: 50 - 10 });
+    MediaSurfacePreviewManager.resizeEdge(warped, tilted, [0, 1], { x: 50, y: 50 }, { x: 50 + 10, y: 50 - 10 });
     const shift = Math.hypot(warped[0].x, warped[0].y);
     assert.ok(Math.abs(shift - Math.SQRT2 * 10) < 1e-9, 'moves by the normal component only');
     assert.ok(Math.abs((warped[1].x - warped[0].x) - 100) < 1e-9 && Math.abs((warped[1].y - warped[0].y) - 100) < 1e-9,
@@ -445,8 +448,8 @@ test('edge handles resize along the edge normal instead of shearing', () => {
 });
 
 test('map previews keep the placeholder until a movie frame is decoded and let PIXI start playback', () => {
-    const manager = read('src/VideoSurfacePreviewManager.js');
-    const editor = read('src/event/commands/VideoSurfaceEditor.js');
+    const manager = read('src/MediaSurfacePreviewManager.js');
+    const editor = read('src/event/commands/MediaSurfaceEditor.js');
     assert.match(manager, /autoLoad: false, autoPlay: true/, 'PIXI plays once our single load() call has finished');
     assert.doesNotMatch(manager, /autoPlay: false/, 'no preview calls play() before PIXI restarts the load');
     assert.match(manager, /return owner\.placeholderTexture;/, 'the mesh starts on the placeholder');
@@ -461,7 +464,7 @@ test('map previews keep the placeholder until a movie frame is decoded and let P
 });
 
 test('changing the target re-expresses the position so the surface stays put', () => {
-    const manager = new VideoSurfacePreviewManager({}, { getSystem: () => ({ startMapId: 12, startX: 3, startY: 4 }) });
+    const manager = new MediaSurfacePreviewManager({}, { getSystem: () => ({ startMapId: 12, startX: 3, startY: 4 }) });
     manager.map = { id: 12, events: [null, { id: 1, x: 10, y: 5 }] };
     manager.tilemapManager = { TILE_WIDTH: 48, TILE_HEIGHT: 48, container: { x: -100, y: 20, scale: { x: 1 } } };
     manager.pixiOwners.set('__authoring__', {});
@@ -483,21 +486,21 @@ test('changing the target re-expresses the position so the surface stays put', (
 });
 
 test('the live panel shows target-specific fields and can pop out to its own window', () => {
-    const editor = read('src/event/commands/VideoSurfaceEditor.js');
+    const editor = read('src/event/commands/MediaSurfaceEditor.js');
     assert.match(editor, /_buildEventField\(identityGrid\)/, 'Event sits beside Target');
     assert.match(editor, /eventInput\.disabled = !editable;/);
     assert.match(editor, /target === 'player' \? '__player' : target === 'thisEvent' \? '__this' : '__none'/);
     assert.match(editor, /show\('cullingDistance', target !== 'screen'\)/);
     assert.match(editor, /X and Y are screen pixels\./);
-    assert.match(editor, /nw\.Window\.open\('video-surface-panel\.html'/);
+    assert.match(editor, /nw\.Window\.open\('media-surface-panel\.html'/);
     assert.match(editor, /doc\.body\.appendChild\(dialog\)/, 'the dialog element is adopted, keeping its listeners');
     assert.match(editor, /this\._dockPanel\(\);\n        for \(const cleanup of this\.cleanupHandlers/, 'close() docks first');
-    assert.ok(fs.existsSync(path.join(editorRoot, 'video-surface-panel.html')));
-    assert.match(read('src/VideoSurfacePreviewManager.js'), /convertTargetPosition\(state, previousTarget, ownerEventId\) \{/);
+    assert.ok(fs.existsSync(path.join(editorRoot, 'media-surface-panel.html')));
+    assert.match(read('src/MediaSurfacePreviewManager.js'), /convertTargetPosition\(state, previousTarget, ownerEventId\) \{/);
 });
 
-test('saved surfaces open their Show command from the map preview and list under their own name', () => {
-    const manager = new VideoSurfacePreviewManager({}, {});
+test('saved surfaces open their Show command in Media Surface mode and list under their own name', () => {
+    const manager = new MediaSurfacePreviewManager({mediaSurfaceManager:{panel:{}}}, {});
     manager.map = { id: 7, events: [] };
     const record = { source: { mapId: 7, eventId: 1, pageIndex: 0, commandIndex: 2 } };
     assert.equal(manager.canEdit(record), true);
@@ -506,12 +509,12 @@ test('saved surfaces open their Show command from the map preview and list under
     manager.authoring = {};
     assert.equal(manager.canEdit(record), false, 'never while another surface is being authored');
 
-    const source = read('src/VideoSurfacePreviewManager.js');
+    const source = read('src/MediaSurfacePreviewManager.js');
     assert.match(source, /mesh\.on\('pointertap', tap\)/, 'PIXI previews open on click');
     assert.match(source, /surface\.addEventListener\('click', click\)/, 'screen previews open on click');
     assert.match(source, /Math\.hypot\(upEvent\.clientX - startX, upEvent\.clientY - startY\) < 4\) this\.editRecord/, '3D previews open on click, not drag');
     assert.match(source, /context\?\.editing && editor\.operation === 'ShowVideoSurface'/, 'the saved preview hides while its command is edited');
-    const editor = read('src/event/commands/VideoSurfaceEditor.js');
+    const editor = read('src/event/commands/MediaSurfaceEditor.js');
     assert.match(editor, /this\._button\('Go to Event'\)/);
     const list = read('src/event/EventCommandList.js');
     assert.match(list, /pluginName === 'RPGReactor' && commandName\) \{\n\s+\/\/ Reactor's own commands/, 'Reactor commands are not listed as Plugin Command');
@@ -519,38 +522,38 @@ test('saved surfaces open their Show command from the map preview and list under
 });
 
 test('2D previews stack among the tile layers by layer, like the game sorts them', () => {
-    const band = layer => VideoSurfacePreviewManager.pixiBandFor(layer);
+    const band = layer => MediaSurfacePreviewManager.pixiBandFor(layer);
     assert.equal(band(-1), 'under', 'negative layers sit below every tile');
     assert.equal(band(0), 'mid');
     assert.equal(band(3), 'mid', 'the default layer sits between lower and upper tiles, with characters');
     assert.equal(band(4), 'over', 'above the upper tiles');
     assert.equal(band(5), 'top', 'above characters');
     assert.equal(band(undefined), 'mid');
-    const manager = read('src/VideoSurfacePreviewManager.js');
+    const manager = read('src/MediaSurfacePreviewManager.js');
     assert.match(manager, /insert\(this\.pixiBands\.under, layers\.ground, layers\.parallax\)/);
     assert.match(manager, /insert\(this\.pixiBands\.mid, layers\.upper0, layers\.a1lower3\)/);
     assert.match(manager, /if \(root && owner\.container\.parent !== root\) root\.addChild\(owner\.container\);/, 'changing the layer re-parents live');
-    const editor = read('src/event/commands/VideoSurfaceEditor.js');
+    const editor = read('src/event/commands/MediaSurfaceEditor.js');
     assert.match(editor, /'rr-number-stepper vs-stepper'/, 'numeric fields use the themed stepper');
     assert.match(editor, /input\.stepUp\(\) : input\.stepDown\(\)/);
 });
 
 test('previews show scanlines, stand on their anchor like the game, clamp typed values, and can be toggled', () => {
-    const manager = read('src/VideoSurfacePreviewManager.js');
-    const editor = read('src/event/commands/VideoSurfaceEditor.js');
+    const manager = read('src/MediaSurfacePreviewManager.js');
+    const editor = read('src/event/commands/MediaSurfaceEditor.js');
     const runtime = fs.readFileSync(path.join(editorRoot, '..', 'runtime', 'reactor_media_surfaces.js'), 'utf8');
     assert.match(manager, /_syncPixiScanlines\(owner, corners\)/);
     assert.match(manager, /_syncThreeScanlines\(owner\)/);
     assert.match(manager, /repeating-linear-gradient\(rgba\(0,0,0,\$\{scan \* 0\.5\}\) 0 1px, transparent 1px 2px\)/, 'one dark line every other pixel, like PSYCHRONIC_VideoOverlay');
     assert.match(manager, /y \+= 2\) context\.fillRect\(0, y, width, 1\)/);
     assert.match(runtime, /y \+= 2\) context\.fillRect\(0, y, canvas\.width, 1\)/);
-    assert.equal(VideoSurfacePreviewManager.scanlineAmount({ scanlines: 40 }), 1);
-    assert.equal(VideoSurfacePreviewManager.standingLift({ target: 'thisEvent', height: 180, scaleY: -1 }), 90);
-    assert.equal(VideoSurfacePreviewManager.standingLift({ target: 'map', height: 180, scaleY: 1, z: 2 }), 90, 'Z is 3D elevation only; it never moves the 2D placement');
+    assert.equal(MediaSurfacePreviewManager.scanlineAmount({ scanlines: 40 }), 1);
+    assert.equal(MediaSurfacePreviewManager.standingLift({ target: 'thisEvent', height: 180, scaleY: -1 }), 90);
+    assert.equal(MediaSurfacePreviewManager.standingLift({ target: 'map', height: 180, scaleY: 1, z: 2 }), 90, 'Z is 3D elevation only; it never moves the 2D placement');
     assert.match(runtime, /y -= descriptor\.height \* Math\.abs\(descriptor\.scaleY\) \/ 2;/);
     assert.doesNotMatch(runtime, /descriptor\.z \* th/);
-    assert.equal(VideoSurfacePreviewManager.standingLift({ target: 'screen', height: 180, scaleY: 1 }), 0);
-    assert.match(fs.readFileSync(path.join(editorRoot, '..', 'runtime', 'reactor_main.js'), 'utf8'), /runtime revision: 20260904.17/);
+    assert.equal(MediaSurfacePreviewManager.standingLift({ target: 'screen', height: 180, scaleY: 1 }), 0);
+    assert.match(fs.readFileSync(path.join(editorRoot, '..', 'runtime', 'reactor_main.js'), 'utf8'), /runtime revision: 20260906\.19/);
     assert.match(editor, /if \(options\.max !== undefined && next > options\.max\) next = options\.max;/);
     assert.match(editor, /if \(final && options\.min !== undefined && next < options\.min\) next = options\.min;/);
     assert.match(manager, /setEnabled\(enabled\) \{/);
@@ -582,7 +585,7 @@ test('Preview Event draws a page graphic in place and is remembered in the map s
 });
 
 test('Depth pushes a surface toward the camera in 3D and leaves the 2D feet row alone', () => {
-    const manager = new VideoSurfacePreviewManager({}, {});
+    const manager = new MediaSurfacePreviewManager({}, {});
     manager.map = { id: 1, width: 4, height: 4, events: [] };
     manager.tilemapManager = { TILE_SIZE: 48 };
     const base = { target: 'map', x: 2, y: 3, z: 0, depth: 0, height: 96, scaleY: 1 };
@@ -594,7 +597,7 @@ test('Depth pushes a surface toward the camera in 3D and leaves the 2D feet row 
 });
 
 test('3D previews composite layer 5+ surfaces over the map like the game overlay pass', () => {
-    const manager = read('src/VideoSurfacePreviewManager.js');
+    const manager = read('src/MediaSurfacePreviewManager.js');
     assert.match(manager, /return mapScene\.aboveBillboardsGroup\?\.\(\) \|\| mapScene\.aboveGroup\?\.\(\) \|\| null;/);
     assert.doesNotMatch(manager, /mapScene\.aboveGroup\?\.\(\)\n/, 'no surface joins the star-tile group directly');
     const map3d = read('src/MapEditor3D.js');
@@ -655,7 +658,7 @@ test('the map note is the 3D switch, the sidecar always loads on disk, and flat-
     assert.match(r3d, /this\.applyEventModelPose\(state\.object, spec, this\.characterModelDir8\(character\)\);/, 'sprite-mode pose matches the scene');
     assert.match(r3d, /dashing: typeof Game_Follower !== "undefined" && character instanceof Game_Follower\n\s+\? \$gamePlayer\.isDashing\(\)\n\s+: !!\(character\.isDashing && character\.isDashing\(\)\),\n\s+distance,\n\s+scale: state\.scale,/, 'and so does the animation driver');
     assert.match(video, /if \(this\.video\.readyState >= 1 && this\.video\.videoWidth > 0\) loadSource\(\);/, 'PIXI never restarts a load the element already started');
-    assert.match(read('src/event/commands/VideoSurfaceEditor.js'), /return noted && map\?\.reactor3d\?\.mode !== '2d';/);
+    assert.match(read('src/event/commands/MediaSurfaceEditor.js'), /return noted && map\?\.reactor3d\?\.mode !== '2d';/);
 });
 
 test('frameModelSprite looks down at the map pitch and frames the bounding sphere about the ground origin', () => {
@@ -723,7 +726,7 @@ test('priority 3 draws above the tile layers yet y-sorts against characters in f
 });
 
 test('the 3D view puts pose rings around the surface being authored', () => {
-    const manager = read('src/VideoSurfacePreviewManager.js');
+    const manager = read('src/MediaSurfacePreviewManager.js');
     assert.match(manager, /if \(record\.authoring\) this\._buildSurfaceRings\(owner, group\);/);
     assert.match(manager, /yaw: makeRing\(0x3ddc84, mesh => \{ mesh\.rotation\.x = Math\.PI \/ 2; \}\),\n\s+pitch: makeRing\(0xff5c5c, mesh => \{ mesh\.rotation\.y = Math\.PI \/ 2; \}\),\n\s+roll: makeRing\(0x5ca8ff, \(\) => \{\}\)/, 'the model picker\'s rings and colours');
     assert.match(manager, /rings\.roll\.group\.rotation\.order = 'YXZ';/, 'gimbal nesting');
@@ -731,7 +734,7 @@ test('the 3D view puts pose rings around the surface being authored', () => {
     assert.match(manager, /if \(best && best\.d <= 12\) nearest\[key\] = best;/, 'picked by screen distance to the drawn circle');
     assert.match(manager, /surface\.addEventListener\('pointermove', this\._onThreePointerMove, true\);/, 'hover emphasis');
     assert.match(manager, /this\._disposeSurfaceRings\(owner\);/);
-    assert.match(read('src/event/commands/VideoSurfaceEditor.js'), /In the 3D view, drag the rings around the video to rotate it\./);
+    assert.match(read('src/event/commands/MediaSurfaceEditor.js'), /Ctrl \+ right-drag: look around\./);
 });
 
 test('clearing the 3D scene survives previewed model groups among the event markers', () => {
@@ -741,14 +744,14 @@ test('clearing the 3D scene survives previewed model groups among the event mark
 });
 
 test('the editor accepts image files and lists pictures beside movies', () => {
-    assert.equal(VideoSurfaceEditor.safeMoviePath('posters/launch.png'), true);
-    assert.equal(VideoSurfaceEditor.safeMoviePath('decals/rust.WEBP'), true);
-    assert.equal(VideoSurfaceEditor.safeMoviePath('anim/loop.gif'), false);
-    assert.equal(VideoSurfaceEditor.isImageFile('posters/launch.png'), true);
-    assert.equal(VideoSurfaceEditor.isImageFile('clips/intro.webm'), false);
+    assert.equal(MediaSurfaceEditor.safeMoviePath('posters/launch.png'), true);
+    assert.equal(MediaSurfaceEditor.safeMoviePath('decals/rust.WEBP'), true);
+    assert.equal(MediaSurfaceEditor.safeMoviePath('anim/loop.gif'), false);
+    assert.equal(MediaSurfaceEditor.isImageFile('posters/launch.png'), true);
+    assert.equal(MediaSurfaceEditor.isImageFile('clips/intro.webm'), false);
 
-    const errors = VideoSurfaceEditor.validate('ShowVideoSurface', Object.assign(
-        VideoSurfaceEditor.defaults(), { movie: 'posters/launch.png', target: 'map' }));
+    const errors = MediaSurfaceEditor.validate('ShowVideoSurface', Object.assign(
+        MediaSurfaceEditor.defaults(), { movie: 'posters/launch.png', target: 'map' }));
     assert.deepEqual(errors, [], 'an image file passes Show validation');
 });
 
@@ -761,7 +764,7 @@ test('mediaFiles merges the movies folder with img/pictures', () => {
     fs.writeFileSync(path.join(dir, 'movies', 'clips', 'intro.webm'), 'x');
     fs.writeFileSync(path.join(dir, 'img', 'pictures', 'posters', 'launch.png'), 'x');
     try {
-        const editor = new VideoSurfaceEditor(null, { currentProject: { path: dir } });
+        const editor = new MediaSurfaceEditor(null, { currentProject: { path: dir } });
         const names = editor.mediaFiles().map(file => file.relativePath).sort();
         assert.deepEqual(names, ['clips/intro.webm', 'posters/launch.png']);
     } finally {
@@ -771,14 +774,14 @@ test('mediaFiles merges the movies folder with img/pictures', () => {
 
 test('the dialog hides playback-only controls for a still', () => {
     const fs = require('node:fs');
-    const source = fs.readFileSync(path.join(editorRoot, 'src', 'event', 'commands', 'VideoSurfaceEditor.js'), 'utf8');
+    const source = fs.readFileSync(path.join(editorRoot, 'src', 'event', 'commands', 'MediaSurfaceEditor.js'), 'utf8');
     assert.match(source, /_syncMediaFields\(\) \{/);
     assert.match(source, /\['volume', 'playbackRate', 'loop', 'muted', 'wait'\]/);
     // The workspace previews a still in an <img> while the video stays dark.
     assert.match(source, /vs-image-preview/);
-    assert.match(source, /VideoSurfaceEditor\.isImageFile\(this\.data\.movie\)/);
+    assert.match(source, /MediaSurfaceEditor\.isImageFile\(this\.data\.movie\)/);
     // The live map preview manager grew the same branch in all backends.
-    const preview = fs.readFileSync(path.join(editorRoot, 'src', 'VideoSurfacePreviewManager.js'), 'utf8');
+    const preview = fs.readFileSync(path.join(editorRoot, 'src', 'MediaSurfacePreviewManager.js'), 'utf8');
     assert.match(preview, /_isImage\(file\)/);
     assert.match(preview, /img', 'pictures'/);
     assert.match(preview, /tagName === 'IMG'/);
@@ -787,7 +790,7 @@ test('the dialog hides playback-only controls for a still', () => {
 test('the media file is chosen through the shared picker, per kind', () => {
     const fs = require('node:fs');
     const source = fs.readFileSync(
-        path.join(editorRoot, 'src', 'event', 'commands', 'VideoSurfaceEditor.js'), 'utf8');
+        path.join(editorRoot, 'src', 'event', 'commands', 'MediaSurfaceEditor.js'), 'utf8');
     // A kind selector (Video / Image) and a Browse button replace the flat
     // mixed list; each kind opens the shared picker on its own folder.
     assert.match(source, /vs-media-kind/);
@@ -797,4 +800,117 @@ test('the media file is chosen through the shared picker, per kind', () => {
     assert.match(source, /zIndex: 21050/);
     // Movies keep the playing-video preview; pictures preview as images.
     assert.match(source, /mediaType: kind === 'image' \? undefined : 'video'/);
+});
+
+test('media surface move arrows map world height to Z and bound horizontal travel to pixels',()=>{
+ const manager=new MediaSurfacePreviewManager({},{}),before=global.RRAxisArrows3D,oldThree=global.THREE;let axis='y';
+ global.THREE={};global.RRAxisArrows3D={pick:()=>({axis,travel:()=>2})};manager.mapEditor3D={camera:{}};manager._threeInputRect=()=>({width:800,height:600});manager.tilemapManager={TILE_SIZE:32};manager._updateThreeOwner=()=>{};const changed=[];manager._authoringChanged=fields=>changed.push(...fields);
+ try{for(const target of ['map','event','player','thisEvent'])for(const worldAxis of ['x','y','z']){
+  axis=worldAxis;const owner={arrows:{},state:{target,x:10,y:20,z:3,rotationX:15}},grab=manager._pickSurfaceArrow(owner,0,0);manager._dragSurfaceArrow(owner,grab,20,20);
+  const expected={target,x:10,y:20,z:3,rotationX:15},key={x:'x',y:'z',z:'y'}[worldAxis];expected[key]+=key==='z'||target==='map'?2:64;
+  assert.deepEqual(owner.state,expected);assert.equal(changed.at(-1),key);
+ }}finally{global.RRAxisArrows3D=before;global.THREE=oldThree;}
+});
+test('live position sliders retain precision, recenter after a gesture, follow typed values and hide for screen targets',()=>{
+ const e=new MediaSurfaceEditor({},{});e.data={target:'map',x:24,y:18,z:2};e._usesThree=()=>e.data.target!=='screen';e.positionSliders=Object.fromEntries(['x','y','z'].map(k=>[k,{style:{},min:'',max:''}]));
+ e._syncPositionSliders(true);assert.equal(e.positionSliders.x.min,16);assert.equal(e.positionSliders.x.max,32);assert.equal(e.positionSliders.z.min,-6);
+ e.data.z=2.7;e._syncPositionSliders();assert.equal(e.positionSliders.z.value,2.7);assert.equal(e.positionSliders.z.max,10);
+ e._syncPositionSliders(true);assert.equal(e.positionSliders.z.max,10.7);e.data.z=50;e._syncPositionSliders();assert.equal(e.positionSliders.z.value,50);assert.equal(e.positionSliders.z.min,42);
+ e.data.target='event';e._syncPositionSliders();assert.equal(e.positionSliders.x.max,408);assert.equal(e.positionSliders.z.max,58);
+ e.data.target='screen';e._syncPositionSliders();assert.equal(e.positionSliders.x.style.display,'none');
+});
+
+test('map-owned surfaces preview without events and hide only their own saved copy while editing', () => {
+    const map={id:8,reactor3d:{mediaSurfaces:[{id:4,movie:'panel.png',x:3,y:5,z:2,target:'map'}]}};
+    const records=MediaSurfacePreviewManager.scanMap(map);
+    assert.equal(records.length,1);assert.equal(records[0].state.movie,'panel.png');
+    assert.deepEqual(records[0].source,{mapId:8,surfaceId:4});
+    const manager=new MediaSurfacePreviewManager({},null);manager.map=map;manager.tilemapManager={};manager.records=records;manager.refreshBackend=()=>{};
+    manager.beginAuthoring({operation:'ShowVideoSurface'},records[0].state,{mapSurface:true,editing:true,source:{surfaceId:4}});
+    assert.equal(manager.authoring.replacedKey,'map:8:4');
+    assert.equal(manager._visibleRecords().length,1);assert.equal(manager._visibleRecords()[0].key,'__authoring__');
+    manager.endAuthoring();assert.equal(manager._visibleRecords()[0].key,'map:8:4');
+});
+
+test('Shift corner resizing preserves the original quad about its opposite corner', () => {
+    const original = [{x:0,y:0},{x:200,y:0},{x:200,y:100},{x:0,y:100}];
+    for (const index of [0,1,2,3]) {
+        const anchor=original[(index+2)%4],point=original[index],corners=[];
+        for (const factor of [.5,1.8]) {
+            MediaSurfaceEditor.resizeCorner(corners,original,index,{
+                x:anchor.x+(point.x-anchor.x)*factor,
+                y:anchor.y+(point.y-anchor.y)*factor
+            },true);
+            assert.deepEqual(corners[(index+2)%4],anchor);
+            const width=Math.abs(corners[1].x-corners[0].x),height=Math.abs(corners[3].y-corners[0].y);
+            assert.equal(width/height,2);assert.ok(Math.abs(width-200*factor)<1e-8);
+        }
+    }
+});
+
+test('releasing Shift restores free corner placement without retaining scaled neighbours', () => {
+    const original=[{x:0,y:0},{x:200,y:0},{x:200,y:100},{x:0,y:100}],corners=[];
+    MediaSurfaceEditor.resizeCorner(corners,original,2,{x:300,y:110},true);
+    assert.equal(corners[2].x/corners[2].y,2);
+    MediaSurfaceEditor.resizeCorner(corners,original,2,{x:300,y:110},false);
+    assert.deepEqual(corners,[original[0],original[1],{x:300,y:110},original[3]]);
+    assert.deepEqual(original[2],{x:200,y:100});
+});
+
+test('Shift preserves warped shape and does not invert or divide by a collapsed diagonal', () => {
+    const original=[{x:0,y:0},{x:150,y:20},{x:180,y:100},{x:10,y:90}],corners=[];
+    MediaSurfaceEditor.resizeCorner(corners,original,2,{x:360,y:200},true);
+    assert.deepEqual(corners,original.map(p=>({x:p.x*2,y:p.y*2})));
+    MediaSurfaceEditor.resizeCorner(corners,original,2,{x:-180,y:-100},true);
+    assert.ok(corners[2].x>0&&corners[2].y>0);
+    const flat=Array.from({length:4},()=>({x:0,y:0}));
+    MediaSurfaceEditor.resizeCorner(corners,flat,2,{x:10,y:20},true);assert.deepEqual(corners,flat);
+});
+
+test('legacy editor imports and globals resolve to the canonical media surface classes', () => {
+    assert.equal(require('../src/event/commands/VideoSurfaceEditor.js'), MediaSurfaceEditor);
+    assert.equal(require('../src/VideoSurfacePreviewManager.js'), MediaSurfacePreviewManager);
+    assert.equal(globalThis.MediaSurfaceEditor, globalThis.VideoSurfaceEditor);
+    assert.equal(globalThis.MediaSurfacePreviewManager, globalThis.VideoSurfacePreviewManager);
+});
+
+test('live map corner drag keeps the anchor and three unselected projected corners stationary', () => {
+    const previousWindow = global.window, listeners = new Map();
+    global.window = {addEventListener(type, fn){listeners.set(type, fn);},removeEventListener(type){listeners.delete(type);}};
+    try {
+        for (const target of ['map','event','screen']) {
+            for (const tilted of [false,true]) {
+                const manager = new MediaSurfacePreviewManager({}, {});
+                const state = {...MediaSurfaceEditor.defaults(),target,eventId:1,x:5,y:7,
+                    rotationX:tilted?22:0,rotationY:tilted?-16:0,rotationZ:tilted?13:0};
+                manager.tilemapManager={TILE_WIDTH:48,TILE_HEIGHT:48};manager.map={events:[null,{id:1,x:2,y:3}]};
+                manager._clientToOwner=(_owner,x,y)=>({x,y});
+                manager._updatePixiOwner=()=>{};
+                const changed=[];manager._authoringChanged=fields=>changed.push(...fields);
+                const owner={state,record:{ownerEventId:1}};
+                const pixels=()=>{const a=manager._anchor2d(state,1);return manager._transformedCorners(state).map(p=>({x:p.x+a.x,y:p.y+a.y}));};
+                const before=pixels(),anchor=manager._anchor2d(state,1),size=[state.width,state.height];
+                manager._startPixiDrag({clientX:before[0].x,clientY:before[0].y,preventDefault(){}},owner,{corners:[0]});
+                listeners.get('pointermove')({clientX:before[0].x-30,clientY:before[0].y-40,shiftKey:false});
+                const after=pixels();
+                assert.deepEqual(manager._anchor2d(state,1),anchor);
+                assert.deepEqual([state.width,state.height],size);
+                assert.deepEqual(after.slice(1),before.slice(1));
+                assert.ok(Math.abs(after[0].x-before[0].x+30)<.02);
+                assert.ok(Math.abs(after[0].y-before[0].y+40)<.02);
+                assert.deepEqual(changed,['corners']);listeners.get('pointerup')();manager.destroy();
+            }
+        }
+    } finally {global.window=previousWindow;}
+});
+
+test('independent 3D corners round-trip without reinterpreting a legacy 2D warp', () => {
+    const data={...MediaSurfaceEditor.defaults(),movie:'display.png',target:'map'};
+    const legacy=MediaSurfaceEditor.build('ShowVideoSurface',data);
+    assert.equal(legacy.parameters[3].worldCorners,undefined);
+    data.worldCorners=[{x:-.7,y:-.8},{x:.5,y:-.5},{x:.5,y:.5},{x:-.5,y:.5}];
+    const command=MediaSurfaceEditor.build('ShowVideoSurface',data);
+    const parsed=MediaSurfaceEditor.parse(command);assert.deepEqual(parsed.worldCorners,data.worldCorners);
+    const transform=MediaSurfaceEditor.build('TransformVideoSurface',data,0,{changedFields:['worldCorners']});
+    assert.deepEqual(transform.parameters[3].worldCorners,data.worldCorners);assert.equal(transform.parameters[3].width,undefined);
 });

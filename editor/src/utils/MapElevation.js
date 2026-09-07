@@ -146,13 +146,15 @@
                 return pages && typeof pages === 'object'
                     && Object.keys(pages).some(page => pages[page] && pages[page].name);
             }));
+        const lifted = Object.values(sidecar3d?.eventZ || {}).some(value => Number.isFinite(Number(value)) && Number(value) > 0);
         const previewed = !!(sidecar3d && sidecar3d.eventPreviews
             && Object.keys(sidecar3d.eventPreviews).length);
         const roomed = !!(sidecar3d && sidecar3d.room);
         const propped = !!(sidecar3d && Array.isArray(sidecar3d.props) && sidecar3d.props.length);
         const lit = !!(sidecar3d && ((Array.isArray(sidecar3d.lights) && sidecar3d.lights.length)
             || sidecar3d.lighting));
-        if (isFlat(mapData) && !grouped && !modeled && !previewed && !roomed && !propped && !lit
+        const media = Array.isArray(sidecar3d?.mediaSurfaces) && sidecar3d.mediaSurfaces.length > 0;
+        if (isFlat(mapData) && !grouped && !media && !modeled && !lifted && !previewed && !roomed && !propped && !lit
             && !(sidecar3d && sidecar3d.camera)) {
             if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
             return true;

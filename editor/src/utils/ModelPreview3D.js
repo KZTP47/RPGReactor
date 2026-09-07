@@ -155,7 +155,7 @@ class ModelPreview3D {
                 || Math.abs(this.viewGoal.distance - this.view.distance) > 0.001;
             if (moving || now - this.lastInputAt < 1000 || now - this.lastRenderAt >= 100) {
                 Reactor3D.aimCamera(this.camera, { x: -0.5, y: 0, z: -0.5 }, this.view);
-                this.renderer.render(this.scene, this.camera);
+                Reactor3D.renderScene(this.renderer, this.scene, this.camera);
                 this.lastRenderAt = now;
             }
             this.raf = requestAnimationFrame(this.tick);

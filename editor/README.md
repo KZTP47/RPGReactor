@@ -1,5 +1,7 @@
 # RPG Reactor
 
+For the consolidated update, read the [0.98.5 release notes](../docs/posts/release-notes-0.98.5.md). Battle Rooms and visual Action Sequences are available as opt-in systems; see the [battle guide](../docs/BATTLE-PRESENTATION.md) for setup and current compatibility limits.
+
 RPG Reactor 0.98.5 is an open-source, cross-platform RPG game editor and runtime for RPG Maker MV/MZ-compatible projects, built on NW.js, PixiJS v8 and Three.js. RPG Reactor provides its own modern runtime, PixiJS 8 for 2D and Three.js for HD-2D/3D maps, while preserving compatibility with RPG Maker project data and targeting backwards compatibility with both RPG Maker MZ and MV plugins. Create 2D and HD-2D RPG games with a complete development environment featuring map editing, event scripting, database management, and game testing capabilities.
 
 ## Features

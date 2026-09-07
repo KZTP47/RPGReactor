@@ -1,10 +1,10 @@
 //=============================================================================
 // reactor_main.js v1.9.0 — RPG Reactor runtime entry point
 // RPG Reactor runtime version: 0.98.5
-// RPG Reactor runtime revision: 20260904.17
+// RPG Reactor runtime revision: 20260906.19
 // The same stamp, reachable from the F12 console: which engine is this
 // window actually running? Type RPG_REACTOR_RUNTIME_REVISION to see.
-globalThis.RPG_REACTOR_RUNTIME_REVISION = "20260904.17";
+globalThis.RPG_REACTOR_RUNTIME_REVISION = "20260906.19";
 //=============================================================================
 
 const scriptUrls = [
@@ -15,11 +15,14 @@ const scriptUrls = [
     "js/libs/localforage.min.js",
     "js/libs/effekseer.min.js",
     "js/libs/vorbisdecoder.js",
+    "js/reactor_json.js",
     "js/reactor_core.js",
     // Small; declares the namespace and reads map mode. three.js itself is
     // ~2 MB and loads on demand from Reactor3D.ensureLoaded(), so a project
     // with no 3D maps never downloads it.
     "js/reactor_3d.js",
+    "js/reactor_battle_data.js",
+    "js/reactor_battle_room.js",
     "js/reactor_managers.js",
     "js/reactor_objects.js",
     "js/reactor_scenes.js",
@@ -31,6 +34,8 @@ const scriptUrls = [
     "js/reactor_ui.js",
     "js/reactor_quests.js",
     "js/reactor_mv_compat.js",
+    "js/reactor_battle_presentation.js",
+    "js/reactor_battle_events.js",
     "js/reactor_plugins.js"
 ];
 const effekseerWasmUrl = "js/libs/effekseer.wasm";
@@ -178,6 +183,7 @@ class Main {
         if (window.ReactorUI && window.ReactorUI.installSceneRouting) {
             window.ReactorUI.installSceneRouting();
         }
+        window.ReactorBattlePresentation?.install();
         SceneManager.run(Scene_Boot);
     }
 

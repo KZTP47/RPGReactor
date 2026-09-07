@@ -44,7 +44,7 @@ const RR_DB_TYPE_KEYS = {
     weapons: 'menu.weapons', armors: 'menu.armors', enemies: 'menu.enemies', troops: 'menu.troops',
     states: 'menu.states', animations: 'menu.animations', tilesets: 'menu.tilesets', commonEvents: 'menu.commonEvents',
     userInterfaces: 'menu.userInterfaces',
-    quests: 'menu.quests', reactor3d: 'menu.models3d',
+    actionSequences: 'menu.actionSequences', quests: 'menu.quests', reactor3d: 'menu.models3d',
     system: 'menu.system', system1: 'db.system1', system2: 'db.system2', types: 'menu.types', terms: 'menu.terms'
 };
 
@@ -212,7 +212,7 @@ const RR_I18N_STRINGS = {
         // Menus & dialog chrome (event/plugin context menus, pickers)
         'common.none': '(None)', 'eventCtx.newEvent': 'New Event', 'eventCtx.editEvent': 'Edit Event', 'eventCtx.cutEvent': 'Cut Event',
         'eventCtx.copyEvent': 'Copy Event', 'eventCtx.pasteEvent': 'Paste Event', 'eventCtx.deleteEvent': 'Delete Event', 'eventCtx.findEvent': 'Find Event...',
-        'eventCtx.findNext': 'Find Next Event', 'eventCtx.findPrev': 'Find Previous Event', 'eventCtx.playerFacing': 'Player Facing', 'eventCtx.setStart': 'Set Starting Position', 'eventCtx.player': 'Player', 'eventCtx.previewEvent': 'Preview Event', 'eventCtx.previewPage': 'Page {n}', 'eventCtx.hidePreview': 'Hide Preview', 'toolbar.title.videoPreviews': 'Show video surface previews',
+        'eventCtx.findNext': 'Find Next Event', 'eventCtx.findPrev': 'Find Previous Event', 'eventCtx.playerFacing': 'Player Facing', 'eventCtx.setStart': 'Set Starting Position', 'eventCtx.player': 'Player', 'eventCtx.previewEvent': 'Preview Event', 'eventCtx.previewPage': 'Page {n}', 'eventCtx.hidePreview': 'Hide Preview', 'toolbar.title.videoPreviews': 'Show media surface previews',
         'eventCtx.boat': 'Boat', 'eventCtx.ship': 'Ship', 'eventCtx.airship': 'Airship', 'eventFind.title': 'Find Event',
         'eventFind.searchBy': 'Search by name or ID:', 'eventFind.find': 'Find', 'pluginCtx.pastePlugin': 'Paste Plugin', 'pluginCtx.pasteAbove': 'Paste Above',
         'pluginCtx.removePlugin': 'Remove Plugin', 'pluginCtx.copyN': 'Copy {n} Plugins', 'pluginCtx.cutN': 'Cut {n} Plugins', 'pluginCtx.duplicateN': 'Duplicate {n} Plugins',
@@ -11452,6 +11452,24 @@ Object.assign(RR_I18N_STRINGS.id, { 'menu.userInterfaces': 'Antarmuka pengguna' 
 Object.assign(RR_I18N_STRINGS.vi, { 'menu.userInterfaces': 'Giao diện người dùng' });
 Object.assign(RR_I18N_STRINGS.th, { 'menu.userInterfaces': 'ส่วนติดต่อผู้ใช้' });
 Object.assign(RR_I18N_STRINGS.tr, { 'menu.userInterfaces': 'Kullanıcı arayüzleri' });
+Object.assign(RR_I18N_STRINGS["en"], { "menu.actionSequences": "Action Sequences" });
+Object.assign(RR_I18N_STRINGS["ja"], { "menu.actionSequences": "アクションシーケンス" });
+Object.assign(RR_I18N_STRINGS["es"], { "menu.actionSequences": "Secuencias de acciones" });
+Object.assign(RR_I18N_STRINGS["zh-Hant"], { "menu.actionSequences": "動作序列" });
+Object.assign(RR_I18N_STRINGS["zh-Hans"], { "menu.actionSequences": "动作序列" });
+Object.assign(RR_I18N_STRINGS["ru"], { "menu.actionSequences": "Последовательности действий" });
+Object.assign(RR_I18N_STRINGS["pt"], { "menu.actionSequences": "Sequências de ações" });
+Object.assign(RR_I18N_STRINGS["de"], { "menu.actionSequences": "Aktionssequenzen" });
+Object.assign(RR_I18N_STRINGS["fr"], { "menu.actionSequences": "Séquences d’actions" });
+Object.assign(RR_I18N_STRINGS["el"], { "menu.actionSequences": "Ακολουθίες ενεργειών" });
+Object.assign(RR_I18N_STRINGS["ko"], { "menu.actionSequences": "액션 시퀀스" });
+Object.assign(RR_I18N_STRINGS["ar"], { "menu.actionSequences": "تسلسلات الحركات" });
+Object.assign(RR_I18N_STRINGS["it"], { "menu.actionSequences": "Sequenze di azioni" });
+Object.assign(RR_I18N_STRINGS["pl"], { "menu.actionSequences": "Sekwencje akcji" });
+Object.assign(RR_I18N_STRINGS["id"], { "menu.actionSequences": "Urutan Aksi" });
+Object.assign(RR_I18N_STRINGS["vi"], { "menu.actionSequences": "Chuỗi hành động" });
+Object.assign(RR_I18N_STRINGS["th"], { "menu.actionSequences": "ลำดับแอ็กชัน" });
+Object.assign(RR_I18N_STRINGS["tr"], { "menu.actionSequences": "Eylem dizileri" });
 Object.assign(RR_I18N_STRINGS.en, { 'menu.quests': 'Quests' });
 Object.assign(RR_I18N_STRINGS.ja, { 'menu.quests': 'クエスト' });
 Object.assign(RR_I18N_STRINGS.es, { 'menu.quests': 'Misiones' });
@@ -17672,6 +17690,675 @@ Object.assign(RR_I18N_STRINGS["vi"], {"menu.models3d": "Mô hình 3D"});
 Object.assign(RR_I18N_STRINGS["th"], {"menu.models3d": "โมเดล 3D"});
 Object.assign(RR_I18N_STRINGS["tr"], {"menu.models3d": "3D Modeller"});
 
+// Short inspector disclosure label.
+for (const [language, label] of Object.entries({
+    ja: 'ヘルプ', es: 'Ayuda', 'zh-Hant': '說明', 'zh-Hans': '帮助', ru: 'Справка',
+    pt: 'Ajuda', de: 'Hilfe', fr: 'Aide', el: 'Βοήθεια', ko: '도움말', ar: 'مساعدة',
+    it: 'Aiuto', pl: 'Pomoc', id: 'Bantuan', vi: 'Trợ giúp', th: 'วิธีใช้', tr: 'Yardım'
+})) RR_TEXT_TRANSLATIONS[language].Help = label;
+
+// Actor Panel inspector labels.
+for (const [language, labels] of Object.entries({
+    "ja": [
+        "アクターパネル",
+        "ポートレート",
+        "ポートレートのサイズ"
+    ],
+    "es": [
+        "Panel de actores",
+        "Retrato",
+        "Tamaño del retrato"
+    ],
+    "fr": [
+        "Panneau des personnages",
+        "Portrait",
+        "Taille du portrait"
+    ],
+    "de": [
+        "Charakterbereich",
+        "Porträt",
+        "Porträtgröße"
+    ],
+    "it": [
+        "Pannello personaggi",
+        "Ritratto",
+        "Dimensione ritratto"
+    ],
+    "pt": [
+        "Painel de personagens",
+        "Retrato",
+        "Tamanho do retrato"
+    ],
+    "ru": [
+        "Панель персонажей",
+        "Портрет",
+        "Размер портрета"
+    ],
+    "ko": [
+        "액터 패널",
+        "초상화",
+        "초상화 크기"
+    ],
+    "ar": [
+        "لوحة الشخصيات",
+        "صورة الشخصية",
+        "حجم صورة الشخصية"
+    ],
+    "pl": [
+        "Panel postaci",
+        "Portret",
+        "Rozmiar portretu"
+    ],
+    "id": [
+        "Panel Aktor",
+        "Potret",
+        "Ukuran Potret"
+    ],
+    "th": [
+        "แผงตัวละคร",
+        "ภาพตัวละคร",
+        "ขนาดภาพตัวละคร"
+    ],
+    "tr": [
+        "Karakter Paneli",
+        "Portre",
+        "Portre Boyutu"
+    ],
+    "zh-Hans": [
+        "角色面板",
+        "肖像",
+        "肖像大小"
+    ],
+    "zh-Hant": [
+        "角色面板",
+        "肖像",
+        "肖像大小"
+    ],
+    "el": [
+        "Πίνακας χαρακτήρων",
+        "Πορτρέτο",
+        "Μέγεθος πορτρέτου"
+    ],
+    "vi": [
+        "Bảng nhân vật",
+        "Chân dung",
+        "Kích thước chân dung"
+    ]
+})) {
+    Object.assign(RR_TEXT_TRANSLATIONS[language], {
+        'Actor Panel': labels[0], Portrait: labels[1], 'Portrait size': labels[2]
+    });
+}
+
+// Actor Panel element and plugin-command controls.
+for (const [language, labels] of Object.entries({
+    "ja": [
+        "パネル要素",
+        "要素を編集",
+        "要素をリセット",
+        "プラグインのシーンを開く",
+        "先にアクターを選択",
+        "ラベル式",
+        "面取り",
+        "角丸",
+        "角"
+    ],
+    "es": [
+        "Elementos del panel",
+        "Editar elemento",
+        "Restablecer elemento",
+        "Abrir escena de plugin",
+        "Seleccionar actor primero",
+        "Expresión de etiqueta",
+        "Biselado",
+        "Redondeado",
+        "Esquinas"
+    ],
+    "zh-Hant": [
+        "面板元素",
+        "編輯元素",
+        "重設元素",
+        "開啟外掛場景",
+        "先選擇角色",
+        "標籤運算式",
+        "切角",
+        "圓角",
+        "角落"
+    ],
+    "zh-Hans": [
+        "面板元素",
+        "编辑元素",
+        "重置元素",
+        "打开插件场景",
+        "先选择角色",
+        "标签表达式",
+        "切角",
+        "圆角",
+        "边角"
+    ],
+    "ru": [
+        "Элементы панели",
+        "Изменить элемент",
+        "Сбросить элемент",
+        "Открыть сцену плагина",
+        "Сначала выбрать персонажа",
+        "Выражение подписи",
+        "Скошенные углы",
+        "Скругление",
+        "Углы"
+    ],
+    "pt": [
+        "Elementos do painel",
+        "Editar elemento",
+        "Redefinir elemento",
+        "Abrir cena de plugin",
+        "Selecionar ator primeiro",
+        "Expressão do rótulo",
+        "Chanfrado",
+        "Arredondado",
+        "Cantos"
+    ],
+    "de": [
+        "Panelelemente",
+        "Element bearbeiten",
+        "Element zurücksetzen",
+        "Plugin-Szene öffnen",
+        "Zuerst Figur wählen",
+        "Beschriftungsausdruck",
+        "Abgeschrägt",
+        "Abgerundet",
+        "Ecken"
+    ],
+    "fr": [
+        "Éléments du panneau",
+        "Modifier un élément",
+        "Réinitialiser l’élément",
+        "Ouvrir une scène de plugin",
+        "Choisir d’abord un personnage",
+        "Expression du libellé",
+        "Biseauté",
+        "Arrondi",
+        "Coins"
+    ],
+    "el": [
+        "Στοιχεία πίνακα",
+        "Επεξεργασία στοιχείου",
+        "Επαναφορά στοιχείου",
+        "Άνοιγμα σκηνής πρόσθετου",
+        "Επιλογή χαρακτήρα πρώτα",
+        "Έκφραση ετικέτας",
+        "Λοξότμηση",
+        "Στρογγυλεμένο",
+        "Γωνίες"
+    ],
+    "ko": [
+        "패널 요소",
+        "요소 편집",
+        "요소 초기화",
+        "플러그인 장면 열기",
+        "먼저 액터 선택",
+        "레이블 표현식",
+        "모서리 절삭",
+        "둥근 모서리",
+        "모서리"
+    ],
+    "ar": [
+        "عناصر اللوحة",
+        "تعديل العنصر",
+        "إعادة ضبط العنصر",
+        "فتح مشهد إضافة",
+        "اختيار الشخصية أولاً",
+        "تعبير التسمية",
+        "مشطوف",
+        "مستدير",
+        "الزوايا"
+    ],
+    "it": [
+        "Elementi del pannello",
+        "Modifica elemento",
+        "Ripristina elemento",
+        "Apri scena del plugin",
+        "Seleziona prima il personaggio",
+        "Espressione etichetta",
+        "Smussato",
+        "Arrotondato",
+        "Angoli"
+    ],
+    "pl": [
+        "Elementy panelu",
+        "Edytuj element",
+        "Resetuj element",
+        "Otwórz scenę wtyczki",
+        "Najpierw wybierz postać",
+        "Wyrażenie etykiety",
+        "Ścięte rogi",
+        "Zaokrąglone",
+        "Narożniki"
+    ],
+    "id": [
+        "Elemen panel",
+        "Edit elemen",
+        "Atur ulang elemen",
+        "Buka adegan plugin",
+        "Pilih aktor dahulu",
+        "Ekspresi label",
+        "Sudut terpotong",
+        "Membulat",
+        "Sudut"
+    ],
+    "vi": [
+        "Thành phần bảng",
+        "Sửa thành phần",
+        "Đặt lại thành phần",
+        "Mở cảnh plugin",
+        "Chọn nhân vật trước",
+        "Biểu thức nhãn",
+        "Vát góc",
+        "Bo tròn",
+        "Góc"
+    ],
+    "th": [
+        "องค์ประกอบแผง",
+        "แก้ไของค์ประกอบ",
+        "รีเซ็ตองค์ประกอบ",
+        "เปิดฉากปลั๊กอิน",
+        "เลือกตัวละครก่อน",
+        "นิพจน์ป้ายกำกับ",
+        "ตัดมุม",
+        "มุมโค้ง",
+        "มุม"
+    ],
+    "tr": [
+        "Panel öğeleri",
+        "Öğeyi düzenle",
+        "Öğeyi sıfırla",
+        "Eklenti sahnesini aç",
+        "Önce karakter seç",
+        "Etiket ifadesi",
+        "Pahlı",
+        "Yuvarlatılmış",
+        "Köşeler"
+    ]
+})) {
+    ["Panel elements","Edit element","Reset Element","Open plugin scene","Select actor first","Label expression","Cut Corners","Rounded","Corners"].forEach((key,index) => { RR_TEXT_TRANSLATIONS[language][key] = labels[index]; });
+}
+
+// Actor Panel custom parts and the expanded script editor.
+for (const [language, labels] of Object.entries({
+    "es": [
+        "Elemento personalizado",
+        "Etiqueta personalizada",
+        "Valor personalizado",
+        "Indicador personalizado",
+        "Circular",
+        "Ampliar script",
+        "Editar script",
+        "Variable del máximo",
+        "Vista previa del estilo"
+    ],
+    "fr": [
+        "Élément personnalisé",
+        "Libellé personnalisé",
+        "Valeur personnalisée",
+        "Jauge personnalisée",
+        "Circulaire",
+        "Agrandir le script",
+        "Modifier le script",
+        "Variable du maximum",
+        "Aperçu du style"
+    ],
+    "de": [
+        "Eigenes Element",
+        "Eigene Beschriftung",
+        "Eigener Wert",
+        "Eigene Anzeige",
+        "Kreisförmig",
+        "Skript vergrößern",
+        "Skript bearbeiten",
+        "Variable für Maximum",
+        "Stilvorschau"
+    ],
+    "it": [
+        "Elemento personalizzato",
+        "Etichetta personalizzata",
+        "Valore personalizzato",
+        "Indicatore personalizzato",
+        "Circolare",
+        "Espandi script",
+        "Modifica script",
+        "Variabile del massimo",
+        "Anteprima stile"
+    ],
+    "pt": [
+        "Elemento personalizado",
+        "Rótulo personalizado",
+        "Valor personalizado",
+        "Indicador personalizado",
+        "Circular",
+        "Expandir script",
+        "Editar script",
+        "Variável do máximo",
+        "Prévia do estilo"
+    ],
+    "ru": [
+        "Свой элемент",
+        "Своя подпись",
+        "Своё значение",
+        "Своя шкала",
+        "Круговая",
+        "Развернуть скрипт",
+        "Редактировать скрипт",
+        "Переменная максимума",
+        "Предпросмотр стиля"
+    ],
+    "el": [
+        "Προσαρμοσμένο στοιχείο",
+        "Προσαρμοσμένη ετικέτα",
+        "Προσαρμοσμένη τιμή",
+        "Προσαρμοσμένη μπάρα",
+        "Κυκλική",
+        "Ανάπτυξη σεναρίου",
+        "Επεξεργασία σεναρίου",
+        "Μεταβλητή μέγιστου",
+        "Προεπισκόπηση στυλ"
+    ],
+    "pl": [
+        "Własny element",
+        "Własna etykieta",
+        "Własna wartość",
+        "Własny wskaźnik",
+        "Kołowy",
+        "Rozwiń skrypt",
+        "Edytuj skrypt",
+        "Zmienna maksimum",
+        "Podgląd stylu"
+    ],
+    "ja": [
+        "カスタム要素",
+        "カスタムラベル",
+        "カスタム値",
+        "カスタムゲージ",
+        "円形",
+        "スクリプトを拡大",
+        "スクリプトを編集",
+        "最大値の変数",
+        "スタイルプレビュー"
+    ],
+    "ko": [
+        "사용자 지정 요소",
+        "사용자 지정 라벨",
+        "사용자 지정 값",
+        "사용자 지정 게이지",
+        "원형",
+        "스크립트 확장",
+        "스크립트 편집",
+        "최댓값 변수",
+        "스타일 미리보기"
+    ],
+    "zh-Hans": [
+        "自定义元素",
+        "自定义标签",
+        "自定义数值",
+        "自定义计量条",
+        "圆形",
+        "展开脚本",
+        "编辑脚本",
+        "最大值变量",
+        "样式预览"
+    ],
+    "zh-Hant": [
+        "自訂元素",
+        "自訂標籤",
+        "自訂數值",
+        "自訂計量條",
+        "圓形",
+        "展開腳本",
+        "編輯腳本",
+        "最大值變數",
+        "樣式預覽"
+    ],
+    "ar": [
+        "عنصر مخصص",
+        "تسمية مخصصة",
+        "قيمة مخصصة",
+        "مقياس مخصص",
+        "دائري",
+        "توسيع النص البرمجي",
+        "تحرير النص البرمجي",
+        "متغير الحد الأقصى",
+        "معاينة النمط"
+    ],
+    "id": [
+        "Elemen khusus",
+        "Label khusus",
+        "Nilai khusus",
+        "Pengukur khusus",
+        "Melingkar",
+        "Perluas skrip",
+        "Edit skrip",
+        "Variabel maksimum",
+        "Pratinjau gaya"
+    ],
+    "vi": [
+        "Thành phần tùy chỉnh",
+        "Nhãn tùy chỉnh",
+        "Giá trị tùy chỉnh",
+        "Thanh đo tùy chỉnh",
+        "Hình tròn",
+        "Mở rộng mã lệnh",
+        "Sửa mã lệnh",
+        "Biến giá trị tối đa",
+        "Xem trước kiểu"
+    ],
+    "th": [
+        "องค์ประกอบกำหนดเอง",
+        "ป้ายกำกับกำหนดเอง",
+        "ค่ากำหนดเอง",
+        "เกจกำหนดเอง",
+        "วงกลม",
+        "ขยายสคริปต์",
+        "แก้ไขสคริปต์",
+        "ตัวแปรค่าสูงสุด",
+        "ตัวอย่างรูปแบบ"
+    ],
+    "tr": [
+        "Özel öğe",
+        "Özel etiket",
+        "Özel değer",
+        "Özel gösterge",
+        "Dairesel",
+        "Betiği genişlet",
+        "Betiği düzenle",
+        "Maksimum değişkeni",
+        "Stil önizlemesi"
+    ]
+})) {
+    if (!RR_TEXT_TRANSLATIONS[language]) continue;
+    ["Custom Element","Custom Label","Custom Value","Custom Gauge","Circular","Expand Script","Edit Script","Maximum variable","Style Preview"].forEach((key,index) => { RR_TEXT_TRANSLATIONS[language][key] = labels[index]; });
+}
+
+// 3D-M inspector cards and search.
+for (const [language, labels] of Object.entries({
+    "ja": [
+        "見つかりません",
+        "配置",
+        "再生",
+        "検索",
+        "変形"
+    ],
+    "es": [
+        "Sin resultados",
+        "Colocación",
+        "Reproducción",
+        "Buscar",
+        "Transformación"
+    ],
+    "zh-Hant": [
+        "沒有結果",
+        "放置",
+        "播放",
+        "搜尋",
+        "變換"
+    ],
+    "zh-Hans": [
+        "没有结果",
+        "放置",
+        "播放",
+        "搜索",
+        "变换"
+    ],
+    "ru": [
+        "Нет результатов",
+        "Размещение",
+        "Воспроизведение",
+        "Поиск",
+        "Трансформация"
+    ],
+    "pt": [
+        "Nenhum resultado",
+        "Posicionamento",
+        "Reprodução",
+        "Buscar",
+        "Transformação"
+    ],
+    "de": [
+        "Keine Ergebnisse",
+        "Platzierung",
+        "Wiedergabe",
+        "Suchen",
+        "Transformation"
+    ],
+    "fr": [
+        "Aucun résultat",
+        "Placement",
+        "Lecture",
+        "Rechercher",
+        "Transformation"
+    ],
+    "el": [
+        "Χωρίς αποτελέσματα",
+        "Τοποθέτηση",
+        "Αναπαραγωγή",
+        "Αναζήτηση",
+        "Μετασχηματισμός"
+    ],
+    "ko": [
+        "검색 결과 없음",
+        "배치",
+        "재생",
+        "검색",
+        "변형"
+    ],
+    "ar": [
+        "لا توجد نتائج",
+        "الموضع",
+        "التشغيل",
+        "بحث",
+        "التحويل"
+    ],
+    "it": [
+        "Nessun risultato",
+        "Posizionamento",
+        "Riproduzione",
+        "Cerca",
+        "Trasformazione"
+    ],
+    "pl": [
+        "Brak wyników",
+        "Umieszczanie",
+        "Odtwarzanie",
+        "Szukaj",
+        "Przekształcenie"
+    ],
+    "id": [
+        "Tidak ada hasil",
+        "Penempatan",
+        "Pemutaran",
+        "Cari",
+        "Transformasi"
+    ],
+    "vi": [
+        "Không có kết quả",
+        "Bố trí",
+        "Phát",
+        "Tìm kiếm",
+        "Biến đổi"
+    ],
+    "th": [
+        "ไม่พบผลลัพธ์",
+        "การวาง",
+        "การเล่น",
+        "ค้นหา",
+        "การแปลง"
+    ],
+    "tr": [
+        "Sonuç yok",
+        "Yerleştirme",
+        "Oynatma",
+        "Ara",
+        "Dönüştürme"
+    ]
+})) {
+    ["No results","Placement","Playback","Search","Transform"].forEach((key,index) => { RR_TEXT_TRANSLATIONS[language][key] = labels[index]; });
+}
+
+// Procedural mouth authoring uses the runtime's speech preview.
+Object.assign(RR_TEXT_TRANSLATIONS["ar"], {"Mouth interior": "داخل الفم", "Dark cavity": "تجويف داكن", "Preview mouth": "معاينة الفم"});
+Object.assign(RR_TEXT_TRANSLATIONS["de"], {"Mouth interior": "Mundinneres", "Dark cavity": "Dunkler Hohlraum", "Preview mouth": "Mundvorschau"});
+Object.assign(RR_TEXT_TRANSLATIONS["el"], {"Mouth interior": "Εσωτερικό στόματος", "Dark cavity": "Σκοτεινή κοιλότητα", "Preview mouth": "Προεπισκόπηση στόματος"});
+Object.assign(RR_TEXT_TRANSLATIONS["es"], {"Mouth interior": "Interior de la boca", "Dark cavity": "Cavidad oscura", "Preview mouth": "Vista previa de la boca"});
+Object.assign(RR_TEXT_TRANSLATIONS["fr"], {"Mouth interior": "Intérieur de la bouche", "Dark cavity": "Cavité sombre", "Preview mouth": "Aperçu de la bouche"});
+Object.assign(RR_TEXT_TRANSLATIONS["id"], {"Mouth interior": "Bagian dalam mulut", "Dark cavity": "Rongga gelap", "Preview mouth": "Pratinjau mulut"});
+Object.assign(RR_TEXT_TRANSLATIONS["it"], {"Mouth interior": "Interno della bocca", "Dark cavity": "Cavità scura", "Preview mouth": "Anteprima bocca"});
+Object.assign(RR_TEXT_TRANSLATIONS["ja"], {"Mouth interior": "口の内部", "Dark cavity": "暗い空洞", "Preview mouth": "口のプレビュー"});
+Object.assign(RR_TEXT_TRANSLATIONS["ko"], {"Mouth interior": "입 내부", "Dark cavity": "어두운 구강", "Preview mouth": "입 미리보기"});
+Object.assign(RR_TEXT_TRANSLATIONS["pl"], {"Mouth interior": "Wnętrze ust", "Dark cavity": "Ciemna jama", "Preview mouth": "Podgląd ust"});
+Object.assign(RR_TEXT_TRANSLATIONS["pt"], {"Mouth interior": "Interior da boca", "Dark cavity": "Cavidade escura", "Preview mouth": "Prévia da boca"});
+Object.assign(RR_TEXT_TRANSLATIONS["ru"], {"Mouth interior": "Внутренняя часть рта", "Dark cavity": "Тёмная полость", "Preview mouth": "Предпросмотр рта"});
+Object.assign(RR_TEXT_TRANSLATIONS["th"], {"Mouth interior": "ภายในปาก", "Dark cavity": "โพรงสีเข้ม", "Preview mouth": "ตัวอย่างปาก"});
+Object.assign(RR_TEXT_TRANSLATIONS["tr"], {"Mouth interior": "Ağız içi", "Dark cavity": "Koyu boşluk", "Preview mouth": "Ağız önizlemesi"});
+Object.assign(RR_TEXT_TRANSLATIONS["vi"], {"Mouth interior": "Bên trong miệng", "Dark cavity": "Khoang tối", "Preview mouth": "Xem trước miệng"});
+Object.assign(RR_TEXT_TRANSLATIONS["zh-Hans"], {"Mouth interior": "口腔内部", "Dark cavity": "深色口腔", "Preview mouth": "嘴部预览"});
+Object.assign(RR_TEXT_TRANSLATIONS["zh-Hant"], {"Mouth interior": "口腔內部", "Dark cavity": "深色口腔", "Preview mouth": "嘴部預覽"});
+
+// Database battle-party capacity.
+Object.assign(RR_TEXT_TRANSLATIONS["ja"], {"Max Battle Members": "最大戦闘人数", "Use Existing Limit": "既存の上限を使用", "Using the existing party limit. Edit to set the database limit.": "既存のパーティ上限を使用中です。編集するとデータベースの上限を設定できます。", "Maximum actors in battle. Additional party members are reserves.": "戦闘に参加する最大人数です。残りのメンバーは控えになります。"});
+Object.assign(RR_TEXT_TRANSLATIONS["es"], {"Max Battle Members": "Máximo de miembros en batalla", "Use Existing Limit": "Usar límite existente", "Using the existing party limit. Edit to set the database limit.": "Se usa el límite de grupo existente. Edítalo para definir el límite de la base de datos.", "Maximum actors in battle. Additional party members are reserves.": "Máximo de actores en batalla. Los miembros adicionales quedan en reserva."});
+Object.assign(RR_TEXT_TRANSLATIONS["zh-Hant"], {"Max Battle Members": "最大參戰人數", "Use Existing Limit": "使用現有上限", "Using the existing party limit. Edit to set the database limit.": "目前使用現有隊伍上限。編輯即可設定資料庫上限。", "Maximum actors in battle. Additional party members are reserves.": "戰鬥中的角色人數上限。其餘隊員為後備。"});
+Object.assign(RR_TEXT_TRANSLATIONS["zh-Hans"], {"Max Battle Members": "最大参战人数", "Use Existing Limit": "使用现有上限", "Using the existing party limit. Edit to set the database limit.": "目前使用现有队伍上限。编辑即可设置数据库上限。", "Maximum actors in battle. Additional party members are reserves.": "战斗中的角色人数上限。其余队员为后备。"});
+Object.assign(RR_TEXT_TRANSLATIONS["ru"], {"Max Battle Members": "Максимум участников боя", "Use Existing Limit": "Использовать текущий лимит", "Using the existing party limit. Edit to set the database limit.": "Используется текущий лимит группы. Измените значение, чтобы задать лимит в базе данных.", "Maximum actors in battle. Additional party members are reserves.": "Максимум персонажей в бою. Остальные участники группы находятся в резерве."});
+Object.assign(RR_TEXT_TRANSLATIONS["pt"], {"Max Battle Members": "Máximo de membros em batalha", "Use Existing Limit": "Usar limite existente", "Using the existing party limit. Edit to set the database limit.": "O limite atual do grupo está em uso. Edite para definir o limite no banco de dados.", "Maximum actors in battle. Additional party members are reserves.": "Máximo de atores em batalha. Os membros adicionais ficam na reserva."});
+Object.assign(RR_TEXT_TRANSLATIONS["de"], {"Max Battle Members": "Maximale Kampfteilnehmer", "Use Existing Limit": "Bestehendes Limit verwenden", "Using the existing party limit. Edit to set the database limit.": "Das bestehende Gruppenlimit wird verwendet. Durch Bearbeiten wird das Datenbanklimit festgelegt.", "Maximum actors in battle. Additional party members are reserves.": "Maximale Anzahl von Charakteren im Kampf. Weitere Gruppenmitglieder bleiben in Reserve."});
+Object.assign(RR_TEXT_TRANSLATIONS["fr"], {"Max Battle Members": "Nombre maximal de combattants", "Use Existing Limit": "Utiliser la limite existante", "Using the existing party limit. Edit to set the database limit.": "La limite actuelle du groupe est utilisée. Modifiez-la pour définir la limite dans la base de données.", "Maximum actors in battle. Additional party members are reserves.": "Nombre maximal de personnages au combat. Les autres membres restent en réserve."});
+Object.assign(RR_TEXT_TRANSLATIONS["el"], {"Max Battle Members": "Μέγιστοι συμμετέχοντες μάχης", "Use Existing Limit": "Χρήση υπάρχοντος ορίου", "Using the existing party limit. Edit to set the database limit.": "Χρησιμοποιείται το υπάρχον όριο ομάδας. Αλλάξτε το για να ορίσετε το όριο στη βάση δεδομένων.", "Maximum actors in battle. Additional party members are reserves.": "Μέγιστος αριθμός χαρακτήρων στη μάχη. Τα υπόλοιπα μέλη παραμένουν σε εφεδρεία."});
+Object.assign(RR_TEXT_TRANSLATIONS["ko"], {"Max Battle Members": "최대 전투 인원", "Use Existing Limit": "기존 제한 사용", "Using the existing party limit. Edit to set the database limit.": "기존 파티 제한을 사용 중입니다. 값을 편집하면 데이터베이스 제한을 설정합니다.", "Maximum actors in battle. Additional party members are reserves.": "전투에 참여할 최대 액터 수입니다. 나머지 파티원은 예비 인원입니다."});
+Object.assign(RR_TEXT_TRANSLATIONS["ar"], {"Max Battle Members": "الحد الأقصى للمشاركين في القتال", "Use Existing Limit": "استخدام الحد الحالي", "Using the existing party limit. Edit to set the database limit.": "يُستخدم الحد الحالي للفريق. عدّله لتعيين الحد في قاعدة البيانات.", "Maximum actors in battle. Additional party members are reserves.": "العدد الأقصى للشخصيات في القتال. يبقى أعضاء الفريق الإضافيون في الاحتياط."});
+Object.assign(RR_TEXT_TRANSLATIONS["it"], {"Max Battle Members": "Massimo di membri in battaglia", "Use Existing Limit": "Usa limite esistente", "Using the existing party limit. Edit to set the database limit.": "È in uso il limite attuale del gruppo. Modificalo per impostare il limite nel database.", "Maximum actors in battle. Additional party members are reserves.": "Numero massimo di attori in battaglia. Gli altri membri restano in riserva."});
+Object.assign(RR_TEXT_TRANSLATIONS["pl"], {"Max Battle Members": "Maksimum uczestników walki", "Use Existing Limit": "Użyj istniejącego limitu", "Using the existing party limit. Edit to set the database limit.": "Używany jest obecny limit drużyny. Edytuj go, aby ustawić limit w bazie danych.", "Maximum actors in battle. Additional party members are reserves.": "Maksymalna liczba postaci w walce. Pozostali członkowie drużyny są w rezerwie."});
+Object.assign(RR_TEXT_TRANSLATIONS["id"], {"Max Battle Members": "Maksimum anggota pertempuran", "Use Existing Limit": "Gunakan batas yang ada", "Using the existing party limit. Edit to set the database limit.": "Batas kelompok yang ada sedang digunakan. Edit untuk menetapkan batas basis data.", "Maximum actors in battle. Additional party members are reserves.": "Jumlah maksimum aktor dalam pertempuran. Anggota tambahan menjadi cadangan."});
+Object.assign(RR_TEXT_TRANSLATIONS["vi"], {"Max Battle Members": "Số thành viên chiến đấu tối đa", "Use Existing Limit": "Dùng giới hạn hiện có", "Using the existing party limit. Edit to set the database limit.": "Đang dùng giới hạn đội hiện có. Chỉnh sửa để đặt giới hạn trong cơ sở dữ liệu.", "Maximum actors in battle. Additional party members are reserves.": "Số nhân vật tối đa trong trận chiến. Các thành viên còn lại ở lực lượng dự bị."});
+Object.assign(RR_TEXT_TRANSLATIONS["th"], {"Max Battle Members": "จำนวนสมาชิกต่อสู้สูงสุด", "Use Existing Limit": "ใช้ขีดจำกัดเดิม", "Using the existing party limit. Edit to set the database limit.": "กำลังใช้ขีดจำกัดปาร์ตี้เดิม แก้ไขเพื่อตั้งขีดจำกัดในฐานข้อมูล", "Maximum actors in battle. Additional party members are reserves.": "จำนวนตัวละครสูงสุดในการต่อสู้ สมาชิกที่เหลือจะเป็นตัวสำรอง"});
+Object.assign(RR_TEXT_TRANSLATIONS["tr"], {"Max Battle Members": "Azami savaş üyesi", "Use Existing Limit": "Mevcut sınırı kullan", "Using the existing party limit. Edit to set the database limit.": "Mevcut grup sınırı kullanılıyor. Veritabanı sınırını belirlemek için düzenleyin.", "Maximum actors in battle. Additional party members are reserves.": "Savaştaki azami karakter sayısı. Diğer grup üyeleri yedekte kalır."});
+
+// Media surface resize modifier hint.
+Object.assign(RR_TEXT_TRANSLATIONS["ja"], {"Uses the media's original proportions and links size and scale controls. Hold Shift while dragging a corner to keep proportions.": "メディア本来の縦横比を使用し、サイズとスケールの操作を連動させます。角をドラッグするときに Shift を押すと縦横比を維持します。"});
+Object.assign(RR_TEXT_TRANSLATIONS["es"], {"Uses the media's original proportions and links size and scale controls. Hold Shift while dragging a corner to keep proportions.": "Usa las proporciones originales del archivo y vincula los controles de tamaño y escala. Mantén Shift al arrastrar una esquina para conservar las proporciones."});
+Object.assign(RR_TEXT_TRANSLATIONS["zh-Hant"], {"Uses the media's original proportions and links size and scale controls. Hold Shift while dragging a corner to keep proportions.": "使用媒體的原始長寬比，並連動尺寸和縮放控制項。拖曳角點時按住 Shift 可保持比例。"});
+Object.assign(RR_TEXT_TRANSLATIONS["zh-Hans"], {"Uses the media's original proportions and links size and scale controls. Hold Shift while dragging a corner to keep proportions.": "使用媒体的原始宽高比，并联动尺寸和缩放控件。拖动角点时按住 Shift 可保持比例。"});
+Object.assign(RR_TEXT_TRANSLATIONS["ru"], {"Uses the media's original proportions and links size and scale controls. Hold Shift while dragging a corner to keep proportions.": "Использует исходные пропорции медиафайла и связывает настройки размера и масштаба. Удерживайте Shift при перетаскивании угла, чтобы сохранить пропорции."});
+Object.assign(RR_TEXT_TRANSLATIONS["pt"], {"Uses the media's original proportions and links size and scale controls. Hold Shift while dragging a corner to keep proportions.": "Usa as proporções originais da mídia e vincula os controles de tamanho e escala. Segure Shift ao arrastar um canto para manter as proporções."});
+Object.assign(RR_TEXT_TRANSLATIONS["de"], {"Uses the media's original proportions and links size and scale controls. Hold Shift while dragging a corner to keep proportions.": "Verwendet die ursprünglichen Medienproportionen und verknüpft Größe und Skalierung. Beim Ziehen einer Ecke die Umschalttaste gedrückt halten, um die Proportionen beizubehalten."});
+Object.assign(RR_TEXT_TRANSLATIONS["fr"], {"Uses the media's original proportions and links size and scale controls. Hold Shift while dragging a corner to keep proportions.": "Utilise les proportions originales du média et lie les réglages de taille et d’échelle. Maintenez Maj en faisant glisser un coin pour conserver les proportions."});
+Object.assign(RR_TEXT_TRANSLATIONS["el"], {"Uses the media's original proportions and links size and scale controls. Hold Shift while dragging a corner to keep proportions.": "Χρησιμοποιεί τις αρχικές αναλογίες του μέσου και συνδέει τα στοιχεία ελέγχου μεγέθους και κλίμακας. Κρατήστε πατημένο το Shift όταν σύρετε μια γωνία για να διατηρήσετε τις αναλογίες."});
+Object.assign(RR_TEXT_TRANSLATIONS["ko"], {"Uses the media's original proportions and links size and scale controls. Hold Shift while dragging a corner to keep proportions.": "미디어의 원래 비율을 사용하고 크기 및 배율 조절을 연동합니다. 모서리를 드래그할 때 Shift를 누르면 비율이 유지됩니다."});
+Object.assign(RR_TEXT_TRANSLATIONS["ar"], {"Uses the media's original proportions and links size and scale controls. Hold Shift while dragging a corner to keep proportions.": "يستخدم النسب الأصلية للوسائط ويربط عناصر التحكم في الحجم والمقياس. اضغط باستمرار على Shift أثناء سحب إحدى الزوايا للحفاظ على النسب."});
+Object.assign(RR_TEXT_TRANSLATIONS["it"], {"Uses the media's original proportions and links size and scale controls. Hold Shift while dragging a corner to keep proportions.": "Usa le proporzioni originali del file e collega i controlli di dimensione e scala. Tieni premuto Maiusc mentre trascini un angolo per mantenere le proporzioni."});
+Object.assign(RR_TEXT_TRANSLATIONS["pl"], {"Uses the media's original proportions and links size and scale controls. Hold Shift while dragging a corner to keep proportions.": "Używa oryginalnych proporcji pliku i łączy ustawienia rozmiaru i skali. Przytrzymaj Shift podczas przeciągania narożnika, aby zachować proporcje."});
+Object.assign(RR_TEXT_TRANSLATIONS["id"], {"Uses the media's original proportions and links size and scale controls. Hold Shift while dragging a corner to keep proportions.": "Menggunakan proporsi asli media dan menautkan kontrol ukuran serta skala. Tahan Shift saat menyeret sudut untuk mempertahankan proporsi."});
+Object.assign(RR_TEXT_TRANSLATIONS["vi"], {"Uses the media's original proportions and links size and scale controls. Hold Shift while dragging a corner to keep proportions.": "Dùng tỷ lệ gốc của nội dung và liên kết các điều khiển kích thước và tỷ lệ thu phóng. Giữ Shift khi kéo góc để giữ nguyên tỷ lệ."});
+Object.assign(RR_TEXT_TRANSLATIONS["th"], {"Uses the media's original proportions and links size and scale controls. Hold Shift while dragging a corner to keep proportions.": "ใช้สัดส่วนเดิมของสื่อและเชื่อมโยงตัวควบคุมขนาดและมาตราส่วน กด Shift ค้างไว้ขณะลากมุมเพื่อรักษาสัดส่วน"});
+Object.assign(RR_TEXT_TRANSLATIONS["tr"], {"Uses the media's original proportions and links size and scale controls. Hold Shift while dragging a corner to keep proportions.": "Medyanın özgün oranlarını kullanır ve boyut ile ölçek denetimlerini birbirine bağlar. Oranları korumak için köşeyi sürüklerken Shift tuşunu basılı tutun."});
+
 class I18nManager {
     constructor() {
         for (const table of Object.values(RR_I18N_STRINGS)) {
@@ -17723,6 +18410,10 @@ class I18nManager {
             || text;
     }
 
+    formatText(source, params = {}) {
+        return this.tText(source).replace(/\{(\w+)\}/g, (token, key) => Object.hasOwn(params, key) ? String(params[key]) : token);
+    }
+
     setLanguage(language, options = {}) {
         const next = normalizeI18nLanguage(language);
         if (next === this.language && options.force !== true) return;
@@ -17769,7 +18460,7 @@ class I18nManager {
     applyText(root = document) {
         if (!root || !root.querySelectorAll) return;
         const selectors = [
-            'button', 'h1', 'h2', 'h3', 'h4', 'th', 'summary',
+            '[data-i18n-text-source]', 'button', 'h1', 'h2', 'h3', 'h4', 'th', 'summary',
             '.database-section-header', '.database-field-label', '.rr-form-label', 'label',
             '.effect-option > span:first-of-type', '.trait-option > span:first-of-type', '.traits-table td[colspan]',
             '.modal-overlay span', '.modal-overlay div'
@@ -17782,9 +18473,12 @@ class I18nManager {
             const stored = el.getAttribute('data-i18n-text-source');
             const source = stored || el.textContent.trim();
             if (!source) return;
-            const translated = this.tText(source);
+            const params = el.getAttribute('data-i18n-text-params');
+            let values = {};
+            if (params) { try { values = JSON.parse(params) || {}; } catch {} }
+            const translated = this.formatText(source, values);
             if (translated === source && this.language !== 'en') return;
-            const wanted = this.language === 'en' ? source : translated;
+            const wanted = translated;
             // Write only what changes. Replacing a text node is itself a
             // childList mutation, and `observe()` re-runs this pass on any
             // added node: rewriting every label unconditionally kept the
@@ -17798,9 +18492,12 @@ class I18nManager {
             const stored = el.getAttribute('data-i18n-placeholder-source');
             const source = stored || el.getAttribute('placeholder');
             if (!source) return;
-            const translated = this.tText(source);
+            const params = el.getAttribute('data-i18n-text-params');
+            let values = {};
+            if (params) { try { values = JSON.parse(params) || {}; } catch {} }
+            const translated = this.formatText(source, values);
             if (translated === source && this.language !== 'en') return;
-            const wanted = this.language === 'en' ? source : translated;
+            const wanted = translated;
             if (stored !== source) el.setAttribute('data-i18n-placeholder-source', source);
             if (el.getAttribute('placeholder') !== wanted) el.setAttribute('placeholder', wanted);
         });
@@ -17936,3 +18633,43 @@ Object.assign(RR_I18N_STRINGS['id'], { "props.animations": "Animasi (berurutan)"
 Object.assign(RR_I18N_STRINGS['vi'], { "props.animations": "Hoạt ảnh (theo thứ tự)", "props.effects": "Hiệu ứng" });
 Object.assign(RR_I18N_STRINGS['th'], { "props.animations": "แอนิเมชัน (ตามลำดับ)", "props.effects": "เอฟเฟกต์" });
 Object.assign(RR_I18N_STRINGS['tr'], { "props.animations": "Animasyonlar (sırayla)", "props.effects": "Efektler" });
+
+// Forge loop playback is independent of the finite exported duration.
+Object.assign(RR_I18N_STRINGS["en"], {"efk.loopAnimation": "Loop animation", "efk.loopHint": "Fit rotation, morph and texture cycles to the selected duration. Export contains one finite cycle.", "efk.effectDurationHint": "Frames per cycle (1–3600). Export ends at this duration."});
+Object.assign(RR_I18N_STRINGS["ja"], {"efk.loopAnimation": "アニメーションをループ", "efk.loopHint": "回転・変形・テクスチャの周期を指定した長さに合わせます。書き出しは有限の1周期です。", "efk.effectDurationHint": "1周期のフレーム数（1～3600）。書き出したエフェクトはこの長さで終了します。"});
+Object.assign(RR_I18N_STRINGS["es"], {"efk.loopAnimation": "Repetir animación", "efk.loopHint": "Ajusta los ciclos de rotación, transformación y textura a la duración elegida. La exportación contiene un ciclo finito.", "efk.effectDurationHint": "Fotogramas por ciclo (1–3600). La exportación termina con esta duración."});
+Object.assign(RR_I18N_STRINGS["zh-Hant"], {"efk.loopAnimation": "循環動畫", "efk.loopHint": "將旋轉、變形與材質週期配合指定時長。匯出僅包含一個有限週期。", "efk.effectDurationHint": "每週期影格數（1–3600）。匯出效果在此時長結束。"});
+Object.assign(RR_I18N_STRINGS["zh-Hans"], {"efk.loopAnimation": "循环动画", "efk.loopHint": "将旋转、变形和纹理周期匹配指定时长。导出仅包含一个有限周期。", "efk.effectDurationHint": "每周期帧数（1–3600）。导出效果在此时长结束。"});
+Object.assign(RR_I18N_STRINGS["ru"], {"efk.loopAnimation": "Зациклить анимацию", "efk.loopHint": "Подгоняет циклы вращения, изменения формы и текстуры под выбранную длительность. Экспорт содержит один конечный цикл.", "efk.effectDurationHint": "Кадров в цикле (1–3600). Экспортированный эффект заканчивается по истечении этой длительности."});
+Object.assign(RR_I18N_STRINGS["pt"], {"efk.loopAnimation": "Repetir animação", "efk.loopHint": "Ajusta os ciclos de rotação, transformação e textura à duração escolhida. A exportação contém um ciclo finito.", "efk.effectDurationHint": "Quadros por ciclo (1–3600). A exportação termina nessa duração."});
+Object.assign(RR_I18N_STRINGS["de"], {"efk.loopAnimation": "Animation wiederholen", "efk.loopHint": "Passt Drehung, Verformung und Texturzyklen an die gewählte Dauer an. Der Export enthält einen endlichen Durchlauf.", "efk.effectDurationHint": "Bilder pro Durchlauf (1–3600). Der exportierte Effekt endet nach dieser Dauer."});
+Object.assign(RR_I18N_STRINGS["fr"], {"efk.loopAnimation": "Répéter l’animation", "efk.loopHint": "Adapte les cycles de rotation, de déformation et de texture à la durée choisie. L’export contient un seul cycle de durée limitée.", "efk.effectDurationHint": "Images par cycle (1–3600). L’effet exporté se termine à cette durée."});
+Object.assign(RR_I18N_STRINGS["el"], {"efk.loopAnimation": "Επανάληψη κίνησης", "efk.loopHint": "Προσαρμόζει τους κύκλους περιστροφής, παραμόρφωσης και υφής στην επιλεγμένη διάρκεια. Η εξαγωγή περιέχει έναν πεπερασμένο κύκλο.", "efk.effectDurationHint": "Καρέ ανά κύκλο (1–3600). Το εξαγόμενο εφέ τελειώνει σε αυτή τη διάρκεια."});
+Object.assign(RR_I18N_STRINGS["ko"], {"efk.loopAnimation": "애니메이션 반복", "efk.loopHint": "회전, 변형, 텍스처 주기를 선택한 길이에 맞춥니다. 내보내기는 유한한 한 주기만 포함합니다.", "efk.effectDurationHint": "주기당 프레임 수 (1–3600). 내보낸 이펙트는 이 길이에서 끝납니다."});
+Object.assign(RR_I18N_STRINGS["ar"], {"efk.loopAnimation": "تكرار الحركة", "efk.loopHint": "ضبط دورات الدوران والتحوّل والخامة لتناسب المدة المحددة. يتضمن التصدير دورة واحدة محدودة المدة.", "efk.effectDurationHint": "الإطارات لكل دورة (1–3600). ينتهي المؤثر المُصدَّر عند هذه المدة."});
+Object.assign(RR_I18N_STRINGS["it"], {"efk.loopAnimation": "Ripeti animazione", "efk.loopHint": "Adatta i cicli di rotazione, trasformazione e texture alla durata scelta. L’esportazione contiene un ciclo finito.", "efk.effectDurationHint": "Fotogrammi per ciclo (1–3600). L’effetto esportato termina a questa durata."});
+Object.assign(RR_I18N_STRINGS["pl"], {"efk.loopAnimation": "Zapętl animację", "efk.loopHint": "Dopasowuje cykle obrotu, przekształcenia i tekstury do wybranego czasu. Eksport zawiera jeden skończony cykl.", "efk.effectDurationHint": "Klatki na cykl (1–3600). Eksportowany efekt kończy się po tym czasie."});
+Object.assign(RR_I18N_STRINGS["id"], {"efk.loopAnimation": "Ulangi animasi", "efk.loopHint": "Sesuaikan siklus rotasi, perubahan bentuk, dan tekstur dengan durasi yang dipilih. Ekspor berisi satu siklus terbatas.", "efk.effectDurationHint": "Frame per siklus (1–3600). Efek yang diekspor berakhir pada durasi ini."});
+Object.assign(RR_I18N_STRINGS["vi"], {"efk.loopAnimation": "Lặp hoạt ảnh", "efk.loopHint": "Điều chỉnh chu kỳ xoay, biến dạng và kết cấu theo thời lượng đã chọn. Bản xuất chứa một chu kỳ hữu hạn.", "efk.effectDurationHint": "Số khung hình mỗi chu kỳ (1–3600). Hiệu ứng xuất ra kết thúc ở thời lượng này."});
+Object.assign(RR_I18N_STRINGS["th"], {"efk.loopAnimation": "วนซ้ำแอนิเมชัน", "efk.loopHint": "ปรับรอบการหมุน การเปลี่ยนรูป และพื้นผิวให้ตรงกับระยะเวลาที่เลือก ไฟล์ส่งออกมีหนึ่งรอบที่มีระยะเวลาจำกัด", "efk.effectDurationHint": "จำนวนเฟรมต่อรอบ (1–3600) เอฟเฟกต์ที่ส่งออกจะจบตามระยะเวลานี้"});
+Object.assign(RR_I18N_STRINGS["tr"], {"efk.loopAnimation": "Animasyonu döngüye al", "efk.loopHint": "Dönüş, biçim değişimi ve doku döngülerini seçilen süreye uyarlar. Dışa aktarma sonlu bir döngü içerir.", "efk.effectDurationHint": "Döngü başına kare (1–3600). Dışa aktarılan efekt bu sürede biter."});
+
+// Compound lighting fixtures and fluorescent preset.
+Object.assign(RR_I18N_STRINGS["en"], {"lit.preset.compound": "Compound Light", "lit.preset.fluorescent": "Fluorescent", "lit.components": "Components", "lit.component": "Component", "lit.compoundName": "Name", "lit.componentId": "Part ID", "lit.addComponent": "Add", "lit.removeComponent": "Remove Component", "lit.componentHint": "Settings below edit this component. Drag on the map to move the whole light."});
+Object.assign(RR_I18N_STRINGS["ja"], {"lit.preset.compound": "複合ライト", "lit.preset.fluorescent": "蛍光灯", "lit.components": "構成ライト", "lit.component": "構成ライト", "lit.compoundName": "名前", "lit.componentId": "構成ID", "lit.addComponent": "追加", "lit.removeComponent": "構成ライトを削除", "lit.componentHint": "以下の設定は選択中の構成ライトに適用されます。マップ上でドラッグすると全体が移動します。"});
+Object.assign(RR_I18N_STRINGS["es"], {"lit.preset.compound": "Luz compuesta", "lit.preset.fluorescent": "Fluorescente", "lit.components": "Componentes", "lit.component": "Componente", "lit.compoundName": "Nombre", "lit.componentId": "ID de parte", "lit.addComponent": "Añadir", "lit.removeComponent": "Quitar componente", "lit.componentHint": "Los ajustes siguientes editan este componente. Arrastra en el mapa para mover toda la luz."});
+Object.assign(RR_I18N_STRINGS["zh-Hant"], {"lit.preset.compound": "複合光源", "lit.preset.fluorescent": "日光燈", "lit.components": "組件", "lit.component": "組件", "lit.compoundName": "名稱", "lit.componentId": "組件 ID", "lit.addComponent": "新增", "lit.removeComponent": "移除組件", "lit.componentHint": "下方設定編輯此組件。在地圖上拖曳可移動整個光源。"});
+Object.assign(RR_I18N_STRINGS["zh-Hans"], {"lit.preset.compound": "复合光源", "lit.preset.fluorescent": "荧光灯", "lit.components": "组件", "lit.component": "组件", "lit.compoundName": "名称", "lit.componentId": "组件 ID", "lit.addComponent": "添加", "lit.removeComponent": "移除组件", "lit.componentHint": "下方设置编辑此组件。在地图上拖动可移动整个光源。"});
+Object.assign(RR_I18N_STRINGS["ru"], {"lit.preset.compound": "Составной свет", "lit.preset.fluorescent": "Люминесцентный", "lit.components": "Компоненты", "lit.component": "Компонент", "lit.compoundName": "Название", "lit.componentId": "ID части", "lit.addComponent": "Добавить", "lit.removeComponent": "Удалить компонент", "lit.componentHint": "Настройки ниже изменяют этот компонент. Перетаскивание на карте перемещает весь светильник."});
+Object.assign(RR_I18N_STRINGS["pt"], {"lit.preset.compound": "Luz composta", "lit.preset.fluorescent": "Fluorescente", "lit.components": "Componentes", "lit.component": "Componente", "lit.compoundName": "Nome", "lit.componentId": "ID da parte", "lit.addComponent": "Adicionar", "lit.removeComponent": "Remover componente", "lit.componentHint": "As opções abaixo editam este componente. Arraste no mapa para mover a luz inteira."});
+Object.assign(RR_I18N_STRINGS["de"], {"lit.preset.compound": "Verbundlicht", "lit.preset.fluorescent": "Leuchtstofflicht", "lit.components": "Komponenten", "lit.component": "Komponente", "lit.compoundName": "Name", "lit.componentId": "Teil-ID", "lit.addComponent": "Hinzufügen", "lit.removeComponent": "Komponente entfernen", "lit.componentHint": "Die Einstellungen unten bearbeiten diese Komponente. Ziehen auf der Karte bewegt die gesamte Leuchte."});
+Object.assign(RR_I18N_STRINGS["fr"], {"lit.preset.compound": "Lumière composée", "lit.preset.fluorescent": "Fluorescent", "lit.components": "Composants", "lit.component": "Composant", "lit.compoundName": "Nom", "lit.componentId": "ID de partie", "lit.addComponent": "Ajouter", "lit.removeComponent": "Retirer le composant", "lit.componentHint": "Les réglages ci-dessous modifient ce composant. Faites glisser sur la carte pour déplacer toute la lumière."});
+Object.assign(RR_I18N_STRINGS["el"], {"lit.preset.compound": "Σύνθετο φως", "lit.preset.fluorescent": "Φθορισμού", "lit.components": "Στοιχεία", "lit.component": "Στοιχείο", "lit.compoundName": "Όνομα", "lit.componentId": "ID στοιχείου", "lit.addComponent": "Προσθήκη", "lit.removeComponent": "Αφαίρεση στοιχείου", "lit.componentHint": "Οι παρακάτω ρυθμίσεις αλλάζουν αυτό το στοιχείο. Σύρετε στον χάρτη για να μετακινήσετε ολόκληρο το φως."});
+Object.assign(RR_I18N_STRINGS["ko"], {"lit.preset.compound": "복합 조명", "lit.preset.fluorescent": "형광등", "lit.components": "구성 요소", "lit.component": "구성 요소", "lit.compoundName": "이름", "lit.componentId": "요소 ID", "lit.addComponent": "추가", "lit.removeComponent": "구성 요소 제거", "lit.componentHint": "아래 설정은 이 구성 요소를 편집합니다. 지도에서 드래그하면 조명 전체가 이동합니다."});
+Object.assign(RR_I18N_STRINGS["ar"], {"lit.preset.compound": "ضوء مركب", "lit.preset.fluorescent": "فلورسنت", "lit.components": "المكونات", "lit.component": "المكون", "lit.compoundName": "الاسم", "lit.componentId": "معرّف الجزء", "lit.addComponent": "إضافة", "lit.removeComponent": "إزالة المكون", "lit.componentHint": "تعدّل الإعدادات أدناه هذا المكون. اسحب على الخريطة لتحريك الضوء بالكامل."});
+Object.assign(RR_I18N_STRINGS["it"], {"lit.preset.compound": "Luce composta", "lit.preset.fluorescent": "Fluorescente", "lit.components": "Componenti", "lit.component": "Componente", "lit.compoundName": "Nome", "lit.componentId": "ID parte", "lit.addComponent": "Aggiungi", "lit.removeComponent": "Rimuovi componente", "lit.componentHint": "Le impostazioni sotto modificano questo componente. Trascina sulla mappa per spostare tutta la luce."});
+Object.assign(RR_I18N_STRINGS["pl"], {"lit.preset.compound": "Światło złożone", "lit.preset.fluorescent": "Świetlówka", "lit.components": "Składniki", "lit.component": "Składnik", "lit.compoundName": "Nazwa", "lit.componentId": "ID części", "lit.addComponent": "Dodaj", "lit.removeComponent": "Usuń składnik", "lit.componentHint": "Poniższe ustawienia edytują ten składnik. Przeciągnij na mapie, aby przesunąć całe światło."});
+Object.assign(RR_I18N_STRINGS["id"], {"lit.preset.compound": "Cahaya gabungan", "lit.preset.fluorescent": "Fluoresen", "lit.components": "Komponen", "lit.component": "Komponen", "lit.compoundName": "Nama", "lit.componentId": "ID bagian", "lit.addComponent": "Tambah", "lit.removeComponent": "Hapus komponen", "lit.componentHint": "Pengaturan di bawah mengedit komponen ini. Seret di peta untuk memindahkan seluruh cahaya."});
+Object.assign(RR_I18N_STRINGS["vi"], {"lit.preset.compound": "Đèn tổ hợp", "lit.preset.fluorescent": "Huỳnh quang", "lit.components": "Thành phần", "lit.component": "Thành phần", "lit.compoundName": "Tên", "lit.componentId": "ID phần", "lit.addComponent": "Thêm", "lit.removeComponent": "Xóa thành phần", "lit.componentHint": "Cài đặt bên dưới chỉnh sửa thành phần này. Kéo trên bản đồ để di chuyển toàn bộ đèn."});
+Object.assign(RR_I18N_STRINGS["th"], {"lit.preset.compound": "แสงแบบรวม", "lit.preset.fluorescent": "ฟลูออเรสเซนต์", "lit.components": "องค์ประกอบ", "lit.component": "องค์ประกอบ", "lit.compoundName": "ชื่อ", "lit.componentId": "ID ส่วน", "lit.addComponent": "เพิ่ม", "lit.removeComponent": "ลบองค์ประกอบ", "lit.componentHint": "การตั้งค่าด้านล่างแก้ไของค์ประกอบนี้ ลากบนแผนที่เพื่อย้ายแสงทั้งหมด"});
+Object.assign(RR_I18N_STRINGS["tr"], {"lit.preset.compound": "Bileşik Işık", "lit.preset.fluorescent": "Floresan", "lit.components": "Bileşenler", "lit.component": "Bileşen", "lit.compoundName": "Ad", "lit.componentId": "Parça ID", "lit.addComponent": "Ekle", "lit.removeComponent": "Bileşeni kaldır", "lit.componentHint": "Aşağıdaki ayarlar bu bileşeni düzenler. Işığın tamamını taşımak için haritada sürükleyin."});

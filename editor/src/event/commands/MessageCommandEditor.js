@@ -971,7 +971,7 @@ class MessageCommandEditor {
         previewBtn.style.cssText = `
             padding: 6px 16px;
             background-color: var(--color-accent);
-            color: var(--color-bg-deep);
+            color: var(--color-accent-on);
             border: none;
             border-radius: 3px;
             cursor: pointer;

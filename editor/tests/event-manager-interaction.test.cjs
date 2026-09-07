@@ -353,3 +353,18 @@ test('an event clone carries its 3D model sidecar entry through every operation'
     await manager.pasteEvent(1, 1);
     assert.equal(manager.currentMap.reactor3d, undefined, 'no sidecar appears from nowhere');
 });
+
+test('entering Event mode closes map media editing before installing event pointer handlers', () => {
+    const calls=[], EventManager=loadEventManager();
+    EventManager.prototype.setupEventEditorModal=()=>{};
+    const manager=new EventManager({
+        mediaSurfaceManager:{close:()=>calls.push('close media')},
+        mediaSurfacePreviewManager:{syncToolInteraction:()=>calls.push('sync '+manager.eventMode)}
+    }, null);
+    manager.setupEventInteraction=()=>calls.push('event handlers');
+    manager.renderStartingPositions=()=>{};manager.removeEventInteraction=()=>calls.push('remove handlers');
+    manager.setEventMode(true);
+    assert.deepEqual(calls,['close media','sync true','event handlers']);
+    calls.length=0;manager.setEventMode(false);
+    assert.deepEqual(calls,['sync false','remove handlers']);
+});

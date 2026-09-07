@@ -10,6 +10,7 @@ const editorRoot = path.resolve(__dirname, '..');
 function loadClass(relativePath, className, globals = {}) {
     const source = fs.readFileSync(path.join(editorRoot, 'src', relativePath), 'utf8');
     return vm.runInNewContext(`${source}\n${className};`, {
+        RRJson: require('../src/utils/JsonFiles.js'),
         console: { log() {}, debug() {}, warn() {}, error() {} },
         process,
         require,
@@ -403,4 +404,154 @@ test('ProjectController stale map completion cannot update status, highlight, ca
     assert.equal(callbacks, 1);
     assert.equal(storage.get(controller.getLastMapStorageKey()), '2');
     assert.equal(statuses.includes('Map 1 loaded'), false);
+});
+
+function eventCommitHarness() {
+    const elements = { 'event-editor-modal': { style: {} }, 'event-editor-content': { style: {}, appendChild() {} } };
+    const document = { getElementById: id => elements[id] || null, createElement: () => ({ style: {}, appendChild() {} }) };
+    const Reactor3D = {
+        eventZAt: (map, id) => map?.reactor3d?.eventZ?.[id] || 0,
+        setEventZ(map, id, z) { map.reactor3d ||= {}; map.reactor3d.eventZ ||= {}; if (z) map.reactor3d.eventZ[id] = z; else delete map.reactor3d.eventZ[id]; }
+    };
+    const EventEditor = loadClass('event/EventEditor.js', 'EventEditor', { document, Reactor3D, window: { addEventListener() {} }, EventCommandList: class {} });
+    const EventManager = loadClass('EventManager.js', 'EventManager', { document });
+    const manager = Object.create(EventManager.prototype);
+    manager.currentMap = { id: 1, width: 32, height: 32, events: [null], reactor3d: { eventZ: {}, mediaSurfaces: [{ id: 9 }] } };
+    manager.undoStack = []; manager.redoStack = []; manager.maxUndoSteps = 50;
+    manager.notifyUndoStateChange = () => {};
+    const renders = []; manager.renderEvents = () => renders.push(JSON.parse(JSON.stringify(manager.currentMap)));
+    manager.eventEditor = new EventEditor(manager, null, null);
+    const editor = manager.eventEditor;
+    editor.createHeader = event => {
+        for (const [axis, value] of [['x', event.x], ['y', event.y], ['z', editor.pendingZ ?? Reactor3D.eventZAt(manager.currentMap, event.id)]]) elements[`event-position-${axis}`] = { value: String(value) };
+        return { style: {} };
+    };
+    editor.createLeftColumn = editor.createRightColumn = () => ({ style: {} });
+    editor.renderCurrentPage = () => {};
+    return { manager, editor, elements, renders };
+}
+
+test('OK inserts an untouched new event and closes; Apply inserts once and stays open', () => {
+    const { manager, editor, elements } = eventCommitHarness();
+    const first = manager.createNewEvent(4, 5);
+    editor.saveAndClose();
+    assert.equal(manager.currentMap.events[first.id], first);
+    assert.equal(elements['event-editor-modal'].style.display, 'none');
+    assert.equal(manager.undoStack.length, 1);
+    const second = manager.createNewEvent(6, 7);
+    editor.applyChanges();
+    assert.equal(manager.currentMap.events[second.id], second);
+    assert.equal(elements['event-editor-modal'].style.display, 'flex');
+    editor.saveAndClose();
+    assert.equal(manager.undoStack.length, 2, 'OK after Apply is not another insertion or undo record');
+});
+
+test('model-only event creation commits and refreshes after the sidecar is written', () => {
+    const { manager, editor, renders } = eventCommitHarness();
+    const event = manager.createNewEvent(4, 5);
+    editor.pendingModels[0] = { name: 'Map-Objects/Door-01', size: 3, scale: 1 };
+    editor.saveAndClose();
+    assert.equal(manager.currentMap.events[event.id], event);
+    assert.equal(renders.at(-1).reactor3d.events[event.id][0].name, 'Map-Objects/Door-01');
+    manager.undo();
+    assert.equal(manager.currentMap.events.filter(Boolean).length, 0);
+    assert.equal(manager.currentMap.reactor3d.events, undefined);
+    manager.redo();
+    assert.equal(manager.currentMap.reactor3d.events[event.id][0].name, 'Map-Objects/Door-01');
+});
+
+test('elevation-only OK refreshes the model at the committed height and supports undo/redo', () => {
+    const { manager, editor, elements, renders } = eventCommitHarness();
+    const event = manager.createNewEvent(4, 5); editor.saveAndClose();
+    manager.currentMap.reactor3d.eventZ[event.id] = 20;
+    manager.editEvent(event);
+    elements['event-position-z'].value = '0.5';
+    editor.saveAndClose();
+    assert.equal(renders.at(-1).reactor3d.eventZ[event.id], 0.5);
+    assert.equal(manager.undoStack.length, 2);
+    manager.undo(); assert.equal(manager.currentMap.reactor3d.eventZ[event.id], 20);
+    manager.redo(); assert.equal(manager.currentMap.reactor3d.eventZ[event.id], 0.5);
+    assert.deepEqual(manager.currentMap.reactor3d.mediaSurfaces, [{ id: 9 }]);
+});
+
+test('Cancel never restores stale elevation after moving an event or switching editing sessions', () => {
+    const { manager, editor, elements } = eventCommitHarness();
+    const first = manager.createNewEvent(4, 5);
+    elements['event-position-z'].value = '20'; editor.saveAndClose();
+    manager.currentMap.reactor3d.eventZ[first.id] = 0.5;
+    manager.editEvent(first); editor.cancelChanges();
+    assert.equal(manager.currentMap.reactor3d.eventZ[first.id], 0.5);
+    const second = manager.createNewEvent(6, 7); editor.cancelChanges();
+    assert.equal(manager.currentMap.reactor3d.eventZ[second.id], undefined);
+    assert.equal(manager.currentMap.events[second.id], undefined);
+});
+
+test('a rejected event commit leaves elevation, models and the open draft untouched', () => {
+    const { manager, editor, elements } = eventCommitHarness();
+    const event = manager.createNewEvent(4, 5);
+    editor.pendingModels[0] = { name: 'Map-Objects/Door-01' };
+    elements['event-position-z'].value = '7';
+    manager.currentMap.events[event.id] = { id: event.id, name: 'Occupied ID' };
+    editor.saveAndClose();
+    assert.equal(elements['event-editor-modal'].style.display, 'flex');
+    assert.equal(manager.currentMap.reactor3d.eventZ[event.id], undefined);
+    assert.equal(manager.currentMap.reactor3d.events, undefined);
+});
+
+test('reusing a deleted event ID starts without orphaned model or elevation settings', () => {
+    const { manager, editor } = eventCommitHarness();
+    manager.currentMap.reactor3d.eventZ[1] = 20;
+    manager.currentMap.reactor3d.events = { 1: { 0: { name: 'Old Model' } } };
+    const event = manager.createNewEvent(4, 5);
+    assert.equal(editor.pendingZ, 0);
+    assert.equal(editor.pendingModels[0], null);
+    editor.saveAndClose();
+    assert.equal(manager.currentMap.events[event.id], event);
+    assert.equal(manager.currentMap.reactor3d.eventZ[event.id], undefined);
+    assert.equal(manager.currentMap.reactor3d.events, undefined);
+    manager.undo();
+    assert.equal(manager.currentMap.reactor3d.eventZ[1], 20, 'undo restores the prior sidecar exactly');
+});
+
+test('Save Project preserves map edits after a closed event inspector and across map switches', async () => {
+    const { manager, editor, elements } = eventCommitHarness();
+    const event = manager.createNewEvent(4, 5);
+    elements['event-position-z'].value = '20'; editor.saveAndClose();
+    const ProjectController = loadClass('ProjectController.js', 'ProjectController', {
+        document: { getElementById: () => null }, window: { addEventListener() {} }
+    });
+    const saved = [];
+    const controller = new ProjectController(
+        { saveProject: async () => true },
+        { data: {}, savedState: {}, saveAllData: async () => true },
+        { updateStatus() {} }
+    );
+    controller.projectLoaded = true;controller.currentProject={path:'/project',maps:[]};
+    controller.captureProjectSavedState=controller.updateWindowTitle=()=>{};
+    controller.eventManager=manager;
+    controller.tilemapManager={get currentMap(){return manager.currentMap;},saveMap(){saved.push(JSON.parse(JSON.stringify(manager.currentMap)));return true;}};
+    for (const z of [0, 0.5]) {
+        manager.currentMap.reactor3d.eventZ[event.id] = z;
+        assert.equal(await controller.saveProject(),true);
+        assert.equal(saved.at(-1).reactor3d.eventZ[event.id],z);
+        assert.equal(editor.pendingZ,20,'the closed draft still has the old value');
+    }
+    manager.currentMap={id:2,width:32,height:32,events:[null,{id:1,name:'Different event',pages:[]}],reactor3d:{eventZ:{1:3}}};
+    assert.equal(await controller.saveAll(),true);
+    assert.equal(saved.at(-1).reactor3d.eventZ[1],3);
+});
+
+test('choosing a page model stays in the event draft until Apply or OK', () => {
+    const { manager, editor } = eventCommitHarness();
+    const EventPageEditor = loadClass('event/EventPageEditor.js','EventPageEditor');
+    const pageEditor=Object.create(EventPageEditor.prototype);pageEditor.parentEditor=editor;
+    const event=manager.createNewEvent(4,5);
+    const before=JSON.stringify(manager.currentMap.reactor3d);
+    pageEditor.setPageModelSpec(0,{name:'Map-Objects/Door-01',size:3});
+    assert.equal(JSON.stringify(manager.currentMap.reactor3d),before);
+    editor.cancelChanges();assert.equal(JSON.stringify(manager.currentMap.reactor3d),before);
+    manager.editEvent(event);
+    pageEditor.setPageModelSpec(0,{name:'Map-Objects/Door-01',size:3});
+    editor.applyChanges();
+    assert.equal(manager.currentMap.reactor3d.events[event.id][0].name,'Map-Objects/Door-01');
 });

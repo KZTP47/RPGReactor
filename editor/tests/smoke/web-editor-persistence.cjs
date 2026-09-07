@@ -137,6 +137,48 @@ async function main() {
             [], { timeout: 90000, description: 'Web editor project load' });
 
         const token = `web-smoke-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        if (process.argv.includes('--project-tools')) {
+            const toolHtml = `<!doctype html><script>
+                addEventListener('message', event => {
+                    const m = event.data;
+                    if (m.type === 'reactor:init') {
+                        m.data['States.json'][1].projectToolsSmoke = 'persisted';
+                        parent.postMessage({type:'reactor:save',file:'States.json',data:m.data['States.json']}, '*');
+                        parent.postMessage({type:'reactor:image',path:'ProjectToolsProbe.png'}, '*');
+                    } else if (m.type === 'reactor:saved' || m.type === 'reactor:image') {
+                        parent.postMessage({type:'smoke:result',result:m}, '*');
+                    }
+                });
+                parent.postMessage({type:'reactor:ready'}, '*');
+            </script>`;
+            const toolResult = await driver.executeAsync(String.raw`
+                const html = arguments[0], done = arguments[arguments.length - 1];
+                try {
+                    const host = RPGReactorHost, base = host.projectRoot;
+                    host.fs.mkdirSync(base + '/tools', {recursive:true});
+                    host.fs.writeFileSync(base + '/tools/Probe.html', html, 'utf8');
+                    host.fs.writeFileSync(base + '/img/ProjectToolsProbe.png', new Uint8Array([1, 2, 3]));
+                    window.confirm = () => true;
+                    reactor.forgeManager.openTool('project-tools');
+                    const tool = reactor.forgeManager.projectTools;
+                    const results = [];
+                    const receive = event => {
+                        if (event.source !== tool.frame?.contentWindow || event.data?.type !== 'smoke:result') return;
+                        results.push(event.data.result);
+                        if (results.length === 2) {
+                            removeEventListener('message', receive);
+                            reactor.forgeManager.close();
+                            done(results);
+                        }
+                    };
+                    addEventListener('message', receive);
+                    tool._confirmAndOpen(tool._discoverTools().find(entry => entry.name === 'Probe'));
+                } catch (error) { done({error:String(error.stack)}); }
+            `, [toolHtml]);
+            assert.equal(toolResult.error, undefined);
+            assert.equal(toolResult.find(result => result.type === 'reactor:saved').ok, true);
+            assert.equal(toolResult.find(result => result.type === 'reactor:image').dataUrl, 'data:image/png;base64,AQID');
+        }
         await driver.execute(`
             const token = arguments[0];
             const controller = window.reactor.projectController;
@@ -193,6 +235,10 @@ async function main() {
             [], { timeout: 90000, description: 'saved token after Web editor reload' });
         assert.equal(await driver.execute(
             'return window.reactor.projectController.currentProject.webdriverPersistenceToken;'), token);
+        if (process.argv.includes('--project-tools')) {
+            assert.equal(await driver.execute('return reactor.databaseManager.data.states[1].projectToolsSmoke;'), 'persisted');
+            process.stdout.write('Web Project Tools iframe, image bytes, normal Save and reload passed.\n');
+        }
 
         process.stdout.write(`Web editor persistence smoke passed: ${token}\n`);
     } finally {

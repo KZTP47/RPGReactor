@@ -1,5 +1,438 @@
 # Handoff - 0.98.5 In Progress
 
+## 2026-09-06 — 0.98.5 release preparation
+
+- Consolidated the release into coherent feature notes covering Battle Rooms/Action Sequences, lighting/media, quests/interfaces/audio, and compatibility/reliability. Root and editor changelogs now share the same current summary; historical development detail is retained in `docs/releases/0.98.5-development-notes.md`.
+- Added `docs/posts/release-notes-0.98.5.md`, `docs/posts/itch-devlog-0.98.5.md`, and its plain-text copy. README and documentation index point to the new overview and authoring guides. Generated Battle Test database snapshots are ignored rather than committed.
+- Verified 2,932 tests, 1,167 JavaScript syntax checks, zero npm audit findings, and matching runtimes in all 13 local bundled projects. Public itch page lists 0.98.5 desktop packages; their exact source correspondence has not been independently verified.
+- GitHub publication is pending authentication: HTTPS push cannot obtain credentials and SSH has no accepted key. No authenticated itch.io publishing session is available; devlog files are ready for the dashboard. No binary uploads are performed by this source/announcement update.
+
+## 2026-09-06 — Event height overwritten by Save Project
+
+- Remove Save Project's unconditional event draft flush: a closed inspector retained its old elevation and rewrote it over a later 3D arrow drag. This also prevents stale drafts from affecting a different map.
+- Keep page model selection in the draft until Apply/OK, so Cancel no longer leaks model changes into the sidecar.
+- Regression: open/close Event 2 at Z=20, drag to Z=0, Save Project, reopen the editor and start a new game. Add behavioral coverage for zero/fractional heights, map switches, Cancel and Apply. 2,932 automated tests pass.
+
+Native regression `editor/tests/smoke/nw-event-drag-save.cjs` fails before the fix (saved 20 instead of 0); validation logs `/tmp/rr-event-drag-save-before.log`, `/tmp/rr-event-drag-save-after.log`, `/tmp/rr-event-save-full.log`. Editor-only fix; runtime remains **20260906.19**. Restored the user's requested ground placement for Demo Reactor Room Event 2 by removing only its `eventZ` entry from `Map001.r3d.json`; all other authored data is preserved. Original file backup: `/tmp/rr-reactor-room-door-backup-oaahdrsq/Map001.r3d.json`.
+
+## 2026-09-06 — Media surface source proportions
+
+- Size newly selected media using decoded image/video dimensions instead of retaining the 320×180 placeholder. This also works in live map authoring without a local preview element.
+- Keep Proportions links width/height as well as scale; turning it back on refits to the source ratio. Opening existing surfaces preserves their authored sizes. Guard late/cancelled metadata loads and preserve sparse transform commands. Update the tooltip in all 17 non-English languages.
+- Validation: 2,930 automated tests pass; native portrait/square/wide resize-save-reopen checks pass in 2D and 3D, plus common-event workspace preview.
+
+Evidence: `/tmp/rr-media-proportions-tests.log`, `/tmp/rr-media-proportions-native.log`; regression runners `editor/tests/media-surface-proportions.test.cjs` and `editor/tests/smoke/nw-media-surface-proportions.cjs`. Native tests use disposable project data and generated media. Editor-only change; runtime remains **20260906.19**.
+
+## 2026-09-06 — Exclusive map tool ownership
+
+- Centralize handoff between painting, Events, Media Surfaces, Lighting and 3D-M: release old panels, placements and pointer handlers before the next tool takes control. Synchronize toolbar/palette highlights and painting state; old tool resume flags cannot override the new owner.
+- Direct tile/region/object selection releases Media Surfaces. Saved media hitboxes yield outside their tool while active draft gizmos retain input. Closing a tool restores the prior palette context; renderer changes cancel pending surface placement and map reloads preserve Lighting/Event/Model ownership. Project teardown releases tools.
+- Keep palette tabs usable under Shadow Pen and restore a usable drawing tool when turning it off. Return region/object overlays with painting.
+- Validation: **2,925 automated tests pass**; native `nw-map-tool-switching.cjs` passes **264 ordered transitions** in 2D/3D, **12 context-return toggles**, **3 direct palette selections**, and **15 renderer/map lifecycle checks**, with no captured uncaught errors. Disposable Demo copy; runtime remains **20260906.19**. Logs `/tmp/rr-map-tools-tests-final.log`, `/tmp/rr-map-tools-native-final.log`; transition details `/tmp/rr-map-tool-matrix.json`.
+
+## 2026-09-06 — UX, themes and localization audit
+
+- Fix English leaks in new battle authoring: 114 source phrases corrected/added across 17 non-English locales; parameterized labels, friendly enum/axis names, translated validation and live switching preserve authored data. Expand source inventory and native coverage to shared widgets, all step forms, room cameras and map media panels.
+- Replace link-blue selected action buttons in older event editors and the animation Change button with theme action colors. Selected rows follow the palette; primary/hover contrast, light picker arrows, inactive condition labels and RTL spatial controls are corrected.
+- Fix a detached-select MutationObserver crash discovered during live language switching. **2,924 automated tests pass**; native 36 sequence layouts and 18 room/media panels pass, preserving edits through language changes. See [UX/localization audit](UX-LOCALIZATION-AUDIT-2026-09-06.md) for the full theme matrix, evidence and coverage limits. Runtime remains **20260906.19**; editor-only changes.
+
+
+## 2026-09-06 — Application workflow audit
+
+- Catalogued and fixed **10 confirmed defects**, with **20 new regressions**. Event clipboard/delete/undo now preserves placement and selects live restored objects; height-only sidecars survive saving. Map copies preserve separate sidecar files, deletion removes them, failed writes roll back incomplete copies/metadata, and stale async operations cannot reach the next project. Same-name tilesets require matching content; failed imports retain the original database. Deletion stages starting-position repairs and handles failure without dropping map entries or leaving stale MapInfos aliases.
+- **2,919 automated tests pass**. Fresh native checks pass: 405 database state checks, 123 command entries, 56 nested dialogs, 32 menu/theme/locale cases, separate Action Sequence authoring, map/event/region workflows, editor saving, Project Tools, battle/animation/layout regressions. Actual browser distribution/persistence passes. All 11 older 2D projects pass 92 startup/map/menu checks with no captured runtime/WebGL/missing-file errors; seven authored intros prevent testing directional input at the sampled start.
+- Full catalogue, evidence and explicit coverage limits: [Application audit](APP-AUDIT-2026-09-06.md), [summary JSON](audits/2026-09-06-app-summary.json). Logs `/tmp/rr-app-audit-*.log`; runtime remains **20260906.19**. No authored project edits or publication.
+
+
+## 2026-09-06 — Event OK commits and retained door elevation
+
+- Event Editor now commits a new event even when its standard fields are unchanged or only its 3D model is selected. Apply inserts once and stays open; OK shares that commit and closes. Failed ID/map validation leaves the draft open and does not write model/elevation data.
+- Removed sidecar writes from Cancel: an earlier session's `pendingZ` could overwrite a subsequently dragged/saved height. Initialize draft elevation per session, preserve the latest Apply baseline, and start new events without orphaned model/elevation entries from recycled IDs.
+- Commit model/elevation changes before refreshing event previews. Elevation/model-only edits now notify EventManager and capture undo; event undo/redo includes heights while leaving unrelated media/sidecar fields untouched. Legacy undo snapshots without heights remain supported.
+- Native `nw-event-commit.cjs` reproduced untouched OK dropping the event and Cancel reverting a saved arrow move. Fixed checks cover Static Room OK/Apply, model-only creation, Door event 2 arrow movement, Z-only OK, save/reload and a fresh game process: runtime model position `[24.5, 0.75, 0.5]`, lift `0.75`, no captured runtime errors. Synthetic test height in a disposable Demo copy only; authored Door still has its existing saved Z=20 and must be repositioned after restarting the editor. `/tmp/rr-event-commit-native.log`.
+- **2,899 automated tests pass**, `/tmp/rr-event-commit-full.log`. Editor-only change; runtime remains **20260906.19**. No authored project edits or publication.
+
+
+## 2026-09-06 — Create events on empty 3D map tiles
+
+- Fixed empty-ground interaction in 3D Event mode: double-click now calls the normal event activation/creation path, and a single click selects the tile for Enter. Empty clicks clear stale event selection. Navigation mode retains double-click camera framing; active media authoring retains its own input.
+- Reproduced on a disposable copy of Demo's Static Room after duplicating/editing a media surface. Media tool cleanup was already working; empty 3D double-clicks previously only reframed the camera. Native `nw-media-event-creation.cjs` verifies double-click, click + Enter, right-click New Event, switching away from unfinished media placement, cancel without insertion, and committed map saving. All five media descriptors remain identical in memory and the saved sidecar. No captured missing-file/runtime/WebGL errors; `/tmp/rr-media-event-native.log`.
+- **2,893 automated tests pass**, `/tmp/rr-media-event-full.log`. Updated two old source assertions that assumed all empty double-clicks reset the camera. Editor-only change; runtime remains **20260906.19**, authored project data unchanged.
+
+
+## 2026-09-06 — Independent media surface corners
+
+- Fixed 2D corner/edge editing recalculating nominal width/height: these values affect standing lift and perspective, so changing them moved untouched corners. Quad edits now preserve the base dimensions/anchor; width/height inputs still resize explicitly. Numeric corner inputs resolve the current corner object after a drag. Canvas handle picking uses visible map coordinates, including when HD-2D prepasses leave PIXI's event boundary on an offscreen root; listeners are removed on backend teardown.
+- Replaced 3D corner-driven whole-plane scaling with independent vertices. No Shift moves only the selected corner; Shift uniformly scales the original quad around its opposite corner, preserving an existing warp. Mid-drag modifier switching works. Position, elevation and scale fields stay unchanged by corner edits.
+- Optional normalized `worldCorners` persists 3D shapes through Show/Transform commands and map-owned surfaces. Runtime planes and scanlines, plus Battle Room media and editor battle previews, use the same vertex ordering. Absent data preserves old rectangular 3D surfaces and existing 2D warps. Runtime revision **20260906.19**, synced to 13 templates without changing plugin lists.
+- **2,892 automated tests pass**, `/tmp/rr-independent-corners-full-final.log`. Native toolbar test verifies actual unselected world vertices, proportional/normal modifier transitions, saved/reopened shapes and matching battle-media vertices; actual flat-map pointer drag confirms the other three projected corners/anchor stay fixed. Existing save/duplicate/undo/tool-switch/ceiling checks pass. `/tmp/rr-independent-corners-native-final.log`, `/tmp/rr-flat-corner.png`. Disposable test project only; no authored project data changes or publication.
+
+
+## 2026-09-06 — Media Surface implementation naming
+
+- Canonical editor classes/files are `MediaSurfaceEditor` and `MediaSurfacePreviewManager`; app/controller code uses `mediaSurfacePreviewManager`. Old CommonJS paths, browser globals and instance properties remain aliases to the same implementations. Pop-out shell is `media-surface-panel.html`, now explicitly included in editor distribution packaging.
+- Runtime API is `RPGReactorMediaSurfaces` with `MediaSurfaceOwner`/`MediaSurfaceManager`; old API and class names remain aliases. Updated internal consumers, descriptive labels, handle accessibility text and diagnostics. Persistent command IDs, saved fields, preference keys/events and DOM hooks remain stable; no project migration. See [Media surfaces](MEDIA-SURFACES.md) for the mapping and compatibility contract.
+- Runtime **20260906.18**, synced to all 13 templates without changing plugin lists. **2,888 automated tests passed**, `/tmp/rr-media-rename-tests-final.log`. Native toolbar workflow passed creation, Shift/free/mid-drag resizing, save/duplicate/undo/tool switching, ceiling authoring and battle media; `/tmp/rr-media-rename-native.log`. Added the scale-link/Shift tooltip to all locale text catalogs. No authored project-data edits or publication.
+
+
+## 2026-09-06 — Shift to resize media surfaces proportionally
+
+- Corner dragging in 3D now uses Shift for proportional resizing; without Shift, X/Y scale follows the pointer independently. Shift is accepted when starting a corner drag and is read on every move so it can be pressed/released mid-drag. Keep Proportions continues linking numeric scale fields/sliders; its tooltip explains the distinction.
+- Flat-map, screen-overlay and dialog corner controls use the same modifier. Shift uniformly scales the original quad around its opposite corner, preserving its proportions/warp; releasing Shift restores free placement from the drag snapshot. Existing 3D centre anchoring and edge-handle behavior remain intact. Updated live help.
+- Validation: 46 targeted media tests passed, `/tmp/rr-media-shift-tests.log`. Native `nw-media-surface-toolbar.cjs` passed Shift held before grabbing, unconstrained off-diagonal dragging with linked sliders enabled, and Shift press/release during the drag, plus existing placement/save/duplicate/undo/tool-switch/ceiling/battle-media checks; `/tmp/rr-media-shift-native.log`. No runtime or authored project-data changes.
+
+
+## 2026-09-06 — 2D template audit, picture choices and video frames
+
+- Audited all 11 non-3D templates in native NW.js: startup/map frames, six standard menu return paths, seven additional gameplay maps, and nine configured Battle Tests. Final sampled paths have no captured missing-file/runtime/WebGL errors. Seven battle probes reached attack invocation; Freelancers/Origins forced-action completion remains unverified. This is smoke coverage, not full playthrough or save/victory/transfer certification. Full matrix, limitations and reproduction: [2D compatibility audit](2D-COMPATIBILITY-AUDIT-2026-09-06.md).
+- Fixed PSYCHRONIC picture-choice ownership across scene destruction (Freelancers null `scale.x` crash), refreshed choice icons after delayed IconSet loading (all six Origins nation flags visibly verified), and allocated video texture storage before decoded frames arrive (Origins Map 489 GPU texture overflow, now verified rendering nonblank video).
+- Corrected only Freelancers enemy 354's entry notes: set down-facing direction after starting walk. Native Battle Test confirms all three robots face down toward up-facing actors. No runtime/plugin facing override retained. This is a local edit to ignored project `data/Enemies.json`; plugin lists and other enemy notes are preserved.
+- Runtime **20260906.17**, synced to all 13 templates. **2,883 automated tests pass**, `/tmp/rr-template-audit-full-final.log`. Native evidence paths are in the audit report. Test setup uses disposable project copies and profiles. No commit/publication.
+
+
+## 2026-09-06 — Unicode map loading and legacy 2D fog scrolling
+
+- Added shared `RRJson` file decoding (`runtime/reactor_json.js`, mirrored as `editor/src/utils/JsonFiles.js`). Editor project/database/map readers, map sidecars and Battle Room readers accept UTF-8 with or without BOM and BOM-marked UTF-16 LE/BE. Runtime database/map XHR keeps its existing text interface for plugins and strips a leading BOM; native Chromium decoding was verified for all four encodings. Battle Room filesystem/fetch readers decode bytes through the same helper. Invalid bytes/JSON still fail, interior Unicode/BOM characters survive, and saves remain ordinary UTF-8 without BOM. No global JSON or filesystem monkeypatch and no legacy-codepage guessing.
+- Fixed frozen VE fog/dust in Rebellion and the PSYCHRONIC MZ fog port: normalize numeric/string blend modes before comparing the fog sprite with game data. The old comparison recreated every layer each frame and wrote movement onto the discarded sprite. Stable fogs now retain their sprites; genuine name/hue/blend/depth changes still recreate and immediately position the replacement. Existing commands, movement speeds, opacity, zoom and numeric saved game data are preserved; legacy PIXI and unrelated fog plugins keep their methods.
+- Follow-up opacity comparison: `RR_FOG_OPACITY=1 node editor/tests/smoke/nw-fog-scroll.cjs` renders the same sand texture through Rebellion’s original MV core + PIXI 4.8.9 and Reactor. Peak and summed alpha match exactly at opacity 0, 100, 192 and 255 (`/tmp/rr-fog-opacity.log`). Both authored title fogs use 100/255. The broken recreation path displayed fresh sprites at 255/255, so the corrected fog is lighter than the frozen version. No authored opacity adjustments were made.
+- Runtime **20260906.16** synchronized to all 13 templates, preserving plugin lists and authored project data. Updated build preflights include the new JSON module.
+- Validation: **2,871 automated tests passed, zero failures**, `/tmp/rr-encoding-fog-full.log`. Native `nw-json-encodings.cjs` passed editor load/save, sidecar, database and actual runtime XHR-hook checks for all four encodings, `/tmp/rr-json-native.log`. Native `nw-fog-scroll.cjs` followed Rebellion’s normal startup, confirmed stable fog objects, changing rendered sand pixels, matching scroll coordinates, all three visible title ships, and no missing-file/runtime/WebGL errors; `/tmp/rr-fog-native-final.log`, screenshot `/tmp/rr-fog-scroll.png`. Tests use disposable project copies. An initial diagnostic transfer moved the camera above the ships; the final test uses the authored startup transfer and preserves their visibility. No commit/publication.
+
+
+## 2026-09-06 — Visible surface duplication and Event tool ownership
+
+- Duplicate is now in the fixed footer of the live **Map Media Surface** editor, in addition to the list. It validates/applies the current form, then creates and opens a copy with a new ID. This preserves current adjustments and uses the existing history/persistence path.
+- Enabling Event mode closes the map media tool and authoring gizmos before installing event interaction. The media toolbar highlight clears; saved previews remain visible but decline selection/context clicks, and PIXI/DOM surfaces yield pointer ownership. Returning to Media Surfaces disables Event mode, including direct manager opens. The existing close/cancel lifecycle still applies to unfinished forms when switching tools.
+- Native `nw-media-surface-toolbar.cjs` passed: footer button visibility and duplication using current form values, mutually exclusive toolbar states, cleared authoring, a real pointer selection of event 24 after switching, and return to Media mode. Existing placement/resize/undo/save/ceiling/battle-media checks passed too. Log `/tmp/rr-media-tool-switch-native.log`, screenshot `/tmp/rr-media-duplicate-panel.png`. Targeted checks: 74 passed, `/tmp/rr-media-tool-switch-tests.log`. No authored map or runtime changes.
+
+
+## 2026-09-06 — Duplicate media surfaces and align elevation controls
+
+- Added Duplicate beside Delete in each Media Surfaces list card. The copy retains all source settings and its exact pose, receives an ID that avoids permanent and event-owned surfaces, is inserted immediately below the source, and opens for editing. Duplication and subsequent edits participate in existing undo/redo and map saving. Nested settings are copied independently. List actions have their own row to preserve filename space.
+- Fixed Z/Elevation alignment in the shared media editor: revealing conditional fields now restores their flex layout instead of clearing it. Labels, number fields and sliders retain the same spacing as X/Y, including after target switches; Culling Distance receives the same correction.
+- Validation: **64 targeted automated tests passed**, `/tmp/rr-media-duplicate-tests.log`. Expanded native `nw-media-surface-toolbar.cjs` passed on a disposable Demo copy, including Duplicate button → edit copy → save, original preservation, undo, and field/slider geometry at 440px and 360px panel widths. Existing resize, ceiling placement and battle-media checks also passed with no missing-file/WebGL errors. Log `/tmp/rr-media-duplicate-native.log`. No runtime changes or authored project data changes.
+
+
+## 2026-09-06 — Map media toolbar, ceiling navigation, and surface transforms
+
+- Added **Media Surfaces** beside Lighting with an angular cyan/magenta/metal SVG icon. Its map list offers placement, editing, deletion, undo and redo. Click a wall/floor/ceiling to align a new plane, choose an existing movie/picture in the shared picker, then use the live controls. Surface IDs share the event-command namespace; generated IDs avoid existing map and event surfaces.
+- Permanent descriptors live in optional `reactor3d.mediaSurfaces` in the map sidecar and participate in normal map saving/dirty tracking, including flat maps. No synthetic events are inserted. Runtime seeds decorations once on map entry; ordinary Transform/Stop commands still address them and suspended state survives battles. Battle-owned viewports load their own image/video planes, transforms, opacity, rate, scanlines and culling, with resource cleanup. Runtime revision **20260906.15**, synced to all 13 templates without changing plugin lists.
+- The editor camera now permits pitch from -89° to 89°. **Ctrl + right-drag** looks around from the same eye position (Alt-left-drag is also supported); WASD moves horizontally and Q/E changes height. Hidden dialogs no longer block navigation, while visible dialogs retain focus. The live media panel permits camera movement and prevents accidental tile/prop/event edits. Zero pitch remains level.
+- Moved transforms directly below position: linked Scale X/Y sliders with **Keep Proportions**, separate X/Y/Z rotation sliders, existing rings/arrows and new yellow corner resize handles. All update numeric controls and preview live. Corner resizing holds the centre still; unlinked axes stretch independently. Existing serialized dimensions, signed scales and event commands remain supported.
+- Verification: **2,855 automated tests passed, zero failures**, `/tmp/rr-media-toolbar-full.log`. Native `nw-media-surface-toolbar.cjs` passed using a disposable Demo copy and its actual PNG: toolbar placement, wall/floor normal alignment, linked scale and tilt sliders, actual pointer resizing (1.5 → ~1.795), saving/reopening, Cancel, undo, ceiling placement (90° tilt at Z 23.11), stationary-eye upward look, and battle-owned texture rendering/cleanup. No missing-file or WebGL context errors. Screenshots `/tmp/rr-media-toolbar.png`, `/tmp/rr-media-transform.png`, `/tmp/rr-media-ceiling.png`; log `/tmp/rr-media-toolbar-native.log`. Authored Demo maps, assets, party/formation settings and plugin lists preserved. No commit or publication.
+
+
+## 2026-09-06 — Media surface position controls
+
+- Event-command media surfaces now show X/Y/Z position sliders directly in Binding & Position, including the live map panel. Sliders use a useful local range, recenter after release, expand for typed/gizmo values, and retain 0.01 precision. Screen targets keep their existing 2D controls.
+- The live 3D surface shows shared `RRAxisArrows3D` alongside its rotation rings. World X/Z map to command X/Y; world Y maps to Z elevation. Event/player-bound horizontal offsets convert through tile size while map offsets and elevation stay in tiles. Arrow edits affect only their axis, update numeric/slider values immediately, intercept camera gestures, and dispose with the authoring owner.
+- Verification: **2,851 automated tests passed, zero failures**, `/tmp/rr-surface-position-full.log`; native `nw-media-surface-position.cjs` passed. The native check used an existing project PNG, raised the surface with a real pointer drag while retaining its X/Y and rotations, verified 5.49 in both numeric and slider controls, checked OK serialization and Cancel/owner cleanup, and found no missing-file/WebGL errors. Screenshot `/tmp/rr-media-position-arrows.png`, log `/tmp/rr-surface-position-native-final.log`.
+- The user also asked whether Media Surfaces should have a toolbar tool for permanent map decoration. Recommended placement/editing alongside Lights and 3D Props, saving map-owned surfaces and loading them automatically in Battle Rooms; event commands remain the dynamic control path. This proposal is implemented in the later toolbar entry above.
+
+
+## 2026-09-06 — Sequence media, live room effects and projected battler placement
+
+- Runtime **20260906.14**: new Sound/Animation cues default to zero frame wait and optionally wait for their own completion. The player advances with a cue cursor, so zero-duration cues sharing a timestamp remain ordered and Skip applies impacts exactly once. Existing saved durations and untagged plugin animation behavior stay intact. Room and flat/MV animations accept tile offsets plus a scale multiplier; flat requests keep their normal lifecycle, with instance-owned transforms and explicit media tickets.
+- Action Sequences uses the shared animation picker. Its Effekseer calls now select their owning context before playback/draw/release, verified while a live 3D view remains behind it. Hit Physical and other animation-owned sounds play on their authored frames; preview audio uses volume/pitch/pan. Sound has an explicit Choose Sound button, filename and read-only properties, with Wait (frames) and completion options. MV preview fallback uses the shared layer with optional sound callbacks and pause support. Preview cleanup releases owned sounds/effects/layers.
+- 3D Models previews additional media surfaces concurrently, immediately starts a newly chosen file, keeps unsaved anchor/source changes live, avoids calling play on PNG images, and discards callbacks from disposed image textures.
+- Battle Rooms now advance prop animation queues, selected effects, attached image/video planes and pulse/flicker lights. Media loads use existing project files and valid decoded texture dimensions, follow animated part anchors and release on owner/room disposal. Preview media is muted like the map editor; game media honors its saved audio setting.
+- Troops draws E-number markers from the same formation as Set Up Room. Native pointer dragging on a marker/model changes only BattlePresentation enemy placement; legacy troop member coordinates remain unchanged. Camera freezing, grab offsets, height planes, pointer capture and cancellation keep dragging stable. Runtime sprites expose projected positions/home positions/dimensions and enemy screen coordinates without overwriting bitmap source frames. MOG Battle Cursor converts live projected bounds into its parent coordinates for above/center/side placement.
+- Validation: **2,849 automated tests passed, zero failures**, `/tmp/rr-media-full-final.log`. Expanded native authoring and Battle Room checks passed, including Hit Physical audio, media completion/concurrency, room marker drag/save, animated media/lights, projected battler dimensions, map return and no missing-file/context/zero-size texture errors. Logs: `/tmp/rr-media-native-context.log`, `/tmp/rr-room-placement-native.log`. Shared runtime files match all 13 bundled projects; editor BattleData matches canonical runtime. Authored Demo maps/formations/assets and plugin lists were preserved. No commit or publication.
+
+
+## 2026-09-06 — Descriptive action steps
+
+- `DatabaseActionSequenceEditor.stepDescription` derives concise labels from motion, role/numbered target, destination, stopping distance/offsets, sound filename, database animation and weapon visibility/source. User motion Run/Walk informs later movement labels only when that motion applies to the moving battler; all-target movement keeps the generic Move label rather than assuming a shared motion. Exact home movements say Return Home, with Home Facing distinguished in secondary text. Unknown authored motion names preserve their spelling; missing animation IDs remain visible as numbered references.
+- Both list/timeline rows use primary descriptions and smaller details/frame ranges, plus full native tooltips and accessible labels. `validate` refreshes existing description nodes; nonstructural inspector edits no longer rebuild rows, and duration changes refresh timeline proportions. Gizmo/picker updates therefore stay current. Dynamic composed rows bypass automatic whole-label translation and refresh their translated components on language changes; the listener is removed on disposal. The Motion dropdown now matches the runtime Idle default when no motion is explicitly stored.
+- Existing native authoring coverage additionally checks Unarmed Punch’s Run/Target/Punch/Home labels, stopping distance and home-facing detail, changes Run to Walk through the inspector and checks the subsequent movement row updates without replacing either row, and checks the picked sound appears in its row. Validation: **2,840 automated tests passed, zero failures**; native authoring passed with the new descriptions. Logs: `/tmp/rr-step-descriptions-native.log`, `/tmp/rr-step-descriptions-full.log`; responsive screenshots `/tmp/rr-sequence-layout-2560.png` and `/tmp/rr-sequence-layout-1280.png`. Runtime/data schemas stay **20260906.13**; no authored Demo data changed, no commit or publication.
+
+## 2026-09-06 — Concurrent motion gizmos and shared sequence sound picker
+
+- Motion overrides now display both `RRAxisArrows3D` and `RRPoseRings3D`; the selected Move/Rotate tool only decides overlapping hit priority. Distinct arrow heads remain draggable while Rotate is selected. Axis mapping preserves map X/Y and height Z, updates the existing numeric fields live, and keeps one undo snapshot per drag. Other preview modes retain their existing tool visibility.
+- `DatabaseActionSequenceEditor.pickSound` uses `RRAudioPickerModal` and `RRAssetFiles.AUDIO_EXTENSIONS`. Current name/volume/pitch/pan are passed to the picker and saved together on OK, preserving additional existing audio properties. Cancel does not mutate data, and stale callbacks cannot alter a different project, host, sequence or selected step. The sound inspector shows one filename/picker button instead of a separate file dropdown and duplicate level boxes. Sequence playback pauses while choosing sound.
+- The persistent inspector header updates its translation source with each selected step/Preview Formation, preventing a shared picker translation pass from reverting Play Sound to the original Battler Motion title.
+- Native authoring coverage now drags an offset arrow while the rings and Rotate tool remain active, checks single-axis changes/readout synchronization/Undo, and exercises the real audio picker with an existing project sound, level changes, Cancel, OK, reopening, Undo/Redo and save/reload. Validation: **2,840 automated tests passed, zero failures**, and the native authoring checks passed. Logs: `/tmp/rr-sequence-arrows-audio-native.log`, `/tmp/rr-sequence-arrows-audio-full.log`; screenshots `/tmp/rr-sequence-transform-rings.png`, `/tmp/rr-sequence-audio-picker.png`. Runtime and schemas remain **20260906.13**; no authored Demo data or plugin lists changed, no commit or publication.
+
+## 2026-09-06 — Live Battler Motion transform sliders
+
+- `ActionSequencePreview` now builds compact X/Y/Z-colored slider rows beside precise numeric fields for offset, rotation, proportional and per-axis scale. Slider input and numeric input paint immediately; slider gestures create one undo entry, and double-click resets to zero/one. Initial ranges are ±5 tiles, ±180 degrees and 0.01–4×; exact numeric values retain the existing schema limits and expand slider bounds when needed.
+- Override Transform shows the shared rings immediately. Local Move/Rotate buttons mirror the preview toolbar. Disabled motion overrides hide their gizmos. Ring dragging updates existing slider/input nodes instead of rebuilding the inspector; selection, inspector scroll and layout remain stable. Shared ring highlighting shows the held axis. Runtime/model asset data formats are unchanged; revision stays **20260906.13**.
+- Transform editing evaluates only through its motion at the end boundary, preventing a following zero-duration motion from overwriting the pose under adjustment. Explicit playback/scrubbing uses the full sequence; Undo restores the selected motion preview. A focused test covers this boundary.
+- Native `nw-sequence-authoring.cjs` verifies enabling the override exposes seven sliders and rings, a real slider drag updates the rendered target and readouts before release, multiple input ticks produce one undo record, Undo restores values, numeric input updates immediately, and ring drags synchronize both control types before release. Existing clipboard, drag/reorder, Play Step, responsive and persistence checks pass. Log `/tmp/rr-motion-sliders-native.log`; inspected `/tmp/rr-sequence-transform-rings.png`. Full suite: **2,840 passed, zero failures**, `/tmp/rr-motion-sliders-full.log`. No Demo authored data changed, no commit or publication.
+
+## 2026-09-06 — Step editing, single-step playback and cinematic cameras
+
+- Runtime **20260906.13** (supersedes the abrupt-cut draft .12). Action Steps uses the shared typed clipboard, scoped Ctrl/Cmd+C/X/V and a context menu. Paste/add/duplicate insert below a captured selection; delayed clipboard operations are guarded against navigation and edited cut records. Drag rows or the Add Step button to explicit boundaries with edge scrolling. Existing scroll/focus preservation and native text editing remain intact.
+- Play Step evaluates a prefix through the selected cue, replays only its effects, and stops at its boundary even with Loop or a following instantaneous step. Instant motion previews get 60 frames; other instant cues get one. Full playback remains available, and the step time label is relative to its own interval.
+- Battle Room Setup exposes Cinematic Cuts only as a troop override and retains it while navigating the overview. Runtime shot transitions use smoothstep over 30/24/42 rendered frames for actor/impact/return, shortest yaw arcs and a bounded 18-degree sweep. Repeated target occurrences are deduplicated for framing, not combat resolution. Repeated impact/end callbacks do not restart transitions. Manual camera modes bypass automation; ordinary map cameras remain unchanged. No obstacle avoidance or cinematic battlebacks yet.
+- Focused tests cover clipboard failures/stale panels/anchor insertion, pure camera sampling, smooth transitions, group framing, repeat stability, overview restoration and yaw wrapping. Native `nw-sequence-authoring.cjs` covers real pointer reordering, native keyboard copy/cut/paste, context menus, Add Step dragging, isolated Play Step, responsive layout and save/reload. `RR_CINEMATIC=1 nw-unarmed-punch.cjs` checks the actual rendered Fleagus punch, continuous camera angles and exact settled overview. `nw-battle-presentation.cjs` verifies cinematic selection/navigation/Apply/persistence alongside existing room lifecycle checks.
+- Validation: **2,839 automated tests passed, zero failures**; the native authoring, cinematic punch and full Battle Room lifecycle checks passed. Logs: `/tmp/rr-step-camera-full-final.log`, `/tmp/rr-step-editing-native.log`, `/tmp/rr-cinematic-native.log`, `/tmp/rr-cinematic-setup-native.log`. Inspected `/tmp/rr-cinematic-actor.png` and `/tmp/rr-cinematic-impact.png`; the reactor-room approach and punch remain visible. All 17 non-English locales include the new controls/help. Three changed runtime files are synchronized to all 13 template copies; plugin lists and authored Demo formations/assets are preserved. No commit or publication.
+
+## 2026-09-06 — Matching sequence inspector card
+
+- The right inspector now uses the same `BattlePresentationEditor.section` structure as Action Steps: themed outer card, accent header and inset scrolling content. Step selection and Preview Formation update the persistent card header. Runtime and authored data are unchanged. Native authoring validation: `/tmp/rr-sequence-inspector-card-native.log`; screenshots retain `/tmp/rr-sequence-layout-2560.png` and `/tmp/rr-sequence-transform-rings.png`.
+
+## 2026-09-06 — Action Steps sidebar and stable selection
+
+- Action Steps moved from below the stage to the workspace’s left column; the preview and inspector occupy the other columns. The list takes available height, with its mode switch above and Add Step controls below. Columns narrow at the database detail’s existing container breakpoint. Runtime remains **20260906.11**; no sequence or project data changes.
+- Selecting a step now updates row classes/ARIA state and the inspector without rebuilding step buttons, preserving native scroll and keyboard focus. Required rebuilds capture/restore both scroll axes and restore an existing focused step by ID with `preventScroll`.
+- Native `nw-sequence-authoring.cjs` verifies a click on step 46 in a 69-step disposable sequence retains scroll, DOM identity and focus; inspector changes and horizontal timeline selection preserve scrolling too. It checks the left-column placement and no outer overflow at 1440p, 1080p and 720p, plus the existing target-placement/ring/scale/save checks. Log: `/tmp/rr-sequence-sidebar-native.log`; inspected `/tmp/rr-sequence-layout-2560.png`. Ring testing zooms out for the moved target and picks a point inside the resized stage. No commit or publication.
+
+## 2026-09-06 — Action Sequence preview and transform authoring
+
+- Runtime **20260906.11**. Fixed 720×340 preview was stretched in larger panels. `ActionSequencePreview` sizes both the composite canvas and Three renderer using the stage rectangle, DPR and 1.5× supersampling (width cap 2560), supplies preview zoom, and reuses `RRAxisArrows3D` / `RRPoseRings3D`. Its ResizeObserver and gizmos are disposed on teardown; old asynchronous cast loads still use generation guards. The inspector and Action Steps scroll independently, while the detail fits 2560×1440, 1920×1080 and 1280×720.
+- Preview Formation owns temporary homes for each numbered target; field/marker/mesh/arrow selection edits only these homes. Model raycasting plus nearest foot markers prevents a neighboring battler intercepting a placement drag. Step Transform edits saved motion/move keys, with one undo snapshot per gesture. Model motion fields support offsets, rotations, proportional and per-axis scale. Temporary formations never write the sequence or Troops. No Demo authored data changed in this pass.
+- Optional `motion.transform` interpolates a separate visual layer over travel, resets on the next unoverridden motion, and supports exact pure seeks. `visualPose` combines it for editor and runtime. Optional `targetIndex` selects a distinct target for choreography; original repeated target occurrences still flow through the unchanged impact resolver. Missing numbered targets skip presentation. Runtime models/billboards accept proportions, conventional model battlers accept rotations/depth scale, and cleanup restores saved model transforms plus the exact room home fields (preventing leftover scale axes).
+- Validation: **2,835 automated tests pass**, `/tmp/rr-sequence-authoring-full-final.log`. `/tmp/rr-sequence-authoring-native-final.log` verifies responsive resolution/layout, Target 2 numeric and pointer placement with unchanged neighbors/data, actual ring dragging, scale and save/reload. `/tmp/rr-sequence-transformed-battle.log` verifies a real stretched/offset Fleagus punch and restoration, with no missing assets or WebGL errors. Screenshots `/tmp/rr-sequence-layout-2560.png` and `/tmp/rr-sequence-transform-rings.png` show the revised editor. New labels cover all 17 non-English locales.
+- Four canonical runtime files match all 13 template copies; editor BattleData matches the shared runtime module. New helper is registered in editor/index.html and marked intent-to-add for shipped-file checks. No commit or publication.
+
+## 2026-09-06 — First unarmed punch sequence
+
+- Runtime **20260906.10** adds Unarmed Punch (96 frames; impact at 46), Run to Target / Punch / Return Home expansions, approach-relative spacing and explicit travel/target/home facing. These remain ordinary serial steps. The sprite adapter supports travel-facing changes and restores original scale; movement evaluation preserves facing on legacy homes without that field.
+- Actor bindings may contain an optional `unarmed` assignment, checked only for weaponless normal attacks after explicit skill overrides and before the actor default. Assignment edits preserve nested fields; references protect nested sequence usage. Demo ActionSequences #1 and actors 1/2 unarmed assignments were saved through DatabaseManager’s pair writer. Existing troop settings, equipment, selected test party and plugin manifests are preserved. Prior presentation backup: `/tmp/rr-unarmed-before/BattlePresentation.json`.
+- `BattleRoomView.prepareMotions` adds per-instance run/walk action aliases from configured travel clips and a generated 36-frame right-arm jab for compatible actual skinned humanoid bones. Explicit authored punch rules win. It never edits source clips/assets or props. Run aliases loop. Model preview seeks sample exact clip time without runtime crossfades; normal gameplay retains crossfades.
+- Native `/tmp/rr-unarmed-punch.log` verifies a real Fleagus unarmed BattleManager action over rendered room frames: one impact, local fist travel over 0.6 model units, opposing approach/return facing and restored home. Editor verifies all three building blocks, repeatable backward/forward punch scrubbing and the actor unarmed dropdown/Open Sequence control. Screenshot `/tmp/rr-unarmed-punch-editor.png` inspected. Tests use disposable copies and actual assets.
+- Validation: **2,832 tests pass**, `/tmp/rr-punch-full-final.log`; 22 focused battle tests pass, `/tmp/rr-punch-unit.log`. Existing native `/tmp/rr-punch-room-regression.log` verifies camera/drag/layout, repeats, room events, return cleanup and mixed 2D/3D battlers, with no missing assets or GPU errors. `git diff --check` has only pre-existing CRLF notices.
+- All 13 template runtime copies and editor BattleData match canonical files. New authoring labels are translated across all 17 non-English locales. No commit or publication.
+
+## 2026-09-06 — Battle asset diagnostics, upright ATB icons and database layout
+
+- Runtime **20260906.9**. The owner’s actual Battle Test party is Fleagus + Karen, while earlier new-game smoke tests used Fleagus + Carol. Karen has no 3D battler binding and references absent `img/sv_actors/Actor1_4.png`; with PSYCHRONIC Charset mode enabled her absent character reference is `Actor1`. `BattleTestConfigModal.missingBattlerGraphics` checks selected actors against the active normal SV / supported PSYCHRONIC Charset path before writing test data or launching, honoring active battler models. It shows an inline actor/path diagnostic; encrypted imports keep runtime validation. Owner has not answered whether to replace Karen with Carol, so the authored test party is preserved.
+- `DatabaseEditorUI` builds actor image slots without requesting their obsolete 2D art while the corresponding model is selected. The decorator invokes the deferred image load when switching back to 2D. Native checks verify Carol emits no `Actor1` request and Fleagus’s real sprite loads on demand when its character model is toggled off, then restores the model in a disposable copy. The logged `Actor2_2` error came from the actor image card, separate from the animation context problem.
+- PSYCHRONIC ATB model icons derive the vertical UV correction from the bitmap’s external GPU source; copying another sprite’s current texture rotation is insufficient because its frame may have been rebuilt. The icon reasserts MIRROR_VERTICAL for bottom-up framebuffer rows and clears it for the canvas-copy fallback. This does not alter the model or world-facing data.
+- Missing animation `Blow1` is a real absent SE reference. `AudioManager.playSe` now resolves known local formats/case/encryption before allocating a buffer, skips a confirmed missing file and logs once per URL. It rechecks subsequent plays so adding the intended asset restores playback. Remote and web URLs keep their normal loaders. This does not supply a substitute sound or change the animation record. Unit tests cover 40 repeated cues, import recovery, uppercase alternate formats, encrypted files and web/remote delegation.
+- The Animations page and effect browser now make their Effekseer context current before updates, split draw passes, playback, stop and effect/context teardown. A native competing-context test draws two real effects while a separate context takes ownership every frame; sampled pixels change and there are no foreign-object/program/GL errors. Existing layer/room ownership is preserved.
+- Traits tables in actors/classes/enemies/weapons/armors/states give the selection indicator a separate empty header cell, aligning Type/Content with their rows. Shared card headings use the theme accent border. Number-stepper wrappers fit the column rather than retaining their original pixel width; the Price row wraps whole field groups. Items now has General/Note in the left stack and Invocation/Damage/Effects in the right stack, collapsing through the existing narrow-pane query. Action Sequence stays below both. Inspected actual Potion screenshots `/tmp/rr-items-layout-1600.png` and `/tmp/rr-items-layout-1280.png`.
+- Verification: full **2,829 passed, zero failed**, `/tmp/rr-battle-regressions-full-final.log`. New native `editor/tests/smoke/nw-battle-regressions.cjs` passes actor graphics toggle/restoration, Karen diagnostic versus configured model actors, Traits/Price/accent checks at 1600/1280, compact item stacks, concurrent-context animation pixels, the true `?test&btest` boot, upright shared ATB UVs, and 40 missing-sound cues with zero buffer requests/no stopped scene; `/tmp/rr-battle-regressions-native.log`. Existing expanded room native smoke also passes, `/tmp/rr-battle-regressions-room-native.log`, including navigation, prop transforms, no unused battleback requests, repeats, room events, teardown/return and mixed 2D/3D rendering.
+- Canonical main/managers/battle-presentation match all 13 sample copies. Existing authored assets, maps, assignments and plugin manifests were preserved (owner disabled PSYCHRONIC Battle Engine during this diagnosis; do not silently re-enable it). All native writes used disposable projects. `git diff --check` passes with existing CRLF notices only. No commit, push or publication.
+
+## 2026-09-06 — Room background loading, responsive Troops and prop orientation
+
+- Runtime **20260906.8** establishes room mode before the original Scene_Battle.create call. Late-installed ImageManager battleback wrappers return a shared valid transparent 1×1 bitmap for room creation and later room requests, preserving plugin sprite interfaces without opening unused background files. Ordinary battleback loaders still delegate unchanged. The creation flag is restored in a finally block.
+- Troops constrains its flex workspace to the available detail height. Its upper pane takes at most 52%/560px; the sidebar and event command list scroll independently. ResizeObserver fits and centers the canvas at its original aspect ratio, preserving canvas coordinate mapping for conventional enemy placement. Observers disconnect on detail teardown. Native checks report zero outer detail overflow and visible Battle Events at 2560×1440, 1920×1080 and 1280×720.
+- The room had passed raw prop rotations to the battler preview pose path, interpreting authored degrees as radians and dropping the map direction. Props now normalize their map model spec and use the same directional pose convention as MapEditor3D.poseProp; authored scale is applied once instead of again as a sequence scale. Battler facing and action keys retain their existing path. No map data was rewritten.
+- Validation: full suite **2,827 passed, zero failed**, `/tmp/rr-room-props-full.log`; 19 focused battle tests pass, `/tmp/rr-room-props-focused.log`. Native `/tmp/rr-room-props-native.log` compares all 11 actual room props against MapEditor3D.poseProp (matching scale and quaternion within floating-point tolerance), checks the same rotations in-game, and deliberately supplies nonexistent battleback names while asserting zero disk-image requests. Existing camera navigation, cursor dragging, save/reopen, battle repeats, local events, exploration return, mixed 2D/3D room and GPU/asset checks remain green. Inspected `/tmp/rr-battle-room-runtime.png`; responsive-layout screenshot is `/tmp/rr-troop-layout-720.png`.
+- Three changed runtime files (main, battle presentation, battle room) match all 13 local sample copies. `git diff --check` passes with existing CRLF notices only. Native tests use disposable copies; owner-authored project data and plugin manifests are preserved. Existing room lighting/plugin coverage limits remain documented in the authoring guide. No commit, push or publication.
+
+## 2026-09-06 — Free camera setup and live Troops room preview
+
+- Owner requested map-style camera controls in Battle Room overrides, removal of the unused area below the 480px preview, and a live selected-room preview in Troops. Room setup now uses a bounded flex/grid dialog with a full-height stage, independently scrolling inspector and fixed footer. Native measurement at a 1000px window is an 835px stage in a 940px dialog, with an 8px footer gap. The canvas/renderer resize to the actual stage dimensions.
+- `BattlePresentationEditor.cameraNavigation` adapts the existing MapEditor3D orbit/pan/zoom/timed-flight methods. Empty left-drag or Ctrl-drag orbits, Shift/right/middle-drag pans, wheel zooms, and the focused canvas accepts WASD/arrows/Q/E with Shift acceleration. Pointer movement while flying turns the camera. Keys stop on canvas/window blur, cleanup removes the window listener, and marker drags keep their separate stationary-camera behavior. Manual navigation captures the current camera pose as a fixed/free camera, clears follow easing, and synchronizes inspector fields. Selecting a follow preset restores follow behavior. Inherited map cameras ignore these gestures. Formation defaults are materialized into the modal draft so panning its camera cannot shift unplaced actor slots.
+- Shared `loadRoomCast`/`drawRoomCast` methods serve setup and Troops. `previewTroop` builds a battle-owned view from the selected map, uses saved camera/formation data, animates models and attached effects, respects initially hidden members and supports the existing Show Battle UI overlay. Room mode bypasses the generic battleback loader/draw/drag path, hides its battleback controls and uses the available preview width. Apply, map/type changes and member changes refresh the view. The hidden embedded renderer pauses while setup is open. Project/DOM/lifetime guards dispose stale asynchronous results; changing sections or returning to Battleback stops rendering and releases the room.
+- Validation: **2,825 passed, zero failed**, `/tmp/rr-room-navigation-full-final.log`. Expanded native smoke `/tmp/rr-room-navigation-native-final.log` passes initial live room rendering (13 meshes/15 model records in this fixture), marker drag stability, the full-height layout, actual pointer orbit/pan, wheel zoom, keyboard flight, camera-field synchronization, Apply refreshing the embedded camera, preservation of all untouched formation slots, disabled gestures under map inheritance, Cancel preserving the saved setup, and room-to-battleback teardown/re-entry. Existing runtime/repeats/events/return/2D-room checks still pass without missing assets or GPU errors. Inspected `/tmp/rr-battle-room-editor.png` and `/tmp/rr-troop-live-room.png`. `git diff --check` passes.
+- Runtime remains **20260906.7**; this pass changes editor authoring and previews only. The live preview shows initial placement/model playback, not execution of room event pages. Existing room renderer limitations in the authoring guide remain. Original project/map/model data was preserved; smoke tests only saved disposable copies. No commit, push or publication.
+
+## 2026-09-06 — Sharp enemy previews, party capacity and third-person setup dragging
+
+- Runtime **20260906.7**. Enemy detail was enlarging a 64px shared thumbnail to 200px. The shared thumbnail renderer now produces 512px images, with cache version 3 replacing old low-resolution images and smooth CSS downsampling for models. Enemy list icons resolve the active 3D binding before attempting a legacy filename and use the cached model image. Binding changes refresh the list icon; asynchronous model responses check project and request ownership.
+- System 1 / Starting Party exposes **Max Battle Members**, accepting 1–99 and storing the optional `System.json.maxBattleMembers`. Opening an old project does not write/migrate a value. A shared resolver reads known enabled PSYCHRONIC Party System, MOG Battle HUD and YEP Party System manifest defaults in order, otherwise four; Demo correctly displays seven immediately. **Use Existing Limit** deletes the override. Battle Room setup captures this effective count instead of `max(4, startingParty.length)`; empty starting-party positions still have markers. Native runtime overrides apply after plugins, while existing projects retain their original method and scripted `setMaxBattleMembers` changes retain save-game lifetime. HUD layout is still authored separately; arbitrary dynamic plugin limits cannot be inferred for editor previews.
+- Owner clarified the jumpiness occurs while dragging a marker in third-person room setup. Following the dragged leader changes the cursor's ground ray each frame, causing feedback. Setup now freezes the effective camera during pointer capture, releases on up/cancel/lost capture, and eases back to third-person framing without changing ordinary runtime follow behavior. Initial third-person focus also uses the actual default party slot rather than the room center while models load.
+- Validation: **2,825 passed, zero failed**, `/tmp/rr-party-preview-full-final.log`. Native `/tmp/rr-party-preview-native-final.log` verifies actual 512px preview at 200px display height plus list icon (inspected `/tmp/rr-enemy-sharp.png`), seven setup slots, System save/reopen, runtime capacity 7 → 5 → 7 despite the installed plugin, and an actual WebDriver mouse drag whose projected leader marker stays within the 0.1-tile snapping tolerance of the cursor. Existing battle sequence, camera, local event, exploration return, 2D room and no-missing-assets/no-GPU-errors checks remain green. Three new focused tests cover party defaults/overrides/save lifetime and drag freeze/easing. New controls and hints are translated into all 17 non-English editor locales.
+- Four changed runtime files match all 13 sample copies; editor BattleData matches the canonical module. `git diff --check` passes. Original authored data, plugin manifests and model files were preserved; all native writes were confined to disposable copies. No commit or publication.
+
+## 2026-09-06 — First Battle Rooms and visual Action Sequences implementation
+
+- Runtime **20260906.6** adds `reactor_battle_data.js`, `reactor_battle_room.js`, `reactor_battle_events.js` and `reactor_battle_presentation.js`, loaded before plugins and installed afterward. All four modules and reactor_main.js match across the 13 local sample projects. Editor BattleData.js is byte-identical to the shared data module. Build whitelists include the new runtime modules. Project plugin manifests and authored map assets were preserved.
+- Creator flow: Troops selects Battleback/Battle Room and a map, with exact formation/facing and map-camera inheritance or troop override. Action Sequences is a separate database list; assignments exist on skills/items, weapon attacks and actor/enemy defaults. Default preview formations face their opponent; model facing is degrees at the data boundary and radians at rendering. Assignment cards now sit inside each record's layout, with separate controls and an unobscured heading.
+- Builder: five templates, live actor/enemy casting, mirrored/multiple-target preview, ordered steps/timeline, frame scrub/play, undo/redo, XYZ/rotation/scale keys, motions, audio, animations, weapon icons, colored projectiles, impact and waits. Exactly one impact cue preserves the original target occurrence list and skill repeats through the original resolver. Explicit existing behavior wins over fallback assignments. No automatic note migration or independent overlapping tracks yet.
+- Room renderer uses explicit map data and battle-owned models, billboards, light uniforms, Effekseer targets and interpreters. It preserves exploration map identity/player coordinates and clears room interpreter context on teardown. Troop/common-event room context supports visual movement, waits, local self switches and supported event commands; unsupported map-changing operations warn/skip.
+- Two regressions found during live testing are fixed: the late 3D bitmap adapter calls the captured canonical model hook, preserving the bitmap needed by enemy state icons; subpixel loading frames wait before canvas texture allocation, preventing 0×0 textures and repeated WebGL/mipmap errors. The PSYCHRONIC ATB adapter uses the live 3D enemy image instead of a stale Goblin/Actor1 path. Test projects link actual movies/assets; movement-only test events have no copied obsolete graphic. No substitute art was added to satisfy the test.
+- Storage: optional ActionSequences.json/BattlePresentation.json with version validation, database dirty/save/cancel integration, a recoverable paired write, reference protection and same-project clipboard bindings. Missing sidecars retain old behavior; unsupported/newer schemas are not overwritten.
+- Verification: **2,822 passed, zero failed**, `/tmp/rr-battle-full-final.log`. Native `editor/tests/smoke/nw-battle-presentation.cjs` passes with `/tmp/rr-battle-native-final.log`: editor save/reopen, assignment gap 8px/equal heights/no overlap, isometric and third-person camera inheritance, camera command override, 13 reactor-room meshes/14 model records, two original resolver calls for two repeats, local route/wait/self-switch behavior, original map/player return and zero retained room models/effects/interpreters. A separate 2D room has six map meshes, an actual 144px character frame and the 3D enemy. Browser logs and GPU upload probes reject missing assets, TypeErrors and WebGL errors; the final run has none. Fourteen focused tests cover data/playback/compatibility/loading-frame contracts. Syntax, runtime-copy checks and `git diff --check` pass.
+- Inspected native screenshots: `/tmp/rr-sequence-editor.png`, `/tmp/rr-enemy-sequence-assignment.png`, `/tmp/rr-battle-room-editor.png`, `/tmp/rr-battle-room-runtime.png`. Fixtures are disposable Demo copies and do not save changes to the owner's battle map or assignments.
+- Limits: room dynamic shadows, video surfaces, plugin fog/overlays, map-dependent plugin commands and performance profiling remain. VE/YEP/VisuStella/LeTBS choreography falls back with a diagnostic pending adapters. Scene_Battle retention and the tested Demo stack do not prove every MOG configuration or every counter/reflection/substitution/exit combination. See [the authoring guide](BATTLE-PRESENTATION.md) for the shipped scope and [the original design](DESIGN-BATTLE-ROOMS-AND-ACTION-SEQUENCES.md) for remaining acceptance gates. No commit, push or publication was performed.
+
+## 2026-09-06 — Battle design and 3D enemy foundation fixes
+
+- New proposal: [Battle Rooms and Action Sequences](DESIGN-BATTLE-ROOMS-AND-ACTION-SEQUENCES.md). Keep Scene_Battle/BattleManager and legacy default behavior; define room ownership and plugin adapters before the timeline UI. First-release assumption is normal battle targeting in a map arena, pending owner direction on tactical movement. The owner prepared Demo map 004, Reactor Room - Battle Map; preserve it and use disposable copies for tests.
+- Enemy General uses the existing 3D toggle as an exclusive active-graphic choice. Image/hue controls hide and disable under 3D; switching off restores 2D and its stored filename. Model changes refresh the shared preview, with request/project ownership checks. The shared thumbnail renderer accepts a caller lifetime outside the 3D tab, fixing cold renders on other database tabs too. Troop previews cache model images by enemy ID and retain placement/hit bounds. Parameter steppers use one fixed width, with room for 15 digits.
+- Runtime **20260906.5** removes misplaced flat-map registry/playback code referencing undefined `character` in updateEnemyModelSprite. Restores the whole model frame after plugins crop it as a character sheet, while keeping the boss-collapse crop. Canonical reactor_3d.js/reactor_main.js synchronized to all 13 sample projects; plugin manifests and authored data untouched.
+- Validation: full **2,808 passed, zero failures**, `/tmp/rr-battle-foundation-full-final.log`; native `editor/tests/smoke/nw-enemy-model.cjs` passes exclusive controls and switching, equal stable fields, actual enemy/troop previews and 102 live battle frames with 6,563 visible target pixels and a complete 192×192 frame. No uncaught errors. Native log `/tmp/rr-enemy-model-native-final.log`; inspected screenshots `/tmp/rr-enemy-preview.png`, `/tmp/rr-troop-model-preview.png`, `/tmp/rr-enemy-battle.png`. Native fixtures copy data/runtime and preserve original Demo files.
+- Limits: editor previews are cached still thumbnails, not a live action-sequence or exact battle-camera preview. This session verifies the existing Demo battle stack, not future Battle Room compatibility for every Star Shift plugin. No new room/sequence runtime or automatic note migration ships in this change.
+
+
+## 2026-09-06 — Effekseer occlusion in the 2D model preview
+
+Reproduced on the actual reactor: both Core animations were DOM canvases above
+the map (`world=false`, `gpu=false`), drawing across the rear housing and upper
+lip. `ModelPropEffects2D` now puts Effekseer previews in world mode before
+playback and composites their shared-GPU textures on the same depth-tested,
+anchor-standing quads used by the 3D view. Those quads render inside the prop's
+retained target with its geometry. `ModelPropsPreview2D.paint` prepares them at
+the final target size before rendering. The existing effect pixel budget is
+retained; other authored effect settings are unchanged.
+
+The rear effect is hidden by the reactor, while the exposed front effect ends
+beneath the upper housing. MV sprite-sheet overlays and video behavior are
+unchanged. This uses the existing 3D anchor-plane depth approximation; it does
+not introduce per-particle depth for the effect texture. The canvas fallback
+also composites through the depth-tested quad. Offscreen/suspended previews
+hide effects and stop playback; disposal removes quads, layers and GPU targets.
+
+Validation: **21 focused checks passed**; full Node suite **2,807 passed, zero
+failures**. Native fixed-frame comparison on the actual reactor counted
+**8,892 blocked pixels** and **7,884 visible effect pixels**, with successful
+suspend/dispose cleanup. Before and after screenshots were visually inspected.
+Reproduce: `node editor/tests/smoke/nw-flat-model-effects.cjs`.
+Logs: `/tmp/rr-flat-effects-final.log`, `/tmp/rr-flat-effects-focused.log`,
+`/tmp/rr-flat-effects-full.log`. Screenshots:
+`/tmp/rr-reactor-effect-before.png`, `/tmp/rr-reactor-effect-after.png`.
+No authored project data or runtime files changed in this pass.
+
+
+## 2026-09-06 — Surface lighting in the editor's 2D map preview
+
+Runtime **20260906.4** allows `packLightUniforms` to populate private uniform
+sets while preserving its existing shared-state callers. Retained 2D props
+previously forced their light count to zero and received only the manager's
+ambient tint. Floor glows could therefore look correct while the reactor
+stayed dark.
+
+Each prop now samples the same point/spot/beam surface-light shader as the 3D
+view. World light positions (including carried-light anchors) are translated
+into its local render space, with height and editor/runtime yaw accounted for.
+Nearby lights are selected conservatively against model extent, independently
+of whether they reach the floor. Ambient is applied in the material once;
+selection tint remains on the sprite. Changed illumination invalidates static
+textures; unchanged fields and hidden models retain their targets. Light
+collection precedes painting so carried lights reach other props in the frame.
+
+This fixes the editor's placed-model preview. Existing projected floor shadows
+remain; model self-shadowing/occlusion is not added by this pass. The game's
+separate flat sprite lighting path is unchanged. No authored lights, model
+assets or Demo event data were edited.
+
+Native actual-reactor check: 228,563 pixels brightened under an elevated test
+light with no floor footprint; alpha unchanged, light-off pixels restored
+exactly, and mutation of shared preview uniforms left model pixels unchanged.
+A reference render with the object/camera translated into map world space
+matched within mean absolute channel error **0.000000113 / 255**. The test uses
+an isolated profile and disposable Demo copy. Reproduce with
+`node editor/tests/smoke/nw-flat-model-lighting.cjs`.
+Final full Node suite: **2,805 passed, zero failures**
+(`/tmp/rr-flat-full-final.log`). Source syntax and whitespace checks pass;
+all 13 local template projects match the canonical runtime.
+Log: `/tmp/rr-flat-native-final.log`; isolated model images:
+`/tmp/rr-flat-reactor-dark.png` and `/tmp/rr-flat-reactor-lit.png`.
+
+
+## 2026-09-06 — Full suite green; PR #46 already included
+
+Reproduced and resolved all six outstanding checks. Stock-interface tests own
+their System fixture and exercise database seeding/authored-layout preservation;
+Delete behavior retains direct shortcut tests; two valid identical translations
+are allowlisted. Synced 144 runtime files across the local template corpus,
+with previous copies backed up and every plugin manifest preserved.
+Final full suite: **2,804 passed, zero failures**; focused suite **50/50**.
+Log: `/tmp/rr-six-full-final.log`.
+
+PR #46's `fefa9a6` is patch-identical to the `5961354` commit included through
+#48. A merge simulation finds only a changelog conflict and no additional code.
+Recommend closing it as already included; no remote state was changed.
+See [integration report](PR-INTEGRATION-2026-09-06.md) for evidence and backups.
+
+
+## 2026-09-06 — Voice-only commands and approved PR integration
+
+Runtime **20260906.3** removes speaker/text editing and message-window coupling
+from Speak 3D Dialogue. Use a non-waiting voice command followed by Show Text
+for simultaneous playback and messages. Legacy text arguments are ignored;
+authored event JSON is not automatically rewritten. Audio levels stay in the
+picker and lip animation is unchanged.
+
+Merge `b38ee87` integrates `origin/main` at `853734b`: approved PRs #47 and #48,
+including #46's passive-state implementation already present in that history.
+The script-list conflict retains both local quest tools and incoming TraitHelp.
+All existing working edits were restored; authored Demo data/assets are intact.
+Details, checks and local recovery snapshots:
+[September 6 integration](PR-INTEGRATION-2026-09-06.md).
+
+
+## 2026-09-06 — Speech authoring, lip seam and mouth interior
+
+Runtime **20260906.2**. Speak 3D Dialogue now uses themed modal/control styles;
+volume, pitch and pan live in the audio picker and survive command reopen.
+Face points use smaller lip dots and labels. Mouth/lip cards add an optional
+colored dark cavity and a Preview mouth slider using the shared runtime.
+Changing points or leaving the preview restores/disposes its generated geometry.
+
+The actual mascot selected zero lip vertices because `bindModelLandmarks`
+captured `SkinnedMesh.bindMatrixInverse` before its first render refresh.
+Running the skinned `updateMatrixWorld` path before capture fixes that scale
+mismatch. The former procedural morph also stretched triangles across the
+mouth. With all three mouth/lip points the new fallback splits that seam,
+preserves/interpolates attributes and skin weights, and adds an inset lining.
+The source GLB and authored landmarks were not changed. The current mascot
+mouth point opens low; use the live preview to refine it onto the closed lip
+line. Authored mouth morphs/jaw rigs keep precedence; human teeth/tongues remain
+asset work. Usage and limits: [face points and speech](3D-FACE-AND-SPEECH.md).
+
+Validation: **205 passed / 2 failed** in the broader 207-check selection. The
+remaining tests concern existing German/French lighting loanwords and ignored
+local corpus runtime drift. Canonical changed runtime files match tracked Demo.
+Native editor checks pass across 14 themes, picker roundtrip/Cancel, smaller
+markers, live mouth preview/reset and saved interior settings. A real game
+fixture using the actual mascot passes decoded/pitched audio, voiced/silent
+intervals, completion/reset and interpreter waits. Fixtures use disposable
+project copies. Reproduce with `editor/tests/smoke/nw-speech-3d.cjs` and
+`editor/tests/smoke/nw-speech-runtime.cjs`; logs are `/tmp/rr-speech-editor.log`,
+`/tmp/rr-speech-runtime.log` and `/tmp/rr-speech-broad.log`.
+
+
+## 2026-09-05 — Shared effects and exact frame reuse
+
+Runtime **20260905.5** is installed in source and tracked Demo. Attached effects use the owning GPU with original AA/sRGB behavior in game and editor previews. Map/viewport cleanup releases owned effects. Sparse light cells, validated media records, effect scissors and guarded neutral scene filters remove more work. The misplaced-animation duplicate draw remains fixed.
+
+Final normal-backend 1080p samples at player [24,15]: **55.42 / 54.82 FPS**. Sustained 60 FPS remains unachieved. 180 focused checks pass; 185/186 in the broader selection, with the pre-existing Windows thumbnail-cache failure. Pixel, lifecycle, comparison methods and rejected experiments are in [PERFORMANCE.md](PERFORMANCE.md). Preserve unrelated author edits; no commit was made.
+
+## 2026-09-05 — Invisible work and attached-effect ownership
+
+Runtime **20260905.3** is in source and tracked Demo. The reported misplaced
+flashes were duplicate 2D draws of hidden 3D-owned animation handles (730 in
+12 seconds before the fix; zero afterward). New guards cover enqueue,
+queued ownership changes and direct drawing. Shared renderer savings and
+exactness tests are detailed in [PERFORMANCE.md](PERFORMANCE.md).
+
+Controlled 1080p live samples: 41.5/45.4 FPS with new switches off and
+44.8/45.8 on, with the animation fix active in both. 60 FPS is not reached.
+Earlier free-camera numbers were affected by movement; do not present them
+as controlled gains. Direct effect-image transfer and finer grids were
+rejected. No backend flags, reduced quality settings or new encoder library
+were retained. Preserve existing unrelated author edits.
+
+## 2026-09-05 — Worker and cell-light performance pass
+
+Runtime **20260905.2** is in the source runtime and tracked Demo. Map/model
+editor views share the new drawing path and load workers through cached Blob
+URLs. Cell masks retain exact light contributions; dense rigid models use
+worker-generated index levels with estimated 0.35-pixel error and full geometry
+for shadows, collision and close views. Runtime effect coverage uses a second
+worker. Original assets and quality settings are retained.
+
+Final same-process live comparisons: 25–28 FPS off, 40–41 FPS on. **60 FPS is
+not achieved.** Frozen GPU savings vary by pose (31.1–46.3%); lighting-only
+pixels match exactly, geometry has small differences needing wider content QA.
+259 focused tests and 240 shadow frames pass. Full Windows suite: 2709
+passed, 27 failed, 1 skipped; unrelated/platform/corpus failures remain.
+All test NW.js windows and drivers are closed. No commit or author-project
+autosave was made. See [PERFORMANCE.md](PERFORMANCE.md) for evidence, new
+benchmark setup, quality caveats and the remaining live transfer/update costs.
+
+## 2026-09-05 — Laptop performance pass
+
+Runtime revision **20260905.1** adds a light-range rejection before fragment
+distance calculations, shares beam model bounds within one light update, and
+avoids the second ancestor walk for attachment rotations. Resolution, assets,
+light falloff and shadow quality are retained. The tracked Demo is synchronized.
+
+On the Ryzen 5 PRO 5650U integrated Radeon laptop at 1920×1080, the averages
+of frozen GPU batch medians fell 13.2% and 5.4% across two A/B/A/B runs, with
+identical pixels. Live samples varied around 19–23 FPS and do not establish
+a stable FPS gain. See [PERFORMANCE.md](PERFORMANCE.md) for all measurements
+and limits. 121 focused tests and the 240-frame animated-shadow probe pass.
+The full suite was not rerun. The profile still shows expensive effect readbacks
+and texture uploads. No asset reductions or commits were made.
+
 ## 2026-09-04 — Session closeout
 
 [SESSION-2026-09-04.md](SESSION-2026-09-04.md) consolidates the day's work and

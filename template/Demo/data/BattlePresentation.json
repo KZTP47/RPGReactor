@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "troops": {
+    "1": {
+      "type": "room",
+      "mapId": 4,
+      "cameraSource": "custom",
+      "projection": "3d",
+      "camera": {
+        "x": 24.439405371900882,
+        "y": 29.261708264462712,
+        "z": 1.0000000000000178,
+        "yaw": 45,
+        "pitch": 35,
+        "distance": 24,
+        "mode": "cinematic",
+        "fov": 40
+      },
+      "actors": [
+        {
+          "x": 28.9,
+          "y": 25.9,
+          "z": 0,
+          "facing": -90
+        },
+        {
+          "x": 28.9,
+          "y": 29.3,
+          "z": 0,
+          "facing": -90
+        },
+        {
+          "x": 28.8,
+          "y": 32.6,
+          "z": 0,
+          "facing": -90
+        },
+        {
+          "x": 30.2,
+          "y": 29.1,
+          "z": 0,
+          "facing": -90
+        },
+        {
+          "x": 30.1,
+          "y": 32.5,
+          "z": 0,
+          "facing": -90
+        },
+        {
+          "x": 30.4,
+          "y": 25.8,
+          "z": 0,
+          "facing": -90
+        },
+        {
+          "x": 31.5,
+          "y": 28.8,
+          "z": 0,
+          "facing": -90
+        }
+      ],
+      "enemies": [
+        {
+          "x": 21.1,
+          "y": 26.8,
+          "z": 0,
+          "facing": 90
+        },
+        {
+          "x": 21.3,
+          "y": 31.5,
+          "z": 0,
+          "facing": 90
+        }
+      ],
+      "eventModes": {}
+    }
+  },
+  "skills": {},
+  "items": {},
+  "weapons": {},
+  "actors": {
+    "1": {
+      "mode": "inherit",
+      "unarmed": {
+        "mode": "sequence",
+        "sequenceId": 1
+      }
+    },
+    "2": {
+      "mode": "inherit",
+      "unarmed": {
+        "mode": "sequence",
+        "sequenceId": 1
+      }
+    }
+  },
+  "enemies": {}
+}

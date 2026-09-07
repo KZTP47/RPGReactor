@@ -66,9 +66,7 @@ test('a palette tab that is already open is opened again', () => {
      * selected one, so the surfaces rebuilt for the new project arrived with no
      * panel and no layer to draw on.
      */
-    assert.match(main, /const openTab = this\.tilesetPaletteViewer\?\.currentLayer;/);
-    assert.match(main, /if \(openTab === 'O'\) this\.tilesetPaletteViewer\.onObject3DTabSelected\?\.\(\);/);
-    assert.match(main, /else if \(openTab === 'R'\) this\.tilesetPaletteViewer\.onRegionTabSelected\?\.\(\);/);
+    assert.match(main, /this\.tilesetPaletteViewer\.selectLayer\(this\.tilesetPaletteViewer\.currentLayer \|\| 'A'\);/);
 });
 
 test('painting an object still declines quietly when there is genuinely no manager', () => {

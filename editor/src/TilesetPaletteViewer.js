@@ -64,14 +64,12 @@ class TilesetPaletteViewer {
     // Enable or disable palette interaction
     setEnabled(enabled) {
         this.enabled = enabled;
-        const paletteContainer = document.getElementById('tileset-palette-content');
-        if (paletteContainer) {
-            if (enabled) {
-                paletteContainer.style.opacity = '1';
-                paletteContainer.style.pointerEvents = 'auto';
-            } else {
-                paletteContainer.style.opacity = '0.5';
-                paletteContainer.style.pointerEvents = 'none';
+        // Keep tool tabs available even while the shadow brush disables stamps.
+        for (const id of ['tileset-preview-container', 'region-ui-container', 'object3d-ui-container']) {
+            const content = document.getElementById(id);
+            if (content) {
+                content.style.opacity = enabled ? '1' : '0.5';
+                content.style.pointerEvents = enabled ? 'auto' : 'none';
             }
         }
     }
@@ -202,7 +200,7 @@ class TilesetPaletteViewer {
                     padding: 4px 8px;
                     font-size: 10px;
                     background-color: ${isActive ? 'var(--color-bg-hover)' : 'var(--color-bg-menubar)'};
-                    border: 1px solid ${isActive ? 'var(--color-link)' : 'var(--color-border-input)'};
+                    border: 1px solid ${isActive ? 'var(--color-accent)' : 'var(--color-border-input)'};
                     color: ${isActive ? 'var(--color-text-strong)' : 'var(--color-text)'};
                     border-radius: 3px;
                     cursor: pointer;
@@ -356,13 +354,16 @@ class TilesetPaletteViewer {
             this.mapEditor?.hideTilePreview?.();
         }
 
+        if (this.mapEditor?.shadowPenMode) this.mapEditor.setShadowPenMode(false);
         this.currentLayer = layerName;
+        if (layerName !== 'M') this.lastPaintLayer = layerName;
+        window.reactor?.claimMapTool?.(layerName === 'M' ? 'models' : 'paint');
 
         // Update tab styles
         document.querySelectorAll('.tileset-layer-tab').forEach(tab => {
             const isActive = tab.dataset.layer === layerName;
             tab.style.backgroundColor = isActive ? 'var(--color-bg-hover)' : 'var(--color-bg-menubar)';
-            tab.style.borderColor = isActive ? 'var(--color-link)' : 'var(--color-border-input)';
+            tab.style.borderColor = isActive ? 'var(--color-accent)' : 'var(--color-border-input)';
             tab.style.color = isActive ? 'var(--color-text-strong)' : 'var(--color-text)';
             tab.style.fontWeight = isActive ? '600' : '400';
             if (isActive) {
@@ -427,8 +428,6 @@ class TilesetPaletteViewer {
                 this.onLayerChanged(layerName);
             }
 
-            // Don't trigger callback - allow browsing layers without disabling event mode
-            // Users can browse different layers to select tiles for events
         }
     }
 
@@ -448,7 +447,7 @@ class TilesetPaletteViewer {
                 return;
             }
 
-            const tilesets = JSON.parse(this.fs.readFileSync(tilesetsPath, 'utf8'));
+            const tilesets = RRJson.parse(this.fs.readFileSync(tilesetsPath));
             const tilesetId = mapData.tilesetId || 1;
             const tilesetChanged = this._loadedTilesetId !== tilesetId;
             this.currentTileset = tilesets[tilesetId];
@@ -860,6 +859,7 @@ class TilesetPaletteViewer {
     }
 
     updateTileSelection(start, end) {
+        if (window.reactor?.mapTool !== 'paint') window.reactor?.claimMapTool?.('paint');
         const canvas = document.getElementById('tileset-preview-canvas');
         if (!canvas) return;
         if (this.mapEditor?.mapStamp) this.mapEditor.clearMapStamp();

@@ -235,7 +235,7 @@ class ShowBalloonIconEditor {
             balloonBtn.style.cssText = `
                 padding: 8px;
                 background-color: ${isSelected ? 'var(--color-accent)' : 'var(--color-bg-input)'};
-                color: ${isSelected ? 'var(--color-bg-deep)' : 'var(--color-text-strong)'};
+                color: ${isSelected ? 'var(--color-accent-on)' : 'var(--color-text-strong)'};
                 border: 2px solid ${isSelected ? 'var(--color-accent)' : 'var(--color-border-input)'};
                 border-radius: 3px;
                 cursor: pointer;
@@ -283,7 +283,7 @@ class ShowBalloonIconEditor {
 
             const name = document.createElement('div');
             name.textContent = tt(this.balloonNames[i]);
-            name.style.cssText = `font-size: 9px; color: ${isSelected ? 'var(--color-bg-deep)' : 'var(--color-text-muted)'}; text-align: center; line-height: 1.2; max-width: 60px;`;
+            name.style.cssText = `font-size: 9px; color: ${isSelected ? 'var(--color-accent-on)' : 'var(--color-text-muted)'}; text-align: center; line-height: 1.2; max-width: 60px;`;
 
             balloonBtn.appendChild(canvas);
             balloonBtn.appendChild(name);
@@ -427,12 +427,12 @@ class ShowBalloonIconEditor {
             const isSelected = (this.balloonId === balloonIndex);
 
             btn.style.backgroundColor = isSelected ? 'var(--color-accent)' : 'var(--color-bg-input)';
-            btn.style.color = isSelected ? 'var(--color-bg-deep)' : 'var(--color-text-strong)';
+            btn.style.color = isSelected ? 'var(--color-accent-on)' : 'var(--color-text-strong)';
             btn.style.borderColor = isSelected ? 'var(--color-accent)' : 'var(--color-border-input)';
 
             const nameLabel = btn.querySelector('div');
             if (nameLabel) {
-                nameLabel.style.color = isSelected ? 'var(--color-bg-deep)' : 'var(--color-text-muted)';
+                nameLabel.style.color = isSelected ? 'var(--color-accent-on)' : 'var(--color-text-muted)';
             }
         });
     }

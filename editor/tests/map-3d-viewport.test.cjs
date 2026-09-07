@@ -193,12 +193,13 @@ test('WebHost loads 3D viewport dependencies lazily from the bundled project', a
     assert.deepEqual(web.requested, [
         '/project/js/libs/pako.min.js',
         '/project/js/libs/three.js',
-        '/project/js/reactor_3d.js'
+        '/project/js/reactor_3d.js',
+        '/project/js/reactor_speech_3d.js'
     ]);
     assert.equal(web.desktopLookup(), false, 'the browser does not ask for a desktop runtime path');
 
     assert.equal(await web.view.ensureLibraries(), true);
-    assert.equal(web.requested.length, 3, 'a second request reuses the loaded globals');
+    assert.equal(web.requested.length, 4, 'a second request reuses the loaded globals');
 });
 
 test('a missing Web 3D dependency reports its project path and can be retried', async () => {
@@ -522,16 +523,14 @@ test('3D preview refuses unsafe allocations before building geometry', () => {
     }), /too much tile geometry/);
 });
 
-test('the camera cannot be orbited under the ground or straight down', () => {
+test('the editor can inspect ceilings and overhead without crossing the camera poles', () => {
     const view = viewport();
     view.camera = null;   // applyCamera is a no-op without one
 
     view.orbit(0, 1000);
-    assert.equal(view.view.pitch, 5, 'stops above the horizon');
+    assert.equal(view.view.pitch, -89, 'allows looking upward without flipping the camera');
     view.orbit(0, -1000);
-    // Well short of overhead: standing art has nothing to show a camera looking
-    // straight down at it, which is why an HD-2D game does not offer the angle.
-    assert.equal(view.view.pitch, 72, 'stops short of looking down on standing art');
+    assert.equal(view.view.pitch, 89, 'allows overhead inspection without flipping the camera');
 });
 
 test('zoom is clamped at both ends', () => {
@@ -673,9 +672,12 @@ test('the viewport says how to steer it', () => {
     assert.match(css, /\.map-3d-hint\.is-fading/, 'and it leaves on its own');
 });
 
-test('double-clicking empty space re-frames rather than doing nothing', () => {
+test('double-clicking in navigation mode re-frames the map', () => {
     // Getting lost in an orbit camera is easy; without this there is no way home.
-    assert.match(source, /if \(!cube\) \{[\s\S]{0,320}this\.frameMap\(mapData\)/);
+    const at = source.indexOf('    handleDoubleClick(event) {');
+    const body = source.slice(at, source.indexOf('\n    }', at));
+    assert.match(body, /if \(!this\.canSelectEvents\(\)\) \{[\s\S]{0,160}this\.frameMap\(map\)/);
+    assert.match(body, /activateEventAt\(tile\.x, tile\.y\)/, 'Event mode creates on the clicked tile instead');
 });
 
 test('asset caches are dropped when the project changes', () => {

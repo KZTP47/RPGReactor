@@ -61,13 +61,20 @@ class ModelPropsManager {
 
     /** Follow the loaded map: props are map content, drawn whether or not the tab is up. */
     setMap(mapData, tilemapManager) {
+        this._unbindPointer();
+        this._pointerUp();
+        this._hideGhost(true);
+        this.mapEditor3D()?.selectProp?.(null);
         this.tilemapManager = tilemapManager || this.tilemapManager;
         this.currentMap = mapData || null;
         this.selectedId = null;
+        this._undo = [];
+        this._redo = [];
         this._ensureContainer();
         this.preview2D.bind();
         this.render();
         this._syncPanel();
+        if (this.active) this._bindPointer();
     }
 
     _ensureContainer() {
@@ -119,7 +126,8 @@ class ModelPropsManager {
     }
 
     previewTint(id) {
-        const ambient = this._ambientTint ?? 0xffffff;
+        // Live model textures already contain ambient and surface illumination.
+        const ambient = this.preview2D?.entries.get(id)?.lighting ? 0xffffff : (this._ambientTint ?? 0xffffff);
         const selection = id === this.selectedId ? 0xffe08a : 0xffffff;
         const channel = shift => Math.round(((ambient >> shift) & 255) * ((selection >> shift) & 255) / 255);
         return (channel(16) << 16) | (channel(8) << 8) | channel(0);
@@ -212,7 +220,7 @@ class ModelPropsManager {
         if (map3d?.isEnabled?.()) map3d.refreshProps?.(ids);
         this.tilemapManager?.refreshPassage?.();
         map3d?.refreshPassage?.();
-        this.projectController?.videoSurfacePreviewManager?.refresh?.();
+        this.projectController?.mediaSurfacePreviewManager?.refresh?.();
     }
 
     //-------------------------------------------------------------------------
@@ -344,10 +352,10 @@ class ModelPropsManager {
     // 2D pointer
 
     activate() {
-        if (this.active) return;
-        this.active = true;
+        window.reactor?.claimMapTool?.('models');
         const mapEditor = window.reactor?.mapEditor;
-        this._resumeMapEditor = !!mapEditor?.enabled;
+        if (!this.active) this._resumeMapEditor = !!mapEditor?.enabled;
+        this.active = true;
         mapEditor?.setEnabled?.(false);
         this._bindPointer();
         document.addEventListener('keydown', this._onKeyDown);
@@ -356,6 +364,11 @@ class ModelPropsManager {
     }
 
     deactivate() {
+        clearTimeout(this._previewRetry);
+        this._previewToken = (this._previewToken || 0) + 1;
+        this._previewKey = null;
+        this._closeChoiceDropdowns();
+        this._choiceEventsAbort?.abort();
         if (!this.active) return;
         this.active = false;
         this._hideGhost(true);
@@ -372,7 +385,9 @@ class ModelPropsManager {
 
     _bindPointer() {
         const container = this.tilemapManager?.container;
-        if (!container || this._listeners.length) return;
+        if (this._listeners.length && this._listeners[0][0] === container) return;
+        this._unbindPointer();
+        if (!container) return;
         const on = (type, handler) => {
             container.on(type, handler);
             this._listeners.push([container, type, handler]);
@@ -446,6 +461,7 @@ class ModelPropsManager {
     }
 
     _handleKeyDown(event) {
+        if (event.defaultPrevented || window.reactor?.uiManager?.isEditorModalOpenForGlobalShortcuts?.()) return;
         this._handleUndoKeys(event);
         if (!this.active || !this.selectedId) return;
         const tag = event.target?.tagName;
@@ -485,51 +501,85 @@ class ModelPropsManager {
                     <button type="button" tabindex="-1" data-props-step="-1" data-target="${id}" aria-label="-">&#9660;</button>
                 </div>
             </div>`;
+        this._choiceEventsAbort?.abort();
+        const dropdown = (id, label) => `
+            <div class="mp-field mp-field-wide"><span>${escape(label)}</span>
+                <details class="mp-choice-dropdown" data-choice="${id}">
+                    <summary aria-label="${escape(label)}"><span class="mp-choice-summary"></span><span class="mp-choice-caret" aria-hidden="true">▾</span></summary>
+                    <div class="mp-choice-popup">
+                        <input type="search" class="mp-choice-search" placeholder="${escape(this._tx('Search...'))}" aria-label="${escape(this._tx('Search')+' '+label)}">
+                        <div id="${id}" class="mp-choice-list rr-accent-scrollbar"></div>
+                        <div class="mp-choice-no-results" hidden>${escape(this._tx('No results'))}</div>
+                    </div>
+                </details>
+            </div>`;
         container.innerHTML = `
-            <div style="display: flex; flex-direction: column; flex: 1; min-width: 0; height: 100%; min-height: 0; overflow-y: auto; background-color: var(--color-bg-menubar);">
-                <div style="padding: 8px; background-color: var(--color-bg-list-item); border-bottom: 1px solid var(--color-border);">
-                    <div style="display: flex; align-items: center; gap: 8px;">
-                        <div id="model-props-preview" title="${escape(t('props.choose'))}" style="flex: 0 0 64px; width: 64px; height: 64px; border: 1px solid var(--color-border); border-radius: 3px; background: var(--color-bg-deep); display: flex; align-items: center; justify-content: center; overflow: hidden; cursor: pointer;"></div>
-                        <div style="flex: 1; min-width: 0;">
-                            <div id="model-props-name" style="font-size: 11px; font-weight: 600; color: var(--color-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escape(t('props.noModel'))}</div>
-                            <div id="model-props-status" style="font-size: 10px; color: var(--color-text-muted); margin-top: 2px;">${escape(t('props.hintChoose'))}</div>
-                            <button type="button" id="model-props-choose" class="map-props-btn primary" style="margin-top: 6px; padding: 3px 10px; font-size: 10px;">${escape(t('props.choose'))}</button>
+            <div class="mp-panel">
+                <div class="mp-fixed rr-accent-scrollbar">
+                <section class="mp-section mp-model-card">
+                    <div class="mp-section-body mp-model-heading">
+                        <button type="button" id="model-props-preview" title="${escape(t('props.choose'))}" aria-label="${escape(t('props.choose'))}"></button>
+                        <div class="mp-model-info">
+                            <div id="model-props-name" title="${escape(t('props.choose'))}">${escape(t('props.noModel'))}</div>
+                            <div id="model-props-status">${escape(t('props.hintChoose'))}</div>
+                            <button type="button" id="model-props-choose" class="map-props-btn primary">${escape(t('props.choose'))}</button>
                         </div>
                     </div>
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px 8px; margin-top: 8px; font-size: 10px; color: var(--color-text-muted);">
-                        <label style="grid-column: 1 / -1;">${escape(t('props.size'))}${stepper('model-props-size', 0.1, 64, 0.5, 2)}</label>
-                        <label>${escape(t('props.direction'))}
-                            <select id="model-props-direction" style="width: 100%; margin-top: 2px; font-size: 11px; padding: 3px 4px; background: var(--color-bg-input); color: var(--color-text); border: 1px solid var(--color-border-input); border-radius: 3px;">
+                </section>
+                </div>
+                <div class="mp-settings rr-accent-scrollbar">
+                <details class="mp-section" name="model-props-settings" data-props-section="placement"${!this._activeSection || this._activeSection === 'placement' ? ' open' : ''}>
+                    <summary class="mp-section-title">${escape(this._tx('Placement'))}</summary>
+                    <div class="mp-section-body mp-field-grid">
+                        <label class="mp-field">${escape(t('props.size'))}${stepper('model-props-size',0.1,64,0.5,2)}</label>
+                        <label class="mp-field">${escape(t('props.direction'))}
+                            <select id="model-props-direction">
                                 <option value="2">${escape(t('props.dirDown'))}</option>
                                 <option value="4">${escape(t('props.dirLeft'))}</option>
                                 <option value="6">${escape(t('props.dirRight'))}</option>
                                 <option value="8">${escape(t('props.dirUp'))}</option>
                             </select>
                         </label>
-                        <label>${escape(t('props.lift'))}${stepper('model-props-z', 0, 512, 0.25, 0)}</label>
-                        <div style="grid-column: 1 / -1;">${escape(t('props.animations'))}
-                            <div id="model-props-animations" class="mp-choice-list"></div>
-                            <label style="display: flex; align-items: center; gap: 4px; margin-top: 3px; color: var(--color-text); cursor: pointer;"><input type="checkbox" id="model-props-repeat"> ${escape(t('props.repeat'))}</label>
+                        <label class="mp-field">${escape(t('props.lift'))}${stepper('model-props-z',0,512,0.25,0)}</label>
+                        <label class="mp-check"><input type="checkbox" id="model-props-passable">${escape(t('props.passable'))}</label>
+                    </div>
+                </details>
+                <details class="mp-section" id="model-props-card" name="model-props-settings" data-props-section="transform"${this._activeSection === 'transform' ? ' open' : ''}>
+                    <summary class="mp-section-title">${escape(this._tx('Transform'))}</summary>
+                    <div class="mp-section-body">
+                        <div id="model-props-card-tabs"></div><div id="model-props-card-body"></div>
+                    </div>
+                </details>
+                <details class="mp-section" name="model-props-settings" data-props-section="playback"${this._activeSection === 'playback' ? ' open' : ''}>
+                    <summary class="mp-section-title">${escape(this._tx('Playback'))}</summary>
+                    <div class="mp-section-body mp-field-grid mp-playback-fields">
+                        ${dropdown('model-props-animations',t('menu.animations'))}
+                        <div class="mp-field mp-field-wide">
+                            <label for="model-props-speed">${escape(this._tx('Speed'))} (%)</label>
+                            <div class="mp-playback-speed">
+                                ${stepper('model-props-speed',1,1000,5,100)}
+                                <label class="mp-check"><input type="checkbox" id="model-props-repeat">${escape(t('props.repeat'))}</label>
+                            </div>
                         </div>
-                        <label>Animation speed (%)${stepper('model-props-speed', 1, 1000, 5, 100)}</label>
-                        <div style="grid-column: 1 / -1;">${escape(t('props.effects'))}
-                            <div id="model-props-effects" class="mp-choice-list"></div>
-                        </div>
-                        <label style="grid-column: 1 / -1; display: flex; align-items: center; gap: 6px; color: var(--color-text); cursor: pointer;">
-                            <input type="checkbox" id="model-props-passable"> ${escape(t('props.passable'))}
-                        </label>
+                        ${dropdown('model-props-effects',t('props.effects'))}
                     </div>
-                    <div id="model-props-card" style="margin-top: 8px; padding: 6px; background: var(--color-bg-deep); border: 1px solid var(--color-border); border-radius: 3px; font-size: 10px; color: var(--color-text-muted);">
-                        <div id="model-props-card-tabs" style="display: flex; gap: 4px; margin-bottom: 6px;"></div>
-                        <div id="model-props-card-body"></div>
-                    </div>
-                    <div style="display: flex; gap: 6px; margin-top: 8px;">
-                        <button type="button" id="model-props-remove" class="map-props-btn" style="padding: 3px 10px; font-size: 10px;" disabled>${escape(t('props.remove'))}</button>
-                        <button type="button" id="model-props-deselect" class="map-props-btn" style="padding: 3px 10px; font-size: 10px;" disabled>${escape(t('props.deselect'))}</button>
-                    </div>
+                </details>
                 </div>
-                <div style="padding: 8px 10px; font-size: 10px; color: var(--color-text-muted); line-height: 1.4;">${escape(t('props.hintPlace'))}</div>
+                <div class="mp-fixed rr-accent-scrollbar"><div class="mp-actions">
+                    <button type="button" id="model-props-deselect" class="map-props-btn" disabled>${escape(t('props.deselect'))}</button>
+                    <button type="button" id="model-props-remove" class="map-props-btn mp-remove" disabled>${escape(t('props.remove'))}</button>
+                </div></div>
+
             </div>`;
+        this._bindChoiceDropdowns();
+        container.querySelectorAll('[data-props-section]').forEach(section => section.addEventListener('toggle', () => {
+            if (!section.open) return;
+            this._activeSection = section.dataset.propsSection;
+            for (const other of container.querySelectorAll('[data-props-section]')) {
+                if (other !== section) other.open = false;
+            }
+            this._closeChoiceDropdowns();
+        }));
         const byId = id => container.querySelector('#' + id);
         byId('model-props-choose')?.addEventListener('click', () => this.openModelPicker());
         byId('model-props-preview')?.addEventListener('click', () => this.openModelPicker());
@@ -543,6 +593,7 @@ class ModelPropsManager {
                 // separate scale is folded into it the first time it is edited.
                 size: Math.max(0.1, number('model-props-size', 2)),
                 scale: 1,
+                stretch: (this.fields.stretch || [1, 1, 1]).slice(),
                 direction: Number(byId('model-props-direction')?.value) || 2,
                 z: Math.max(0, number('model-props-z', 0)),
                 passable: !!byId('model-props-passable')?.checked,
@@ -559,7 +610,7 @@ class ModelPropsManager {
         byId('model-props-passable')?.addEventListener('change', readFields);
         byId('model-props-animation')?.addEventListener('change', readFields);
         byId('model-props-repeat')?.addEventListener('change', readFields);
-        for (const id of ['model-props-animations', 'model-props-effects']) byId(id)?.addEventListener('change', readFields);
+        for (const id of ['model-props-animations', 'model-props-effects']) byId(id)?.addEventListener('change', () => { readFields(); this._refreshChoiceDropdown(id); });
         container.querySelectorAll('[data-props-step]').forEach(button => button.addEventListener('click', () => {
             const input = byId(button.dataset.target);
             if (!input) return;
@@ -655,6 +706,70 @@ class ModelPropsManager {
         }
     }
 
+    _closeChoiceDropdowns(except = null) {
+        for (const dropdown of this.panel?.querySelectorAll('.mp-choice-dropdown[open]') || []) {
+            if (dropdown !== except) dropdown.open = false;
+        }
+    }
+
+    _bindChoiceDropdowns() {
+        const panel = this.panel;
+        const controller = this._choiceEventsAbort = new AbortController();
+        const options = { signal: controller.signal };
+        for (const dropdown of panel.querySelectorAll('.mp-choice-dropdown')) {
+            const summary = dropdown.querySelector('summary');
+            const search = dropdown.querySelector('.mp-choice-search');
+            summary.addEventListener('click', event => {
+                event.preventDefault();
+                const open = !dropdown.open;
+                this._closeChoiceDropdowns();
+                dropdown.open = open;
+                if (!open) return;
+                const rect = summary.getBoundingClientRect();
+                const popup = dropdown.querySelector('.mp-choice-popup');
+                const below = innerHeight - rect.bottom - 10, above = rect.top - 10;
+                const upward = below < 220 && above > below;
+                popup.style.left = Math.max(8, Math.min(rect.left, innerWidth - rect.width - 8)) + 'px';
+                popup.style.width = rect.width + 'px';
+                popup.style.maxHeight = Math.max(90, Math.min(280, upward ? above : below)) + 'px';
+                popup.style.top = upward ? 'auto' : (rect.bottom + 4) + 'px';
+                popup.style.bottom = upward ? (innerHeight - rect.top + 4) + 'px' : 'auto';
+                search.focus();
+            });
+            search.addEventListener('input', () => this._refreshChoiceDropdown(dropdown.dataset.choice));
+            dropdown.addEventListener('keydown', event => {
+                if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); dropdown.open = false; summary.focus(); }
+            });
+        }
+        document.addEventListener('pointerdown', event => {
+            if (!event.target.closest('.mp-choice-dropdown')) this._closeChoiceDropdowns();
+        }, options);
+        document.addEventListener('focusin', event => {
+            if (!event.target.closest('.mp-choice-dropdown')) this._closeChoiceDropdowns();
+        }, options);
+        window.addEventListener('resize', () => this._closeChoiceDropdowns(), options);
+        document.addEventListener('scroll', event => {
+            if (!event.target.closest?.('.mp-choice-popup')) this._closeChoiceDropdowns();
+        }, { ...options, capture: true });
+    }
+
+    _refreshChoiceDropdown(id) {
+        const host = this.panel?.querySelector('#' + id);
+        const dropdown = host?.closest('.mp-choice-dropdown');
+        if (!dropdown) return;
+        const query = dropdown.querySelector('.mp-choice-search').value.trim().toLocaleLowerCase();
+        let visible = 0;
+        for (const box of host.querySelectorAll('input[type=checkbox]')) {
+            box.parentElement.hidden = !box.value.toLocaleLowerCase().includes(query);
+            box.parentElement.classList.toggle('checked', box.checked);
+            if (!box.parentElement.hidden) visible++;
+        }
+        dropdown.querySelector('.mp-choice-no-results').hidden = !query || visible > 0;
+        const names = this._checkedNames(id), summary = dropdown.querySelector('.mp-choice-summary');
+        summary.textContent = names.length ? (names.length > 1 ? names.length + ' · ' : '') + names.join(', ') : this._t('props.none');
+        summary.title = names.join(', ');
+    }
+
     /** The names ticked in a choice list, in the list's order. */
     _checkedNames(id) {
         const host = this.panel && this.panel.querySelector('#' + id);
@@ -677,12 +792,18 @@ class ModelPropsManager {
             if (!host) return;
             const list = entries.map(entry => (typeof entry === 'string' ? { name: entry, trigger: '' } : entry));
             for (const name of chosen) if (!list.some(entry => entry.name === name)) list.unshift({ name, trigger: '' });
-            host.innerHTML = list.length
-                ? list.map(entry => `<label class="mp-choice${chosen.indexOf(entry.name) >= 0 ? ' checked' : ''}"><input type="checkbox" value="${escape(entry.name)}"${chosen.indexOf(entry.name) >= 0 ? ' checked' : ''}${this.model ? '' : ' disabled'}> <span>${escape(entry.name)}</span>${entry.trigger && entry.trigger !== 'action' ? `<em>${escape(entry.trigger)}</em>` : ''}</label>`).join('')
-                : `<div class="mp-choice-empty">${escape(this._t('props.none'))}</div>`;
-            host.querySelectorAll('input[type=checkbox]').forEach(box => box.addEventListener('change', () => {
+            const signature = JSON.stringify([list, !!this.model]);
+            if (host.dataset.entries !== signature) {
+                host.dataset.entries = signature;
+                host.innerHTML = list.length
+                    ? list.map(entry => `<label class="mp-choice"><input type="checkbox" value="${escape(entry.name)}"${this.model ? '' : ' disabled'}><span title="${escape(entry.name)}">${escape(entry.name)}</span>${entry.trigger && entry.trigger !== 'action' ? `<em>${escape(this._tx(entry.trigger === 'always' ? 'Always' : entry.trigger))}</em>` : ''}</label>`).join('')
+                    : `<div class="mp-choice-empty">${escape(this._t('props.none'))}</div>`;
+            }
+            for (const box of host.querySelectorAll('input[type=checkbox]')) {
+                box.checked = chosen.includes(box.value);
                 box.parentElement.classList.toggle('checked', box.checked);
-            }));
+            }
+            this._refreshChoiceDropdown(id);
         };
         fill('model-props-animations', actions, this.fields.animations || []);
         fill('model-props-effects', effects, this.fields.effects || []);
@@ -713,16 +834,34 @@ class ModelPropsManager {
     _syncPanel() {
         const panel = this.panel;
         if (!panel) return;
+        const selectionKey = String(this.selectedId || '') + '|' + (this.model?.name || '');
+        if (this._choiceSelectionKey !== selectionKey) {
+            this._choiceSelectionKey = selectionKey;
+            this._closeChoiceDropdowns();
+            for (const search of panel.querySelectorAll('.mp-choice-search')) search.value = '';
+        }
         const byId = id => panel.querySelector('#' + id);
         const prop = this.prop(this.selectedId);
         const shown = prop || null;
+        if (shown) {
+            for (const key of ['size','scale','direction','z','passable','yaw','pitch','roll','repeat']) this.fields[key] = shown[key];
+            this.fields.animationSpeed = shown.animationSpeed ?? 100;
+            this.fields.stretch = (shown.stretch || [1,1,1]).slice();
+            this.fields.animations = (shown.animations || []).slice();
+            this.fields.effects = (shown.effects || []).slice();
+        }
         const name = byId('model-props-name');
         const status = byId('model-props-status');
-        if (name) name.textContent = shown ? shown.name : (this.model ? this.model.name : this._t('props.noModel'));
+        if (name) {
+            const fullName = shown ? shown.name : (this.model ? this.model.name : this._t('props.noModel'));
+            name.textContent = fullName.split('/').pop();
+            name.title = fullName;
+        }
         if (status) {
             status.textContent = shown
                 ? this._t('props.selected', { id: shown.id, x: shown.x, y: shown.y })
-                : (this.model ? this._t('props.hintPlace') : this._t('props.hintChoose'));
+                : '';
+            status.title = this._t('props.hintPlace');
         }
         if (byId('model-props-size')) byId('model-props-size').value = Math.round(this.fields.size * (this.fields.scale || 1) * 100) / 100;
         if (byId('model-props-direction')) byId('model-props-direction').value = String(this.fields.direction);
@@ -777,17 +916,17 @@ class ModelPropsManager {
         const escape = text => String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
         const tab = this._cardTab || 'offset';
         tabs.innerHTML = [['offset', this._tx('Coordinates')], ['rotate', this._tx('Rotate')], ['scale', this._tx('Scale')]]
-            .map(([id, label]) => `<button type="button" class="map-props-btn${id === tab ? ' primary' : ''}" data-card-tab="${id}" style="flex: 1; padding: 2px 4px; font-size: 10px;">${escape(label)}</button>`).join('');
+            .map(([id, label]) => `<button type="button" class="map-props-btn${id === tab ? ' primary' : ''}" data-card-tab="${id}" >${escape(label)}</button>`).join('');
         const v = this._cardValues();
         const hasProp = !!this.prop(this.selectedId);
         const rows = this._cardRows();
         const proportional = !rows.some(r => r[0] === 'sx');
         body.innerHTML = rows.map(([key, label, min, max, step, value, unit]) => `
-            <div style="display: grid; grid-template-columns: 26px 1fr 58px; gap: 4px; align-items: center; margin: 2px 0;${(key === 'x' || key === 'y') && !hasProp ? ' opacity: 0.4;' : ''}">
+            <div class="mp-transform-row" style="${(key === 'x' || key === 'y') && !hasProp ? ' opacity: 0.4;' : ''}">
                 <span style="color: var(--color-text);">${escape(label)}</span>
                 <input type="range" class="mp-card-slider" data-key="${key}" min="${min}" max="${max}" step="${step}" value="${value}" style="width: 100%; min-width: 0;"${(key === 'x' || key === 'y') && !hasProp ? ' disabled' : ''}>
                 <input type="number" class="mp-card-num" data-key="${key}" data-no-stepper min="${key === 'x' || key === 'y' ? 0 : min}" max="${key === 'x' || key === 'y' ? 9999 : max}" step="${step}" value="${value}" title="${escape(unit)}"
-                    style="width: 100%; box-sizing: border-box; font-size: 10px; padding: 2px 3px; background: var(--color-bg-input); color: var(--color-text); border: 1px solid var(--color-border-input); border-radius: 3px;"${(key === 'x' || key === 'y') && !hasProp ? ' disabled' : ''}>
+                    ${(key === 'x' || key === 'y') && !hasProp ? ' disabled' : ''}>
             </div>`).join('')
             + (tab === 'scale' ? `<label style="display: flex; align-items: center; gap: 6px; margin-top: 4px; color: var(--color-text); cursor: pointer;"><input type="checkbox" class="mp-card-proportional"${proportional ? ' checked' : ''}> ${escape(this._t('r3dcard.proportional'))}</label>` : '');
         tabs.querySelectorAll('[data-card-tab]').forEach(button => button.addEventListener('click', () => {
@@ -918,27 +1057,52 @@ class ModelPropsManager {
         const box = this.panel?.querySelector('#model-props-preview');
         if (!box) return;
         if (!rawSpec || typeof RREventPreviewModels === 'undefined' || typeof Reactor3D === 'undefined' || !Reactor3D.normalizeModelSpec) {
+            clearTimeout(this._previewRetry);
+            this._previewToken = (this._previewToken || 0) + 1;
+            this._previewKey = null;
             box.innerHTML = '';
             if (rawSpec) {
                 const map3d = this.mapEditor3D();
-                if (map3d?.ensureLibraries && !this._loadingLibraries) {
-                    this._loadingLibraries = map3d.ensureLibraries().then(ready => {
-                        this._loadingLibraries = null;
-                        if (ready) this._syncPanel();
-                    }).catch(() => { this._loadingLibraries = null; });
+                if (map3d?.ensureLibraries && !this._previewLibraries) {
+                    // Map sprites can already be loading these libraries. The
+                    // inspector still needs its own refresh when they are ready.
+                    this._previewLibraries = map3d.ensureLibraries().then(ready => {
+                        this._previewLibraries = null;
+                        if (ready && this.active) this._syncPanel();
+                    }).catch(() => { this._previewLibraries = null; });
                 }
             }
             return;
         }
         const spec = Reactor3D.normalizeModelSpec(Object.assign({}, rawSpec, { size: 1, scale: 1 }));
         if (!spec) { box.innerHTML = ''; return; }
+        const project = this.project();
+        const key = JSON.stringify([project?.path, spec, direction || 2, RREventPreviewModels.revision]);
+        if (key === this._previewKey && box === this._previewBox) return;
+        clearTimeout(this._previewRetry);
+        this._previewKey = key;
+        this._previewBox = box;
         const token = (this._previewToken = (this._previewToken || 0) + 1);
-        RREventPreviewModels.thumbnail(this.project(), spec, this.mapEditor3D(), 60, direction || 2).then(result => {
-            if (token !== this._previewToken) return;
-            if (!result) { box.innerHTML = ''; return; }
-            box.innerHTML = `<img src="${result.url}" alt="" style="max-width: 100%; max-height: 100%; image-rendering: pixelated;">`;
-        });
+        box.innerHTML = '';
+        // Texture decoding can finish after the first thumbnail attempt.
+        // Retry a cold load without asking the user to reselect the model.
+        const render = async attempt => {
+            let result = null;
+            try { result = await RREventPreviewModels.thumbnail(project, spec, this.mapEditor3D(), 64, direction || 2); }
+            catch (error) { console.warn('Could not render the model preview:', error); }
+            if (token !== this._previewToken || !box.isConnected) return;
+            if (result) {
+                const image = document.createElement('img');
+                image.src = result.url;
+                image.alt = '';
+                box.replaceChildren(image);
+            } else if (attempt < 3) {
+                this._previewRetry = setTimeout(() => render(attempt + 1), 500);
+            } else this._previewKey = null;
+        };
+        render(0);
     }
+
 }
 
 if (typeof module !== 'undefined' && module.exports) {

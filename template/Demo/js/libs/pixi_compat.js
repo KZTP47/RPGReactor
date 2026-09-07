@@ -2006,6 +2006,27 @@
         };
     }
 
+    // A video's metadata can arrive before its first decoded frame. PIXI's
+    // normal uploader then records the new dimensions after a failed video
+    // upload, leaving the GPU's old 1x1 allocation in place. Every subsequent
+    // texSubImage2D overflows it. Keep allocation and bookkeeping in agreement
+    // until HAVE_CURRENT_DATA, including when a legacy plugin empties src.
+    if (_isV8Pixi && PIXI.glUploadVideoResource && !PIXI.glUploadVideoResource.__reactorFrameReady) {
+        const upload = PIXI.glUploadVideoResource.upload;
+        PIXI.glUploadVideoResource.upload = function(source, texture, gl, webGLVersion, targetOverride, ...rest) {
+            const video = source.resource;
+            if (!video || video.readyState < 2 || !video.videoWidth || !video.videoHeight) {
+                if (texture.width !== source.pixelWidth || texture.height !== source.pixelHeight) {
+                    gl.texImage2D(targetOverride ?? texture.target, 0, texture.internalFormat,
+                        source.pixelWidth, source.pixelHeight, 0, texture.format, texture.type, null);
+                }
+                return;
+            }
+            return upload.call(this, source, texture, gl, webGLVersion, targetOverride, ...rest);
+        };
+        PIXI.glUploadVideoResource.__reactorFrameReady = true;
+    }
+
     // -------------------------------------------------------------------------
     // v8: PIXI.Texture.from(htmlVideoElement) auto-detects video via
     // VideoSource.test() and constructs a VideoSource with default options,

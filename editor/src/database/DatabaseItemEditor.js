@@ -123,7 +123,7 @@ class DatabaseItemEditor {
 
         // Grid wrapper for all sections
         const gridWrapper = document.createElement('div');
-        gridWrapper.className = 'database-sections-grid';
+        gridWrapper.className = 'database-sections-grid database-item-columns';
         gridWrapper.appendChild(generalSection);
 
         // --- Invocation Section ---
@@ -262,6 +262,12 @@ class DatabaseItemEditor {
         `;
         gridWrapper.appendChild(noteSection);
 
+        const leftColumn = document.createElement('div');
+        const rightColumn = document.createElement('div');
+        leftColumn.className = rightColumn.className = 'database-item-column';
+        leftColumn.append(generalSection, noteSection);
+        rightColumn.append(invocationSection, damageSection, effectsSection);
+        gridWrapper.append(leftColumn, rightColumn);
         wrapper.appendChild(gridWrapper);
         container.appendChild(wrapper);
 

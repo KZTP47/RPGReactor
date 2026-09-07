@@ -263,6 +263,116 @@
         };
     };
 
+    ReactorUI.normalizeActorElements = function(raw) {
+        const result = {};
+        const keys = ['portrait','name','class','level','states', ...['hp','mp','tp','exp'].flatMap(k => [k,k+'Label',k+'Value'])];
+        keys.push(...Object.keys(raw || {}).filter(key => /^custom_[1-9]\d*$/.test(key)).slice(0,100));
+        for (const key of keys) {
+            const source = raw && raw[key];
+            if (!source || typeof source !== 'object') continue;
+            const value = {};
+            if (key.startsWith('custom_')) {
+                value.kind = ['box','label','value','gauge'].includes(source.kind) ? source.kind : 'label';
+                value.name = typeof source.name === 'string' ? source.name : '';
+                value.gauge = ['hp','mp','tp','exp','mhp','mmp','atk','def','mat','mdf','agi','luk','variable'].includes(source.gauge) ? source.gauge : 'variable';
+                for (const prop of ['variableId','maxVariableId','max']) value[prop] = Math.min(999999999,Math.max(0,Number(source[prop]) || (prop==='max'?100:0)));
+            }
+            for (const prop of ['x','y','width','height','fontSize','corner','thickness','iconSize','iconGap']) {
+                if (source[prop] === '' || source[prop] == null || !Number.isFinite(Number(source[prop]))) continue;
+                value[prop] = Math.min(9999, Math.max(['x','y'].includes(prop) ? -9999 : ['corner','iconGap'].includes(prop) ? 0 : 1, Number(source[prop])));
+            }
+            for (const prop of ['color','color2','backColor']) {
+                if (/^#[0-9a-f]{6}$/i.test(source[prop])) value[prop] = source[prop];
+            }
+            if (['left','center','right'].includes(source.align)) value.align = source.align;
+            if (['rectangle','rounded','chamfer','circular'].includes(source.shape)) value.shape = source.shape;
+            if (['current','currentMax','percent'].includes(source.valueFormat)) value.valueFormat = source.valueFormat;
+            if (typeof source.text === 'string') value.text = source.text;
+            if (typeof source.visible === 'boolean') value.visible = source.visible;
+            result[key] = value;
+        }
+        return result;
+    };
+
+    ReactorUI.actorPanelLayout = function(node, width, height, fontSize) {
+        const fields = new Set(node.actorFields || ['portrait','name','class','level','hp','mp','exp','states']);
+        const pad = node.actorPadding ?? 12, gap = node.actorGap ?? 4;
+        const size = Math.max(0, Math.min(node.portraitSize || 144, height - pad * 2, (width - pad * 2) / 3));
+        const x = pad + (fields.has('portrait') ? size + gap + 8 : 0);
+        const w = Math.max(1, width - pad - x);
+        const gauges = ['hp','mp','tp','exp'].filter(k => fields.has(k));
+        const barHeight = key => node.actorElements?.[key]?.height || 6;
+        const barSpace = gauges.reduce((sum,key)=>sum+barHeight(key)+2,0);
+        const lines = Number(fields.has('name')) + Number(fields.has('class') || fields.has('level')) + gauges.length;
+        const textHeight = Math.max(10, Math.floor(Math.min(fontSize + 8, (height - pad * 2 - gap * Math.max(0,lines-1) - barSpace) / Math.max(1,lines))));
+        const textSize = Math.max(8, Math.min(fontSize, textHeight - 8));
+        const result = {};
+        const add = (key, kind, rect, props = {}) => {
+            result[key] = Object.assign({ kind, visible: true, fontSize: textSize, align: 'left', ...rect }, props, node.actorElements?.[key] || {});
+        };
+        if(fields.has('portrait')) add('portrait','portrait',{x:pad,y:pad,width:size,height:size});
+        let y = pad;
+        if(fields.has('name')) { add('name','text',{x,y,width:fields.has('states')&&!fields.has('portrait')?Math.max(1,w-160):w,height:textHeight},{text:'{actor.name}'}); y+=textHeight+gap; }
+        if(fields.has('class') || fields.has('level')) {
+            const levelWidth = Math.min(w / 3, Math.max(64,textSize * 5));
+            if(fields.has('class')) add('class','text',{x,y,width:w-(fields.has('level')?levelWidth+gap:0),height:textHeight},{text:'{actor.class}'});
+            if(fields.has('level')) add('level','text',{x:x+w-levelWidth,y,width:levelWidth,height:textHeight},{align:'right',text:'{levelLabel} {actor.level}'});
+            y+=textHeight+gap;
+        }
+        for(const key of gauges) {
+            const valueWidth = Math.min(w / 2, Math.max(88,textSize * 9));
+            add(key+'Label','label',{x,y,width:Math.max(1,w-valueWidth-gap),height:textHeight},{gauge:key,text:''});
+            add(key+'Value','value',{x:x+w-valueWidth,y,width:valueWidth,height:textHeight},{gauge:key,align:'right',valueFormat:key==='exp'?'percent':'currentMax'});
+            add(key,'gauge',{x,y:y+textHeight+2,width:w,height:barHeight(key)},{gauge:key,shape:'rectangle',corner:4,thickness:8});
+            y+=textHeight+barHeight(key)+2+gap;
+        }
+        if(fields.has('states')) add('states','states',{
+            x:fields.has('portrait')?pad:Math.max(pad,width-pad-160), y:fields.has('portrait')?pad+size+gap:pad,
+            width:fields.has('portrait')?size:160,height:32},{iconSize:28,iconGap:4});
+        for(const [key,element] of Object.entries(node.actorElements || {})) {
+            if(!/^custom_[1-9]\d*$/.test(key)) continue;
+            result[key]=Object.assign({kind:'label',visible:true,x:pad,y:pad,width:160,height:32,fontSize:fontSize,
+                align:'left',text:'',shape:'rectangle',corner:4,thickness:8,valueFormat:'current',gauge:'variable',max:100},element);
+        }
+        return result;
+    };
+
+    ReactorUI.actorGaugePath = function(ctx, rect, shape, corner) {
+        const {x,y,width:w,height:h}=rect;
+        const c=Math.max(0,Math.min(corner || 0,w/2,h/2));
+        ctx.beginPath();
+        if(shape==='rounded') {
+            ctx.moveTo(x+c,y); ctx.lineTo(x+w-c,y); ctx.quadraticCurveTo(x+w,y,x+w,y+c);
+            ctx.lineTo(x+w,y+h-c); ctx.quadraticCurveTo(x+w,y+h,x+w-c,y+h);
+            ctx.lineTo(x+c,y+h); ctx.quadraticCurveTo(x,y+h,x,y+h-c);
+            ctx.lineTo(x,y+c); ctx.quadraticCurveTo(x,y,x+c,y);
+        } else if(shape==='chamfer') {
+            ctx.moveTo(x+c,y); ctx.lineTo(x+w,y); ctx.lineTo(x+w,y+h-c);
+            ctx.lineTo(x+w-c,y+h); ctx.lineTo(x,y+h); ctx.lineTo(x,y+c);
+        } else ctx.rect(x,y,w,h);
+        ctx.closePath();
+    };
+
+    ReactorUI.drawActorGauge = function(ctx, rect, element, rate, colors) {
+        const {x,y,width:w,height:h}=rect;
+        rate=Math.max(0,Math.min(1,Number(rate)||0));
+        ctx.save();
+        const gradient=ctx.createLinearGradient(x,y,x+w,y);
+        gradient.addColorStop(0,element.color||colors[0]);gradient.addColorStop(1,element.color2||colors[1]);
+        if(element.shape==='circular') {
+            const thickness=Math.min(Math.max(1,element.thickness||8),Math.min(w,h)/2);
+            const radius=Math.max(0,(Math.min(w,h)-thickness)/2);
+            ctx.lineWidth=thickness;ctx.lineCap='butt';
+            ctx.beginPath();ctx.arc(x+w/2,y+h/2,radius,0,Math.PI*2);ctx.strokeStyle=element.backColor||colors[2];ctx.stroke();
+            if(rate>0) {ctx.beginPath();ctx.arc(x+w/2,y+h/2,radius,-Math.PI/2,-Math.PI/2+Math.PI*2*rate);ctx.strokeStyle=gradient;ctx.stroke();}
+        } else {
+            this.actorGaugePath(ctx,rect,element.shape,element.corner);ctx.clip();
+            ctx.fillStyle=element.backColor||colors[2];ctx.fillRect(x,y,w,h);
+            ctx.fillStyle=gradient;ctx.fillRect(x,y,w*rate,h);
+        }
+        ctx.restore();
+    };
+
     ReactorUI.normalizeAction = function(raw) {
         const source = raw && typeof raw === "object" ? raw : {};
         const type = oneOf(source.type, [
@@ -270,7 +380,7 @@
             "pluginCommand", "switch", "variable", "script", "setMenuActor",
             "personalSkill", "personalEquip", "personalStatus", "titleNewGame",
             "titleContinue", "titleOptions", "gameEndToTitle", "previousMenuActor", "nextMenuActor",
-            "optionChange", "saveSlot", "loadSlot"
+            "optionChange", "saveSlot", "loadSlot", "formation", "pluginScene"
         ], "none");
         let args = {};
         if (source.args && typeof source.args === "object" && !Array.isArray(source.args)) {
@@ -282,12 +392,14 @@
             scene: oneOf(source.scene, Object.keys(this.SCENES), "menu"),
             plugin: text(source.plugin, ""),
             command: text(source.command, ""),
+            sceneClass: text(source.sceneClass, ""), argsExpression: text(source.argsExpression, ""), actorFirst: !!source.actorFirst,
             args,
             on: source.on !== false,
             op: oneOf(source.op, ["set", "add", "sub"], "set"),
             value: finite(source.value, 0),
             script: text(source.script, ""),
             contextName: text(source.contextName, "selection").trim() || "selection",
+            chooseActor: source.chooseActor !== false,
             andClose: !!source.andClose
         };
     };
@@ -347,6 +459,7 @@
             radius: clamp(Math.round(finite(source.radius, 0)), 0, 200),
             // Text / button label
             text: text(source.text, ""),
+            labelScript: text(source.labelScript, ""),
             align: oneOf(source.align, ["left", "center", "right"], type === "button" ? "center" : "left"),
             wrap: !!source.wrap,
             fitText: !!source.fitText,
@@ -388,7 +501,14 @@
             gaugeBackColor: isHexColor(source.gaugeBackColor) ? source.gaugeBackColor : "",
             gaugeHeight: clamp(Math.round(finite(source.gaugeHeight, 0)), 0, 240),
             // List
-            dataSource: oneOf(source.dataSource, this.LIST_SOURCES, "literal"),
+            rowLayout: source.rowLayout === "actorPanel" ? "actorPanel" : "text",
+            portraitSize: clamp(Math.round(finite(source.portraitSize, 144)), 32, 144),
+            actorPadding: clamp(finite(source.actorPadding, 12), 0, 200),
+            actorGap: clamp(finite(source.actorGap, 4), 0, 200),
+            actorElements: this.normalizeActorElements(source.actorElements),
+            actorLayoutVersion: 3,
+            actorFields: Array.isArray(source.actorFields) ? source.actorFields.filter(key => ["portrait","name","class","level","hp","mp","tp","exp","states"].includes(key)) : ["portrait","name","class","level","hp","mp","exp","states"],
+            dataSource: source.rowLayout === "actorPanel" ? "party" : oneOf(source.dataSource, this.LIST_SOURCES, "literal"),
             category: oneOf(source.category, this.INVENTORY_CATEGORIES, "all"),
             actorMode: oneOf(source.actorMode, ["party", "actor"], "party"),
             actorId: Math.max(1, Math.floor(finite(source.actorId, 1))),
@@ -398,7 +518,7 @@
             rangeEnd: Math.max(1, Math.floor(finite(source.rangeEnd, 10))),
             items: this.normalizeLiteralItems(source.items),
             rowText: text(source.rowText, ""),
-            rowHeight: clamp(Math.round(finite(source.rowHeight, 36)), 24, 240),
+            rowHeight: source.rowLayout==='actorPanel' && !source.actorLayoutVersion && source.rowHeight===192 ? 256 : clamp(Math.round(finite(source.rowHeight, 36)), 24, 9999),
             contextName: text(source.contextName, "selection").trim() || "selection",
             selectionVariableId: Math.max(0, Math.floor(finite(source.selectionVariableId, 0))),
             selectionValue: oneOf(source.selectionValue, ["id", "value"], "id"),
@@ -422,12 +542,42 @@
             focusRight: Math.max(0, Math.floor(finite(source.focusRight, 0))),
             se: this.normalizeSe(source.se)
         };
+        if(node.rowLayout==='actorPanel' && (source.actorLayoutVersion || 0)<3 && !node.actorFields.includes('states')) node.actorFields.push('states');
         return node;
+    };
+
+    ReactorUI.upgradeMenuActorPanel = function(entry) {
+        const nodes = Array.isArray(entry.nodes) ? entry.nodes : [];
+        if (entry.stock !== 'menu' || nodes.some(node => node.rowLayout === 'actorPanel')) return nodes;
+        const party = nodes.find(node => node.type === 'box' && node.name === 'Party');
+        if (!party) return nodes;
+        const legacyNames = ['Party members', 'Selected face', 'Selected name', 'Selected level and class', 'Selected HP', 'Selected MP', 'Selected EXP'];
+        const panel = Object.assign({}, party, { type: 'list', name: 'Actor Panel', dataSource: 'party',
+            rowLayout: 'actorPanel', rowHeight: 256, portraitSize: 144,
+            actorFields: ['portrait', 'name', 'class', 'level', 'hp', 'mp', 'exp', 'states'], contextName: 'selectedActor' });
+        return nodes.filter(node => node.parent !== party.id || !legacyNames.includes(node.name))
+            .map(node => node === party ? panel : node);
+    };
+
+    ReactorUI.upgradeMenuFormation = function(entry, enabled, label) {
+        const nodes=Array.isArray(entry.nodes)?entry.nodes:[];
+        if(entry.stock!=='menu' || entry.menuCommandVersion>=2 || !enabled || nodes.some(n=>n.action?.type==='formation')) return nodes;
+        const status=nodes.find(n=>n.type==='button' && n.action?.type==='personalStatus');
+        const parent=nodes.find(n=>n.id===status?.parent && n.name==='Commands');
+        if(!status || !parent) return nodes;
+        const id=Math.max(0,...nodes.map(n=>n.id))+1;
+        const button={...status,id,name:'Formation',text:label||'Formation',labelScript:'',y:status.y+status.height,
+            action:{type:'formation',contextName:'selectedActor'},
+            enabled:{type:'script',script:'$gameParty.size() > 1 && $gameSystem.isFormationEnabled()'},
+            focusUp:0,focusDown:0,focusLeft:0,focusRight:0};
+        return nodes.flatMap(n=>n===status?[n,button]:[{...n,...(n.parent===parent.id && n.y>=button.y?{y:n.y+button.height}:{})}]);
     };
 
     ReactorUI.normalizeInterface = function(raw) {
         const source = raw && typeof raw === "object" ? raw : {};
-        const nodes = Array.isArray(source.nodes) ? source.nodes.map(node => this.normalizeNode(node)) : [];
+        const system=typeof $dataSystem!=='undefined' && $dataSystem || {};
+        const upgraded={...source,nodes:this.upgradeMenuActorPanel(source)};
+        const nodes = this.upgradeMenuFormation(upgraded,system.menuCommands?.[4]!==false,system.terms?.commands?.[8]).map(node => this.normalizeNode(node));
         const ids = new Set();
         const unique = [];
         for (const node of nodes) {
@@ -451,6 +601,7 @@
             nodes: this.orderNodes(unique),
             note: text(source.note, ""),
             stock: text(source.stock, ""),
+            menuCommandVersion: 2,
             roles: Array.from(new Set((Array.isArray(source.roles) ? source.roles : source.stock ? [source.stock] : [])
                 .filter(role => Object.prototype.hasOwnProperty.call(this.REPLACEMENTS || {}, role))))
         };
@@ -529,7 +680,7 @@
                 }
             }
             case "script": {
-                const fn = this.compileScript(condition.script);
+                const fn = this.compileCondition(condition.script);
                 if (!fn) return false;
                 try {
                     return !!fn.call(scene, scene);
@@ -544,6 +695,19 @@
 
     // Conditions run every frame; compile each script once.
     ReactorUI._scriptCache = new Map();
+    ReactorUI._conditionCache = new Map();
+    ReactorUI.compileCondition = function(source) {
+        if (this._conditionCache.has(source)) return this._conditionCache.get(source);
+        let fn;
+        try {
+            fn = new Function("scene", "return (\n" + String(source).trim().replace(/;+$/, "") + "\n);");
+        } catch (_) {
+            // Explicit return statements and multi-line bodies remain valid.
+            fn = this.compileScript(source);
+        }
+        this._conditionCache.set(source, fn);
+        return fn;
+    };
     ReactorUI.compileScript = function(source) {
         if (this._scriptCache.has(source)) return this._scriptCache.get(source);
         let fn = null;
@@ -1429,11 +1593,24 @@
         return Window_Base.prototype.convertEscapeCharacters.call(this, ReactorUI.convertPartyCodes(bound));
     };
 
+    Window_ReactorUINode.prototype.labelValue = function() {
+        if(this._uiNode.type==='button' && this._uiNode.labelScript) {
+            try {
+                const value=ReactorUI.compileCondition(this._uiNode.labelScript)?.call(this._uiScene,this._uiScene);
+                if(value!=null) return String(value);
+            } catch(error) {
+                if(this._labelError!==this._uiNode.labelScript) console.warn('ReactorUI: label expression failed',error);
+                this._labelError=this._uiNode.labelScript;
+            }
+        }
+        return this._uiNode.text;
+    };
+
     /** The node's text with escape codes resolved, as the game shows it now. */
     Window_ReactorUINode.prototype.currentText = function() {
         const node = this._uiNode;
         if (node.type !== "text" && node.type !== "button") return "";
-        return this.convertEscapeCharacters(node.text);
+        return this.convertEscapeCharacters(this.labelValue());
     };
 
     /** The party member in a 0-based slot, or null past the party's end. */
@@ -1752,7 +1929,7 @@
     /** The node's text, word-wrapped to the node width when asked to. */
     Window_ReactorUINode.prototype.labelText = function() {
         const node = this._uiNode;
-        const value = ReactorUI.resolveActorTokens(node.text, node, this._uiScene);
+        const value = ReactorUI.resolveActorTokens(this.labelValue(), node, this._uiScene);
         if (!node.wrap || !(node.width > 0)) return value;
         return this.wrapText(value, node.width - this.padding * 2);
     };
@@ -1832,6 +2009,59 @@
         this._uiGaugeBattler = battler;
     };
 
+    // Isolate atlas tiles before scaling or fractional placement. Canvas filtering
+    // otherwise samples neighboring icons, leaving bright seams at tile edges.
+    ReactorUI.iconBitmap = function(sheet, index) {
+        this._iconTiles ||= new WeakMap();
+        let tiles = this._iconTiles.get(sheet);
+        if (!tiles) { tiles = new Map(); this._iconTiles.set(sheet, tiles); }
+        if (!tiles.has(index)) {
+            const w = ImageManager.iconWidth, h = ImageManager.iconHeight;
+            const tile = new Bitmap(w, h);
+            tile.context.imageSmoothingEnabled = false;
+            tile.blt(sheet, index % 16 * w, Math.floor(index / 16) * h, w, h, 0, 0);
+            tiles.set(index, tile);
+        }
+        return tiles.get(index);
+    };
+    ReactorUI.drawWindowIcon = function(index, x, y) {
+        const sheet = ImageManager.loadSystem('IconSet');
+        if (sheet.isReady()) {
+            const tile = ReactorUI.iconBitmap(sheet, index);
+            this.contents.blt(tile, 0, 0, tile.width, tile.height, x, y);
+        } else if (!this._uiWaitingForIcons) {
+            this._uiWaitingForIcons = true;
+            sheet.addLoadListener(() => { if (!this.destroyed && this.contents) this.refresh(); });
+        }
+    };
+    Window_ReactorUINode.prototype.drawIcon = ReactorUI.drawWindowIcon;
+
+    // Borrow the engine's escape parser without creating an extra window.
+    ReactorUI.gaugeLabelRenderer = function(gauge) {
+        if (gauge._uiLabelRenderer) return gauge._uiLabelRenderer;
+        const renderer = Object.create(Window_Base.prototype);
+        Object.defineProperty(renderer, 'contents', { get: () => gauge.bitmap });
+        renderer.resetFontSettings = () => gauge.setupLabelFont();
+        renderer.calcTextHeight = () => gauge.textHeight();
+        renderer.processDrawIcon = function(index, state) {
+            const size = Math.min(ImageManager.iconWidth, Math.max(1, gauge.textHeight() - 2));
+            if (state.drawing) {
+                const bitmap = ImageManager.loadSystem('IconSet');
+                if (bitmap.isReady()) {
+                    const tile = ReactorUI.iconBitmap(bitmap, index);
+                    gauge.bitmap.blt(tile, 0, 0, tile.width, tile.height,
+                        state.x + 2, state.y + (gauge.textHeight() - size) / 2, size, size);
+                } else if (!gauge._uiWaitingForIcons) {
+                    gauge._uiWaitingForIcons = true;
+                    bitmap.addLoadListener(() => { if (!gauge.destroyed && gauge.bitmap) gauge.redraw(); });
+                }
+            }
+            state.x += size + 4;
+        };
+        gauge._uiLabelRenderer = renderer;
+        return renderer;
+    };
+
     /**
      * Sprite_Gauge at the node's size: the bar is the lower half, label and
      * value fonts scale with the height (24 px is the engine's own), and a
@@ -1876,6 +2106,7 @@
             return this.isVariable() ? "" : Sprite_Gauge.prototype.label.call(this);
         };
         P.measureLabelWidth = function() {
+            if (this.label().includes("\\")) return Math.ceil(ReactorUI.gaugeLabelRenderer(this).textSizeEx(this.label()).width);
             if (!this.isVariable()) return Sprite_Gauge.prototype.measureLabelWidth.call(this);
             this.setupLabelFont();
             return Math.ceil(this.bitmap.measureTextWidth(this.label()));
@@ -1907,7 +2138,13 @@
         P.gaugeBackColor = function() { return this._uiNode.gaugeBackColor || Sprite_Gauge.prototype.gaugeBackColor.call(this); };
         P.gaugeColor1 = function() { return this._uiNode.gaugeColor1 || Sprite_Gauge.prototype.gaugeColor1.call(this); };
         P.gaugeColor2 = function() { return this._uiNode.gaugeColor2 || Sprite_Gauge.prototype.gaugeColor2.call(this); };
-        P.drawLabel = function() { if (this._uiNode.showLabel) Sprite_Gauge.prototype.drawLabel.call(this); };
+        P.drawLabel = function() {
+            if (!this._uiNode.showLabel) return;
+            if (!this.label().includes("\\")) { Sprite_Gauge.prototype.drawLabel.call(this); return; }
+            this.bitmap.paintOpacity = this.labelOpacity();
+            ReactorUI.gaugeLabelRenderer(this).drawTextEx(this.label(), this.labelOutlineWidth() / 2, 0, this.bitmapWidth());
+            this.bitmap.paintOpacity = 255;
+        };
         P.drawValue = function() {
             const format = this._uiNode.valueFormat;
             if (format === "hidden") return;
@@ -1978,7 +2215,7 @@
 
     Window_ReactorUINode.prototype.drawImage = function() {
         const node = this._uiNode;
-        const bitmap = this._uiBitmap;
+        let bitmap = this._uiBitmap;
         if (!bitmap || !bitmap.isReady()) return;
         let sx = 0, sy = 0, sw = bitmap.width, sh = bitmap.height;
         if (node.source === "face" || node.source === "partyFace") {
@@ -1999,11 +2236,9 @@
             sw = pw;
             sh = ph;
         } else if (node.source === "icon") {
-            const pw = ImageManager.iconWidth, ph = ImageManager.iconHeight;
-            sx = (node.index % 16) * pw;
-            sy = Math.floor(node.index / 16) * ph;
-            sw = pw;
-            sh = ph;
+            bitmap = ReactorUI.iconBitmap(bitmap, node.index);
+            sw = bitmap.width;
+            sh = bitmap.height;
         }
         const w = this.contentsWidth();
         const h = this.contentsHeight();
@@ -2045,17 +2280,13 @@
 
     Window_ReactorUINode.prototype.drawFocus = function() {
         const node = this._uiNode;
-        if (this.usesSkin()) {
-            if (this._uiFocused) this.setCursorRect(0, 0, this.contentsWidth(), this.contentsHeight());
-            else this.setCursorRect(0, 0, 0, 0);
-            if (this._uiFocused && node.focusedBorderColor) {
-                this.drawBorder(this.contents, ReactorUI.cssColor(node.focusedBorderColor, 255), Math.max(2, node.borderWidth));
-            }
-            return;
+        // Buttons inside a shared title/menu panel have no window fill of
+        // their own. They still need the skin's normal selection cursor.
+        const cursor = this._uiFocused && !node.focusedFillColor;
+        this.setCursorRect(0, 0, cursor ? this.contentsWidth() : 0, cursor ? this.contentsHeight() : 0);
+        if (this._uiFocused && node.focusedBorderColor) {
+            this.drawBorder(this.contents, ReactorUI.cssColor(node.focusedBorderColor, 255), Math.max(2, node.borderWidth));
         }
-        if (!this._uiFocused) return;
-        const color = ReactorUI.controlStyle(node, "focused").borderColor;
-        if (color) this.drawBorder(this.contents, ReactorUI.cssColor(color, 255), Math.max(2, node.borderWidth));
     };
 
     Window_ReactorUINode.prototype.update = function() {
@@ -2100,6 +2331,7 @@
     window.Window_ReactorUIList = Window_ReactorUIList;
     Window_ReactorUIList.prototype = Object.create(Window_Selectable.prototype);
     Window_ReactorUIList.prototype.constructor = Window_ReactorUIList;
+    Window_ReactorUIList.prototype.drawIcon = ReactorUI.drawWindowIcon;
 
     Window_ReactorUIList.prototype.initialize = function(rect, scene, node) {
         this._uiScene = scene;
@@ -2177,6 +2409,10 @@
     Window_ReactorUIList.prototype.selectedRow = function() { return this._uiRows[this.index()] || null; };
     Window_ReactorUIList.prototype.initialIndex = function() {
         let id = null;
+        if (this._uiNode.dataSource === "party") {
+            const actor = ReactorUI.actorFromContext(this._uiScene, this._uiNode.contextName);
+            if (actor) id = actor.actorId();
+        }
         if (this._uiNode.action.type === "saveSlot" && typeof $gameSystem !== "undefined" && $gameSystem) id = $gameSystem.savefileId();
         if (this._uiNode.action.type === "loadSlot" && typeof DataManager !== "undefined" && DataManager.latestSavefileId) id = DataManager.latestSavefileId();
         const index = id == null ? -1 : this._uiRows.findIndex(row => row.id === id);
@@ -2191,6 +2427,8 @@
     };
     Window_ReactorUIList.prototype.isCurrentItemEnabled = function() {
         const row = this.selectedRow();
+        if(this._uiScene?._actorSelection?.action.type==='formation'
+            && (!$gameSystem.isFormationEnabled() || !row?.data?.isFormationChangeOk())) return false;
         return this._uiEnabled && !!row && row.enabled !== false;
     };
     Window_ReactorUIList.prototype.itemPadding = function() { return 8; };
@@ -2222,16 +2460,92 @@
     };
     Window_ReactorUIList.prototype.drawItemBackground = function(index) {
         if (this.usesSkin()) Window_Selectable.prototype.drawItemBackground.call(this, index);
-        if (this._uiFocused && index === this.index()) {
+        if(this._uiScene?._actorSelection?.pending && this._uiScene._actorSelection.pending===this._uiRows[index]?.data) {
+            const r=this.itemRect(index); this.contentsBack.fillRect(r.x,r.y,r.width,r.height,ColorManager.pendingColor());
+        }
+        if (this._uiFocused && index === this.index() && (this._uiNode.rowLayout !== "actorPanel" || this._uiNode.focusedFillColor)) {
             const rect = this.itemRect(index);
             const color = this._uiNode.focusedFillColor || this._uiNode.highlightColor;
             const alpha = this._uiNode.focusedFillColor ? 255 : 96;
             this.contentsBack.fillRect(rect.x, rect.y, rect.width, rect.height, ReactorUI.cssColor(color, alpha));
         }
     };
+    ReactorUI.actorGaugeData = function(actor, key, element = {}) {
+        if(key==='variable') {
+            const value=Number($gameVariables.value(element.variableId)) || 0;
+            const max=element.maxVariableId?Number($gameVariables.value(element.maxVariableId)) || 0:element.max || 100;
+            return {value,max,rate:max>0?Math.max(0,Math.min(1,value/max)):0,label:'',color:ColorManager.textColor(14),color2:ColorManager.textColor(6)};
+        }
+        if(!['hp','mp','tp','exp'].includes(key)) {
+            const value=Number(actor[key]) || 0,max=element.max || 100;
+            return {value,max,rate:Math.max(0,Math.min(1,value/max)),label:key.toUpperCase(),color:ColorManager.textColor(14),color2:ColorManager.textColor(6)};
+        }
+        const exp=key==='exp';
+        const value=exp?(actor.isMaxLevel()?1:actor.currentExp()-actor.currentLevelExp()):actor[key];
+        const max=exp?(actor.isMaxLevel()?1:actor.nextLevelExp()-actor.currentLevelExp()):key==='tp'?actor.maxTp():actor['m'+key];
+        return {value,max,rate:Math.max(0,Math.min(1,value/Math.max(1,max))),label:TextManager[key+'A'],
+            color:exp?ColorManager.textColor(14):ColorManager[key+'GaugeColor1'](),
+            color2:exp?ColorManager.textColor(6):ColorManager[key+'GaugeColor2']()};
+    };
+    Window_ReactorUIList.prototype.drawActorPanelRow = function(actor, rect) {
+        if (!actor) return;
+        this.resetFontSettings();
+        const node=this._uiNode, bitmap=this.contents, ctx=bitmap.context;
+        const elements=ReactorUI.actorPanelLayout(node,rect.width,rect.height,bitmap.fontSize);
+        ctx.save(); ctx.beginPath(); ctx.rect(rect.x,rect.y,rect.width,rect.height); ctx.clip();
+        for(const element of Object.values(elements)) {
+            if(!element.visible) continue;
+            const r={x:rect.x+element.x,y:rect.y+element.y,width:element.width,height:element.height};
+            ctx.save(); ctx.beginPath(); ctx.rect(r.x,r.y,r.width,r.height); ctx.clip();
+            if(element.kind==='portrait') {
+                const face=ImageManager.loadFace(actor.faceName());
+                this._actorFaceLoads ||= new Set();
+                if(!face.isReady() && !this._actorFaceLoads.has(face)) {
+                    this._actorFaceLoads.add(face);
+                    face.addLoadListener(()=>{if(!this.destroyed && this.contents) this.refresh();});
+                }
+                ctx.translate(r.x,r.y);
+                ctx.scale(r.width/ImageManager.faceWidth,r.height/ImageManager.faceHeight);
+                Window_StatusBase.prototype.drawActorFace.call(this,actor,0,0,ImageManager.faceWidth,ImageManager.faceHeight);
+            } else if(element.kind==='states') {
+                const sheet=ImageManager.loadSystem('IconSet');
+                if(!sheet.isReady()) {
+                    if(!this._uiWaitingForIcons) {this._uiWaitingForIcons=true;sheet.addLoadListener(()=>{if(!this.destroyed&&this.contents)this.refresh();});}
+                } else {
+                    const size=Math.min(element.iconSize,r.height), gap=element.iconGap;
+                    const icons=actor.allIcons();
+                    const count=Math.max(0,Math.floor((r.width+gap)/(size+gap)));
+                    icons.slice(0,count).forEach((id,index)=>{const tile=ReactorUI.iconBitmap(sheet,id);bitmap.blt(tile,0,0,tile.width,tile.height,r.x+index*(size+gap),r.y,size,size);});
+                }
+            } else if(element.kind==='box') {
+                ReactorUI.drawActorGauge(ctx,r,element,1,[element.color||'#30343c',element.color2||element.color||'#30343c','#30343c']);
+            } else {
+                const data=element.gauge?ReactorUI.actorGaugeData(actor,element.gauge,element):null;
+                if(element.kind==='gauge') {
+                    ReactorUI.drawActorGauge(ctx,r,element,data.rate,[data.color,data.color2,ColorManager.gaugeBackColor()]);
+                } else {
+                    let label=element.kind==='value'?(element.valueFormat==='percent'?Math.round(data.rate*100)+'%':element.valueFormat==='current'?String(data.value):data.value+' / '+data.max)
+                        :element.kind==='label'?(element.text||data.label):element.text;
+                    label=String(label).replace(/\{levelLabel\}/g,TextManager.levelA).replace(/\{actor\.([^}]+)\}/gi,(_,key)=>ReactorUI.actorTextValue(actor,key));
+                    // Keep fonts and icons inside the element's own rectangle;
+                    // drawTextEx on the list itself resets the authored font.
+                    const renderer=ReactorUI.gaugeLabelRenderer({bitmap,textHeight:()=>r.height,
+                        setupLabelFont:()=>{this.resetFontSettings(); bitmap.fontSize=element.fontSize; if(element.color) bitmap.textColor=element.color;},
+                        redraw:()=>this.refresh()});
+                    const measured=renderer.textSizeEx(label).width;
+                    const x=r.x+(element.align==='right'?Math.max(0,r.width-measured):element.align==='center'?Math.max(0,(r.width-measured)/2):0);
+                    renderer.drawTextEx(label,x,r.y,r.width);
+                }
+            }
+            ctx.restore();
+        }
+        ctx.restore(); touch(bitmap);
+    };
+
     Window_ReactorUIList.prototype.drawItem = function(index) {
         const row = this._uiRows[index];
         if (!row) return;
+        if (this._uiNode.rowLayout === "actorPanel") { this.drawActorPanelRow(row.data, this.itemRect(index)); return; }
         const rect = this.itemLineRect(index);
         this.resetFontSettings();
         const node = this._uiNode;
@@ -2262,14 +2576,31 @@
         this.syncVisualState();
     };
     Window_ReactorUIList.prototype.refreshCursor = function() {
-        this.setCursorRect(0, 0, 0, 0);
+        if (this._uiNode.rowLayout === "actorPanel" && this._uiFocused && !this._uiNode.focusedFillColor && this.index() >= 0) {
+            const rect = this.itemRect(this.index());
+            this.setCursorRect(rect.x, rect.y, rect.width, rect.height);
+        } else this.setCursorRect(0, 0, 0, 0);
+    };
+    ReactorUI.actorPanelRevision = function(node, rows) {
+        const variables=new Set();
+        for(const element of Object.values(node.actorElements || {})) {
+            if(element.gauge==='variable') {variables.add(element.variableId);variables.add(element.maxVariableId);}
+            for(const match of String(element.text || '').matchAll(/\\V\[(\d+)\]/gi)) variables.add(Number(match[1]));
+        }
+        return JSON.stringify([rows.map(row=>{
+            const a=row.data;
+            return [a.hp,a.mp,a.tp,a.mhp,a.mmp,a.currentExp?.(),a.currentClass?.()?.name,a.allIcons?.(),
+                ...['mhp','mmp','atk','def','mat','mdf','agi','luk'].map(key=>a[key])];
+        }),[...variables].filter(Boolean).map(id=>$gameVariables.value(id))]);
     };
     Window_ReactorUIList.prototype.update = function() {
+        if (this._uiFocused && this._uiScene.acceptsInput()) this.activate();
+        else this.deactivate();
         Window_Selectable.prototype.update.call(this);
         if (++this._uiRefreshWait < 15) return;
         this._uiRefreshWait = 0;
         const rows = ReactorUI.listRows(this._uiNode, this._uiScene);
-        const signature = ReactorUI.listRowsSignature(rows);
+        const signature = ReactorUI.listRowsSignature(rows) + (this._uiNode.rowLayout==='actorPanel'?ReactorUI.actorPanelRevision(this._uiNode,rows):'');
         const selected = this.selectedRow();
         if (signature === this._uiRowsSignature) {
             this._uiRows = rows;
@@ -2436,6 +2767,7 @@
     };
 
     Scene_ReactorUI.prototype.createNodes = function() {
+        if (this.prepareActorContexts) this.prepareActorContexts();
         const root = new Rectangle(0, 0, Graphics.width, Graphics.height);
         const rects = new Map();
         const byId = new Map();
@@ -2585,11 +2917,11 @@
     };
 
     Scene_ReactorUI.prototype.canFocus = function(window) {
-        return window && window.isFocusable() && window.visible;
+        return window && (!this._actorSelection || window === this._actorSelection.window) && window.isFocusable() && window.visible;
     };
 
     Scene_ReactorUI.prototype.acceptsInput = function() {
-        return !this._closing && this._transitionPhase === "idle" && this.isActive();
+        return !this._closing && !this._inputHandled && !this._filePending && this._transitionPhase === "idle" && this.isActive();
     };
 
     Scene_ReactorUI.prototype.focusInitial = function() {
@@ -2680,12 +3012,14 @@
     };
 
     Scene_ReactorUI.prototype.update = function() {
+        this._inputHandled = false;
         Scene_MenuBase.prototype.update.call(this);
         if (!this._interface) return;
         this.updateInterfaceTransition();
         if (!this.acceptsInput()) return;
         this.updateConditions();
         this.updateTouch();
+        if (!this.acceptsInput()) return;
         this.updateControlStates();
         this.updateInput();
     };
@@ -2716,7 +3050,9 @@
     };
 
     Scene_ReactorUI.prototype.cancelInterface = function(alreadyPlayed) {
+        this._inputHandled = true;
         if (!alreadyPlayed) SoundManager.playCancel();
+        if (this._actorSelection) { this.endActorSelection(false); return; }
         const cancel = this._interface.cancel;
         const stuck = cancel.type === "none" && !this._nodeWindows.some(window => this.canFocus(window) && window.isEnabled());
         this.runAction(stuck ? { type: "close" } : cancel);
@@ -2806,10 +3142,25 @@
 
     Scene_ReactorUI.prototype.activateWindow = function(window) {
         if (!window || !this.canFocus(window) || this._filePending) return;
+        this._inputHandled = true;
         const node = window.node();
         if (!window.isEnabled() || (node.type === "list" && !window.isCurrentItemEnabled())) {
             SoundManager.playBuzzer();
             if (node.type === "list") window.activate();
+            return;
+        }
+        if (this._actorSelection && window === this._actorSelection.window) {
+            this.endActorSelection(true);
+            return;
+        }
+        if (node.action.type === "formation") {
+            if(node.se) AudioManager.playSe(node.se); else SoundManager.playOk();
+            this.beginActorSelection(node.action); return;
+        }
+        if (node.type === "button" && (node.action.actorFirst || node.action.chooseActor !== false) && ReactorUI.isPersonalAction(node.action)) {
+            if (node.se) AudioManager.playSe(node.se);
+            else SoundManager.playOk();
+            this.beginActorSelection(node.action);
             return;
         }
         if (node.type === "list") {
@@ -2844,10 +3195,11 @@
     };
 
     /** Leaves for another scene that will come back here when it pops. */
-    Scene_ReactorUI.prototype.pushScene = function(sceneClass) {
+    Scene_ReactorUI.prototype.pushScene = function(sceneClass, args = []) {
         this.beginCloseTransition(() => {
             this.rememberForPush();
             SceneManager.push(sceneClass);
+            if(args.length) SceneManager.prepareNextScene(...args);
         });
     };
 
@@ -2879,9 +3231,90 @@
         this.beginCloseTransition(() => this.performClose());
     };
 
+    ReactorUI.isPersonalAction = function(action) {
+        return action && (["personalSkill", "personalEquip", "personalStatus"].includes(action.type) || (action.type === "scene" && action.scene === "item") || (["pluginScene","pluginCommand","script"].includes(action.type) && action.actorFirst));
+    };
+
+    // A missing list must not strand commands bound to its actor context.
+    Scene_ReactorUI.prototype.prepareActorContexts = function() {
+        const rows = ReactorUI.listRows(ReactorUI.normalizeNode({ type: "list", dataSource: "party" }), this);
+        const actor = $gameParty.menuActor && $gameParty.menuActor();
+        const initial = rows.find(row => actor && row.id === actor.actorId()) || rows[0];
+        if (!initial) return;
+        for (const node of this._interface.nodes) {
+            if (!ReactorUI.isPersonalAction(node.action) || (node.action.chooseActor === false && !node.action.actorFirst)) continue;
+            const name = node.action.contextName || "selection";
+            if (!this.context(name)) this.setContext(name, initial);
+        }
+    };
+
+    Scene_ReactorUI.prototype.beginActorSelection = function(action) {
+        if (this._actorSelection) return;
+        if(action.type==='formation' && ($gameParty.size()<2 || !$gameSystem.isFormationEnabled())) {SoundManager.playBuzzer();return;}
+        const name = action.contextName || "selection";
+        const candidates = this._nodeWindows.filter(win => win.node().type === "list" && win.node().dataSource === "party"
+            && win.visible && win.isEnabled() && win.maxItems() > 0);
+        const picker = candidates.find(win => win.node().rowLayout === "actorPanel" && win.node().contextName === name)
+            || candidates.find(win => win.node().rowLayout === "actorPanel")
+            || candidates.find(win => win.node().contextName === name);
+        if (!picker) { SoundManager.playBuzzer(); return; }
+        const source = this.focusedWindow(), previous = picker.selectedRow();
+        this._actorSelection = { action, window: picker, source, previous, pending: null };
+        this.setFocus(this._nodeWindows.indexOf(picker));
+    };
+
+    Scene_ReactorUI.prototype.endActorSelection = function(confirm) {
+        const selection = this._actorSelection;
+        if (!selection) return;
+        const actor = selection.window.selectedRow()?.data;
+        if (confirm && (!actor || !$gameParty.members().includes(actor))) {
+            SoundManager.playBuzzer();
+            return;
+        }
+        if(selection.action.type==='formation') {
+            if(confirm) {
+                if(!$gameSystem.isFormationEnabled() || !actor.isFormationChangeOk()) {SoundManager.playBuzzer();return;}
+                if(!selection.pending) {selection.pending=actor;selection.window.refresh();return;}
+                const members=$gameParty.members(), first=members.indexOf(selection.pending), second=members.indexOf(actor);
+                if(first<0 || !selection.pending.isFormationChangeOk()) {selection.pending=null;selection.window.refresh();SoundManager.playBuzzer();return;}
+                $gameParty.swapOrder(first,second); selection.pending=null;
+                const win=selection.window;
+                win._uiRows=ReactorUI.listRows(win.node(),this); win._uiRowsSignature=ReactorUI.listRowsSignature(win._uiRows);
+                win.select(second);win.refresh();return;
+            }
+            if(selection.pending) {selection.pending=null;selection.window.refresh();return;}
+        }
+        this._actorSelection = null;
+        selection.window.refresh?.();
+        this.setFocus(this._nodeWindows.indexOf(selection.source));
+        if (!confirm) {
+            this.setContext(selection.action.contextName, selection.previous);
+            const index = selection.window._uiRows.findIndex(row => selection.previous && row.key === selection.previous.key);
+            selection.window.select(index);
+        }
+        if (confirm) {
+            this.setContext(selection.action.contextName, selection.window.selectedRow());
+            $gameParty.setMenuActor(actor);
+            this.runAction(selection.action);
+        }
+    };
+
     Scene_ReactorUI.prototype.runAction = function(action) {
         if (!action) return;
+        const stackDepth=SceneManager._stack?.length || 0;
+        const actor=['script','pluginCommand'].includes(action.type) ? ReactorUI.actorFromContext(this,action.contextName) || (typeof $gameParty!=='undefined' && $gameParty.menuActor?.()) : null;
         switch (action.type) {
+            case "formation": this.beginActorSelection(action); break;
+            case "pluginScene": {
+                try {
+                    const actor=ReactorUI.actorFromContext(this,action.contextName) || $gameParty.menuActor();
+                    const sceneClass=window[action.sceneClass];
+                    const args=action.argsExpression.trim() ? (new Function('actor','scene','return ('+action.argsExpression+');'))(actor,this) : [];
+                    if(typeof sceneClass!=='function' || !Array.isArray(args)) throw Error('A plugin scene class and an array of arguments are required');
+                    this.pushScene(sceneClass,args);
+                } catch(error) {console.error('ReactorUI: plugin scene failed',error);SoundManager.playBuzzer();}
+                break;
+            }
             case "close":
                 this.close();
                 break;
@@ -2975,8 +3408,9 @@
                 break;
             case "pluginCommand": {
                 const interpreter = $gameMap && $gameMap._interpreter ? $gameMap._interpreter : new Game_Interpreter();
-                PluginManager.callCommand(interpreter, action.plugin, action.command, action.args);
-                if (action.andClose) this.close();
+                const args=Object.fromEntries(Object.entries(action.args || {}).map(([key,value])=>[key,String(value).replace(/\{actor\.(id|name)\}/g,(_,field)=>actor?(field==='id'?actor.actorId():actor.name()):'')]));
+                PluginManager.callCommand(interpreter, action.plugin, action.command, args);
+                if (action.andClose && (SceneManager._stack?.length || 0)===stackDepth) this.close();
                 break;
             }
             case "switch":
@@ -2993,14 +3427,17 @@
             }
             case "script":
                 try {
-                    (new Function("scene", action.script)).call(this, this);
+                    (new Function("scene", "actor", action.script)).call(this, this, actor);
                 } catch (error) {
                     console.error("ReactorUI: action script failed", error);
                 }
-                if (action.andClose && !this._closing) this.close();
+                if (action.andClose && !this._closing && (SceneManager._stack?.length || 0)===stackDepth) this.close();
                 break;
             default:
                 break;
+        }
+        if(['pluginCommand','script'].includes(action.type) && !this._closing && (SceneManager._stack?.length || 0)>stackDepth) {
+            this.rememberForPush(); this._closing=true;
         }
         const focused = this.focusedWindow();
         if (!this._closing && focused && focused.node().type === "list") focused.activate();

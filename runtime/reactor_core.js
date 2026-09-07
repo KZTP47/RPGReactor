@@ -7762,6 +7762,100 @@ ColorFilter.prototype.initialize = function() {
     this.uniforms.brightness = 255;
 };
 
+// Full-screen engine groups start with an opaque ScreenSprite. In that case a
+// neutral colour pass can disappear without changing descendant compositing.
+// Arbitrary sprite filters retain their original isolation semantics.
+ColorFilter.skipNeutralScenePasses = true;
+ColorFilter.prototype.allowNeutralSceneSkip = function(owner) {
+    if (!PIXI.GlProgram || !this.matrix || this._neutralSceneOwner) return;
+    this._neutralSceneOwner = owner;
+    this._neutralRequestedEnabled = this.enabled;
+    const glProgram = this.glProgram, gpuProgram = this.gpuProgram, apply = this.apply;
+    this._neutralSceneShader = { glProgram, gpuProgram, apply };
+    Object.defineProperty(this, 'enabled', {
+        configurable: true, enumerable: true,
+        get() {
+            if (!this._neutralRequestedEnabled) return false;
+            if (!ColorFilter.skipNeutralScenePasses || this.glProgram !== glProgram ||
+                this.gpuProgram !== gpuProgram || this.apply !== apply ||
+                !ColorFilter.isNeutralSceneMatrix(this)) return true;
+            return !ColorFilter.canSkipScenePass(this._neutralSceneOwner);
+        },
+        set(value) { this._neutralRequestedEnabled = value; }
+    });
+};
+ColorFilter.isNeutralSceneMatrix = function(filter) {
+    if (filter.alpha !== 1 || filter.blendMode !== 'normal' || filter.resolution !== 1 ||
+        filter.antialias !== 'off' || filter.padding !== 0 || filter.blendRequired) return false;
+    const m = filter.matrix;
+    if (!m || m.length !== 20) return false;
+    for (let i = 0; i < 20; i++) if (m[i] !== (i === 0 || i === 6 || i === 12 || i === 18 ? 1 : 0)) return false;
+    return true;
+};
+ColorFilter._scenePassCanSkip = function(owner) {
+    const scene = globalThis.SceneManager?._scene, ss = scene?._spriteset;
+    const app = globalThis.Graphics?._app, renderer = app?.renderer;
+    if (!ss || !renderer || (owner !== scene && owner !== ss) || app.stage !== scene || scene.parent ||
+        renderer.resolution !== 1 || !renderer.background?.clearBeforeRender ||
+        renderer.renderTarget?.renderTarget?.colorTexture?.source?.antialias) return false;
+    const base = ss._baseSprite, black = ss._blackScreen, graphics = black?._graphics;
+    if (scene.children[0] !== ss || ss.children[0] !== base || base?.children[0] !== black ||
+        black.children.length !== 1 || black.children[0] !== graphics) return false;
+    const chain = [scene, ss, base, black, graphics];
+    for (const node of chain) {
+        if (!node || !node.visible || !node.renderable || node.alpha !== 1 ||
+            (node.tint !== undefined && node.tint !== 0xffffff) || node.mask || node.filterArea ||
+            node.x !== 0 || node.y !== 0 || node.rotation !== 0 || node.scale.x !== 1 || node.scale.y !== 1 ||
+            node.skew.x !== 0 || node.skew.y !== 0 || node.pivot.x !== 0 || node.pivot.y !== 0 ||
+            (node.blendMode !== 'normal' && node.blendMode !== 'inherit')) return false;
+        for (const f of node.filters || []) {
+            // Every enclosing pass must retain the opaque backdrop. Read the
+            // matrix itself so direct plugin edits take effect on this draw.
+            const shader = f._neutralSceneShader;
+            if (!(f instanceof ColorFilter) || !shader || f.glProgram !== shader.glProgram ||
+                f.gpuProgram !== shader.gpuProgram || f.apply !== shader.apply || f.blendMode !== 'normal' || f.alpha !== 1 ||
+                f.matrix?.length !== 20 || f.matrix[15] !== 0 || f.matrix[16] !== 0 ||
+                f.matrix[17] !== 0 || f.matrix[18] !== 1 || f.matrix[19] !== 0) return false;
+        }
+    }
+    const instructions = graphics.context?.instructions, fill = instructions?.[0];
+    const path = fill?.data?.path?.instructions, rect = path?.[0], d = rect?.data, t = d?.[4];
+    if (instructions?.length !== 1 || fill.action !== 'fill' || fill.data.style.alpha !== 1 ||
+        fill.data.style.texture !== PIXI.Texture.WHITE || path.length !== 1 || rect.action !== 'rect' ||
+        d[0] !== -50000 || d[1] !== -50000 || d[2] !== 100000 || d[3] !== 100000 ||
+        !t || t.a !== 1 || t.b !== 0 || t.c !== 0 || t.d !== 1 || t.tx !== 0 || t.ty !== 0 ||
+        Graphics.width > 50000 || Graphics.height > 50000) return false;
+    // Destination-out/erase/custom blending can punch holes in the backdrop.
+    // Keep isolation whenever such content is present. Normal, additive,
+    // multiply and screen blending all keep an opaque destination opaque.
+    const safeBlend = mode => mode === 'normal' || mode === 'inherit' || mode === 'add' || mode === 'multiply' || mode === 'screen';
+    const visit = node => {
+        if (!node.visible || !node.renderable) return true;
+        if (!safeBlend(node.blendMode)) return false;
+        for (const f of node.filters || []) if (!safeBlend(f.blendMode)) return false;
+        for (const child of node.children || []) if (!visit(child)) return false;
+        return true;
+    };
+    return visit(scene);
+};
+
+// PIXI increments renderer.tick for each render, including snapshots. Share
+// the scene scan across the three filters only for that draw; colour matrices
+// and explicit enabled changes are still checked on every query.
+ColorFilter._scenePassChecks = new WeakMap();
+ColorFilter.canSkipScenePass = function(owner) {
+    const scene = globalThis.SceneManager?._scene, renderer = globalThis.Graphics?._app?.renderer;
+    if (!renderer || !scene || (owner !== scene && owner !== scene._spriteset)) return false;
+    if (!Number.isFinite(renderer.tick)) return ColorFilter._scenePassCanSkip(owner);
+    let cached = ColorFilter._scenePassChecks.get(renderer);
+    if (!cached || cached.tick !== renderer.tick || cached.scene !== scene) {
+        cached = { tick: renderer.tick, scene, allowed: ColorFilter._scenePassCanSkip(owner) };
+        ColorFilter._scenePassChecks.set(renderer, cached);
+    }
+    return cached.allowed;
+};
+
+
 /**
  * Sets the hue rotation value.
  *

@@ -48,8 +48,7 @@ class ProjectManager {
         let lastError = null;
         for (let attempt = 0; attempt < attempts; attempt++) {
             try {
-                const content = this.fs.readFileSync(filePath, 'utf8').replace(/^\uFEFF/, '');
-                return JSON.parse(content);
+                return RRJson.read(this.fs, filePath);
             } catch (error) {
                 lastError = error;
                 if (attempt + 1 < attempts && typeof setTimeout === 'function') {
@@ -77,7 +76,7 @@ class ProjectManager {
 
         try {
             const packagePath = this.path.join(process.cwd(), 'package.json');
-            const packageData = JSON.parse(this.fs.readFileSync(packagePath, 'utf8'));
+            const packageData = RRJson.parse(this.fs.readFileSync(packagePath));
             return packageData.version || '0.0.0';
         } catch (error) {
             console.warn('Could not read RPG Reactor version from package.json:', error);
@@ -465,7 +464,7 @@ class ProjectManager {
 
         const packagePath = this.path.join(targetPath, 'package.json');
         if (this.fs.existsSync(packagePath)) {
-            const packageData = JSON.parse(this.fs.readFileSync(packagePath, 'utf8'));
+            const packageData = RRJson.parse(this.fs.readFileSync(packagePath));
             packageData.name = this.getProjectPackageName(projectName);
             packageData.version = engineVersion;
             packageData.window = packageData.window || {};
@@ -475,7 +474,7 @@ class ProjectManager {
 
         const systemPath = this.path.join(targetPath, 'data', 'System.json');
         if (this.fs.existsSync(systemPath)) {
-            const systemData = JSON.parse(this.fs.readFileSync(systemPath, 'utf8'));
+            const systemData = RRJson.parse(this.fs.readFileSync(systemPath));
             systemData.gameTitle = projectName;
             this.writeJson(systemPath, systemData);
         }
@@ -676,6 +675,7 @@ class ProjectManager {
                 scrollX: 0,
                 scrollY: 0
             }],
+            'Map001.r3d.json': { version: 1, lighting: { ambient: 1, ambientColour: '#ffffff' } },
             'Map001.json': {
                 autoplayBgm: false,
                 autoplayBgs: false,
@@ -854,8 +854,7 @@ class ProjectManager {
 
         try {
             if (this.fs.existsSync(packagePath)) {
-                const source = this.fs.readFileSync(packagePath, 'utf8').replace(/^\uFEFF/, '');
-                packageData = JSON.parse(source);
+                packageData = RRJson.read(this.fs, packagePath);
                 if (!packageData || typeof packageData !== 'object' || Array.isArray(packageData)) {
                     return {
                         ok: false,

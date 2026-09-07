@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Media Surfaces">
+  <defs>
+    <linearGradient id="media-frame" x1="10" y1="7" x2="54" y2="48" gradientUnits="userSpaceOnUse"><stop stop-color="#effaff"/><stop offset=".45" stop-color="#9aaac5"/><stop offset="1" stop-color="#455778"/></linearGradient>
+    <linearGradient id="media-screen" x1="15" y1="14" x2="48" y2="40" gradientUnits="userSpaceOnUse"><stop stop-color="#123e68"/><stop offset="1" stop-color="#06111f"/></linearGradient>
+    <linearGradient id="media-play" x1="25" y1="17" x2="41" y2="35" gradientUnits="userSpaceOnUse"><stop stop-color="#fff6a5"/><stop offset="1" stop-color="#ffbf19"/></linearGradient>
+  </defs>
+  <path d="M10 4H54L62 12V45L54 53H39V57H49L54 63H10L15 57H25V53H9L2 46V12Z" fill="#01030a"/>
+  <path d="M11 7H53L59 13V44L52 50H10L5 45V13Z" fill="url(#media-frame)"/>
+  <path d="M14 11H50L55 16V39L49 45H14L9 40V16Z" fill="#01030a"/>
+  <path d="M15 14H49L52 17V38L48 42H15L12 39V17Z" fill="url(#media-screen)" stroke="#24bdf3" stroke-width="2"/>
+  <path d="M24 17L43 28L24 39Z" fill="#01030a"/>
+  <path d="M27 21L39 28L27 35Z" fill="url(#media-play)"/>
+  <path d="M3 10L9 4H20V8H11L7 12V22H3ZM61 38V46L54 53H44V49H52L57 44V38Z" fill="#ff5b8d" stroke="#01030a" stroke-width="1.5"/>
+  <path d="M18 47H27M30 47H34M37 47H46" stroke="#24bdf3" stroke-width="2"/>
+  <path d="M28 53H36V59H46L48 61H16L18 59H28Z" fill="url(#media-frame)"/>
+  <path d="M15 18H20M15 22H18M44 34H49M46 38H49" stroke="#60dfff" stroke-width="1.5"/>
+</svg>

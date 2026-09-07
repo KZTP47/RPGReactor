@@ -121,7 +121,7 @@ class DatabaseTilesetEditor {
                 return;
             }
 
-            const data = JSON.parse(this.fs.readFileSync(tilesetsPath, 'utf8'));
+            const data = RRJson.parse(this.fs.readFileSync(tilesetsPath));
             this.tilesetList = data;
 
 
@@ -251,7 +251,7 @@ class DatabaseTilesetEditor {
             const filePath = this.tileset3DPath();
             if (filePath && this.fs && this.fs.existsSync(filePath)) {
                 try {
-                    this._tileset3d = classes.normalize(JSON.parse(this.fs.readFileSync(filePath, 'utf8')));
+                    this._tileset3d = classes.normalize(RRJson.parse(this.fs.readFileSync(filePath)));
                 } catch (error) {
                     // Starting empty would silently overwrite the author's work
                     // on the next save, so keep the failure loud and visible.

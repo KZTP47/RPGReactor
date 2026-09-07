@@ -37,7 +37,7 @@ const driver = new WebDriverClient(path.join(root, 'nwjs-linux/chromedriver'), {
   if(result.error||subdialogs.error||!result.commands?.length||!result.database?.length||!subdialogs.dialogs?.length)throw new Error(`Incomplete audit; see ${temp}`);
   await driver.execute(fs.readFileSync(path.join(__dirname,'modal-theme-audit-setup.js'),'utf8'));
   const themes=[];
-  for(const palette of (process.env.RR_AUDIT_SKIP_THEMES ? [] : ['gold','bubblegum','ocean','cascadia','underworld','creamsicle','royalty']))for(const mode of ['dark','light']){
+  for(const palette of (process.env.RR_AUDIT_SKIP_THEMES ? [] : process.env.RR_AUDIT_PALETTES?.split(',') || ['gold','bubblegum','ocean','cascadia','underworld','creamsicle','royalty']))for(const mode of ['dark','light']){
    const theme=palette==='gold'?mode:`${palette}-${mode}`;
    const themed=await driver.executeAsync(fs.readFileSync(path.join(__dirname,'command-database-audit-setup.js'),'utf8'),[{theme,themeOnly:true}]);
    const nested=await driver.executeAsync(fs.readFileSync(path.join(__dirname,'database-subdialog-audit-setup.js'),'utf8'));
@@ -58,6 +58,7 @@ const driver = new WebDriverClient(path.join(root, 'nwjs-linux/chromedriver'), {
   for(const theme of themes) problems.push(...(theme.commands||[]).filter(r=>r.error),...(theme.subdialogs.dialogs||[]).filter(r=>r.error||r.cancelPreserved===false||r.saved===false));
   problems.push(...(menuResult.menus||[]).filter(r=>!r.inViewport||!r.localized||!r.actionInvoked||!r.dismissed));
   if(menuResult.error)problems.push(menuResult);
+  const paletteProblems=[];const inspect=value=>{if(!value||typeof value!=='object')return;if(value.offPaletteButtons?.length)paletteProblems.push(...value.offPaletteButtons);for(const child of Object.values(value))if(typeof child==='object')inspect(child);};inspect(themes);problems.push(...paletteProblems);
   if(problems.length)throw new Error(`${problems.length} audit failures; see JSON artifacts in ${temp}`);
  }finally{await driver.close();fs.rmSync(project,{recursive:true,force:true});fs.rmSync(path.join(temp,'profile'),{recursive:true,force:true});}
 })().catch(e=>{console.error(e);process.exitCode=1;});

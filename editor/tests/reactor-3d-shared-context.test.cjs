@@ -74,7 +74,19 @@ test('three renders into targets that hold the same bytes the canvas did, and bo
     assert.match(body, /samples,/);
     assert.match(body, /this\._renderer\.initRenderTarget\(target\)/, 'allocated up front so the GL handle exists to adopt');
     const render = r3d.slice(r3d.indexOf('Reactor3D.Viewport.prototype.renderInto = function'), r3d.indexOf('Reactor3D.Viewport.prototype.createTarget'));
-    assert.match(render, /this\._renderer\.resetState\(\);\s*this\._renderer\.setRenderTarget\(target\);\s*this\._renderer\.render\(scene, camera\);\s*this\._renderer\.setRenderTarget\(null\);\s*this\._resetPixi\(\);/);
+    const calls = [], target = { addEventListener() {} }, original = Reactor3D.renderScene;
+    const viewport = { _shared: false, _renderer: {
+        resetState() { calls.push('reset three'); }, setRenderTarget(value) { calls.push(value === target ? 'target' : 'canvas'); }
+    }, _resetPixi() { calls.push('reset pixi'); } };
+    try {
+        for (const failure of [false, true]) {
+            calls.length = 0;
+            Reactor3D.renderScene = () => { calls.push('draw'); if (failure) throw Error('draw interrupted'); };
+            const render = () => Reactor3D.Viewport.prototype.renderInto.call(viewport, target, {}, {});
+            if (failure) assert.throws(render, /draw interrupted/); else render();
+            assert.deepEqual(calls, ['reset three', 'target', 'draw', 'canvas', 'reset pixi']);
+        }
+    } finally { Reactor3D.renderScene = original; }
     assert.match(r3d, /Reactor3D\.Viewport\.prototype\.render = function\(slot\) \{[\s\S]*?this\.renderInto\(this\._target\(slot \|\| "below"\), this\._scene, this\._camera\);/);
     const pass = r3d.slice(r3d.indexOf('Reactor3D.Viewport.prototype.passTexture'), r3d.indexOf('Reactor3D.adoptGlTexture = function'));
     assert.match(pass, /rotate: PIXI\.groupD8\.MIRROR_VERTICAL/, 'a framebuffer\'s first row is its bottom');

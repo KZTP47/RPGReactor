@@ -101,7 +101,7 @@ function loadTroopEditor() {
     };
     for (const name of [
         'MessageCommandEditor', 'MovePictureEditor', 'ConditionalBranchEditor',
-        'LoopEditor', 'AudioCommandEditor', 'PluginCommandEditor', 'VideoSurfaceEditor'
+        'LoopEditor', 'AudioCommandEditor', 'PluginCommandEditor', 'MediaSurfaceEditor'
     ]) context[name] = EditorStub;
     return vm.runInNewContext(`${source}\nDatabaseTroopEditor;`, context);
 }

@@ -159,7 +159,7 @@ class AnimationPickerModal {
             playbackGeneration++;
             if (playTimer) { cancelAnimationFrame(playTimer); playTimer = null; }
             if (fx.raf) { cancelAnimationFrame(fx.raf); fx.raf = null; }
-            if (fx.handle) { try { fx.handle.stop(); } catch (e) {} fx.handle = null; }
+            if (fx.handle) { try { fx.ctx?._makeContextCurrent?.(); fx.handle.stop(); } catch (e) {} fx.handle = null; }
             if (fx.gl) {
                 fx.gl.clearColor(backdropRgb[0], backdropRgb[1], backdropRgb[2], 1);
                 fx.gl.clear(fx.gl.COLOR_BUFFER_BIT | fx.gl.DEPTH_BUFFER_BIT);
@@ -267,6 +267,7 @@ class AnimationPickerModal {
                 let deadTicks = 0;
                 let failedStarts = 0;
                 const startHandle = () => {
+                    fx.ctx._makeContextCurrent?.();
                     fx.handle = fx.ctx.play(effect);
                     aliveTicks = 0;
                     deadTicks = 0;
@@ -289,6 +290,7 @@ class AnimationPickerModal {
                 const step = 1000 / 60;
                 const loop = () => {
                     if (playbackGeneration !== generation) return;
+                    fx.ctx._makeContextCurrent?.();
                     const now = Date.now();
                     acc += now - last;
                     last = now;
@@ -365,17 +367,18 @@ class AnimationPickerModal {
                 fx.waiters.delete(anim.effectName);
                 fx.effects.delete(anim.effectName);
                 if (effect) {
-                    try { fx.ctx.releaseEffect(effect); } catch (error) {}
+                    try { fx.ctx?._makeContextCurrent?.(); fx.ctx?.releaseEffect(effect); } catch (error) {}
                 }
                 if (playbackGeneration === generation) caption.textContent = tt('No preview available');
             };
             try {
+                fx.ctx._makeContextCurrent?.();
                 effect = RR_loadEffekseerEffectFromFile(fx.ctx, effectPath, 1.0,
                     onLoaded,
                     onError);
                 if (effect && !loadFailed) fx.effects.set(anim.effectName, effect);
                 else if (effect && loadFailed) {
-                    try { fx.ctx.releaseEffect(effect); } catch (error) {}
+                    try { fx.ctx?._makeContextCurrent?.(); fx.ctx?.releaseEffect(effect); } catch (error) {}
                 }
             } catch (e) {
                 fx.waiters.delete(anim.effectName);
@@ -467,11 +470,12 @@ class AnimationPickerModal {
             // reopening the picker can never starve the rest of the editor.
             if (fx.ready) {
                 for (const effect of fx.effects.values()) {
-                    try { fx.ctx.releaseEffect(effect); } catch (e) {}
+                    try { fx.ctx?._makeContextCurrent?.(); fx.ctx?.releaseEffect(effect); } catch (e) {}
                 }
                 fx.effects.clear();
                 fx.waiters.clear();
-                try { effekseer.releaseContext(fx.ctx); } catch (e) {}
+                if(typeof RREffekseerStateGuard!=='undefined')RREffekseerStateGuard.release(fx.ctx);
+                try { fx.ctx._makeContextCurrent?.(); effekseer.releaseContext(fx.ctx); } catch (e) {}
                 fx.ctx = null;
                 fx.ready = false;
             }

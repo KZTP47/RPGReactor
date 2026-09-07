@@ -337,6 +337,7 @@ test('per-keyframe tilt bakes to wrapper rotation tracks', async () => {
 
     // Keyframed tilt → FCurve rotation, 0 → 90° on X, 0 → 45° on Z.
     const gen = new Gen();
+    gen._loopPreview = false; // single playback preserves the authored final pose
     gen._stack = [{
         recipeId: 'energy-field', activeKf: 0, start: 0, end: 180,
         keyframes: [{}, { __tiltX: 90, __tiltZ: 45 }],
@@ -353,6 +354,21 @@ test('per-keyframe tilt bakes to wrapper rotation tracks', async () => {
     assert.ok(near(fc.x.keys[0], 0) && near(fc.x.keys[fc.x.keys.length - 1], 90 * D2R),
         'X tilt track must tween 0 → 90°(rad)');
     assert.ok(near(fc.z.keys[fc.z.keys.length - 1], 45 * D2R), 'Z tilt track must end at 45°(rad)');
+
+    gen._loopPreview = true;
+    const looped = RR_EfkFormat.parseEfkefc(gen._buildBytes());
+    const loopTracks = [];
+    (function walk(n) {
+        if (n.rotation?.type === 5) loopTracks.push(n.rotation.fcurve);
+        (n.children || []).forEach(walk);
+    })(looped.root);
+    assert.ok(loopTracks.length);
+    for (const track of loopTracks) for (const axis of ['x', 'y', 'z']) {
+        const channel = track[axis];
+        assert.equal(channel.len, 120, 'close at export cutoff, even when the last keyframe is later');
+        const turns = (channel.keys.at(-1) - channel.keys[0]) / (2 * Math.PI);
+        assert.ok(near(turns, Math.round(turns)), 'looped tilt must return to its initial orientation');
+    }
 
     // Uniform (single-keyframe) tilt → fixed wrapper rotation in radians.
     const gen2 = new Gen();

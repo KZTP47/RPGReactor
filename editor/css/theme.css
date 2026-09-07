@@ -47,8 +47,8 @@
        would clash. Themes can repaint this too. */
     --color-link:                 #007acc;
     --color-link-bright:          #4a9eff;
-    --color-selection-deep:       #094771;        /* selected row dark blue */
-    --color-selection-mid:        #1e3a52;        /* hover-selected blue */
+    --color-selection-deep:       var(--color-bg-selected);        /* selected row in the active palette */
+    --color-selection-mid:        var(--color-accent-tint-25);        /* translucent selection accent */
 
     /* ---------- Danger / red palette (form errors, destructive UI) -------- */
     --color-warning-text:         #ffd083;
@@ -87,7 +87,7 @@
     --color-bg-list-item:         #252526;        /* sidebar/list row */
     --color-bg-list-item-alt:     #222222;        /* alternating row */
     --color-bg-hover:             #37373d;        /* hover on interactive rows */
-    --color-bg-selected:          #264f78;        /* selected row (legacy IDE blue) */
+    --color-bg-selected:          #594b12;        /* selected row (gold) */
 
     /* ---------- Borders / dividers ----------------------------------------- */
     --color-border:               #3e3e42;        /* default panel border */
@@ -164,7 +164,7 @@
 :root[data-theme="light"] {
     /* ---------- Brand accent (darker gold so it pops on light) ------------- */
     --color-accent:               #7f6105;
-    --color-accent-bright:        #b8860b;        /* deep goldenrod */
+    --color-accent-bright:        #7f6105;        /* deep goldenrod */
     --color-accent-hover:         #7a5c05;
     --color-accent-shadow:        #f4e8a1;        /* light gold tinted shadow */
     --color-accent-on:            #ffffff;        /* text on solid accent fill */
@@ -184,8 +184,8 @@
     /* ---------- Link / blue palette (darker for light bg contrast) -------- */
     --color-link:                 #0066b3;
     --color-link-bright:          #0078d4;
-    --color-selection-deep:       #b3dcff;        /* selected row tint */
-    --color-selection-mid:        #d6ecff;        /* hover-selected */
+    --color-selection-deep:       var(--color-bg-selected);        /* selected row tint */
+    --color-selection-mid:        var(--color-accent-tint-25);        /* hover-selected */
 
     /* ---------- Danger / red palette ------------------------------------- */
     --color-warning-text:         #785000;
@@ -292,7 +292,7 @@
     --color-bg-list-item:         #252526;
     --color-bg-list-item-alt:     #222222;
     --color-bg-hover:             #37373d;
-    --color-bg-selected:          #264f78;
+    --color-bg-selected:          #594b12;
     --color-border:               #3e3e42;
     --color-border-input:         #555555;
     --color-border-subtle:        #333333;
@@ -312,7 +312,7 @@
  * --------------------------------------------------------------------------- */
 :root[data-theme="bubblegum-dark"] {
     /* ---------- Brand accent (vivid hot pink) ----------------------------- */
-    --color-accent:               #d63384;
+    --color-accent:               #d22e80;
     --color-accent-bright:        #ff6fa8;
     --color-accent-hover:         #ff8fb9;
     --color-accent-shadow:        #3d001f;
@@ -384,8 +384,8 @@
     /* ---------- Link / blue palette -------------------------------------- */
     --color-link:                 #0066b3;
     --color-link-bright:          #0078d4;
-    --color-selection-deep:       #b3dcff;
-    --color-selection-mid:        #d6ecff;
+    --color-selection-deep:       var(--color-bg-selected);
+    --color-selection-mid:        var(--color-accent-tint-25);
 
     /* ---------- Danger / red palette ------------------------------------- */
     --color-warning-text:         #785000;
@@ -451,7 +451,7 @@
  * --------------------------------------------------------------------------- */
 :root[data-theme="ocean-dark"] {
     /* ---------- Brand accent (vivid sky blue) ----------------------------- */
-    --color-accent:               #2980b9;
+    --color-accent:               #277aaf;
     --color-accent-bright:        #5dade2;
     --color-accent-hover:         #74b9d8;
     --color-accent-shadow:        #001a2e;
@@ -522,8 +522,8 @@
     /* ---------- Link / blue palette -------------------------------------- */
     --color-link:                 #0066b3;
     --color-link-bright:          #0078d4;
-    --color-selection-deep:       #b3dcff;
-    --color-selection-mid:        #d6ecff;
+    --color-selection-deep:       var(--color-bg-selected);
+    --color-selection-mid:        var(--color-accent-tint-25);
 
     /* ---------- Danger / red palette ------------------------------------- */
     --color-warning-text:         #785000;
@@ -590,7 +590,7 @@
  * --------------------------------------------------------------------------- */
 :root[data-theme="cascadia-dark"] {
     /* ---------- Brand accent (vivid emerald) ----------------------------- */
-    --color-accent:               #228b22;
+    --color-accent:               #208520;
     --color-accent-bright:        #51cf66;
     --color-accent-hover:         #6dde7e;
     --color-accent-shadow:        #001a08;
@@ -661,8 +661,8 @@
     /* ---------- Link / blue palette -------------------------------------- */
     --color-link:                 #0066b3;
     --color-link-bright:          #0078d4;
-    --color-selection-deep:       #b3dcff;
-    --color-selection-mid:        #d6ecff;
+    --color-selection-deep:       var(--color-bg-selected);
+    --color-selection-mid:        var(--color-accent-tint-25);
 
     /* ---------- Danger / red palette ------------------------------------- */
     --color-warning-text:         #785000;
@@ -793,8 +793,8 @@
 
     --color-link:                 #0066b3;
     --color-link-bright:          #0078d4;
-    --color-selection-deep:       #b3dcff;
-    --color-selection-mid:        #d6ecff;
+    --color-selection-deep:       var(--color-bg-selected);
+    --color-selection-mid:        var(--color-accent-tint-25);
 
     --color-warning-text:         #785000;
     --color-danger-bright:        #a82222;
@@ -856,7 +856,7 @@
     --color-accent-bright:        #ff9f43;
     --color-accent-hover:         #ffb06f;
     --color-accent-shadow:        #2a1500;
-    --color-accent-on:            #ffffff;
+    --color-accent-on:            #201006;
     --color-accent-tint-10:       rgba(255, 159, 67, 0.10);
     --color-accent-tint-15:       rgba(255, 159, 67, 0.15);
     --color-accent-tint-25:       rgba(255, 159, 67, 0.25);
@@ -919,8 +919,8 @@
 
     --color-link:                 #0066b3;
     --color-link-bright:          #0078d4;
-    --color-selection-deep:       #b3dcff;
-    --color-selection-mid:        #d6ecff;
+    --color-selection-deep:       var(--color-bg-selected);
+    --color-selection-mid:        var(--color-accent-tint-25);
 
     --color-warning-text:         #785000;
     --color-danger-bright:        #a82222;
@@ -1057,8 +1057,8 @@
     /* ---------- Link / blue palette -------------------------------------- */
     --color-link:                 #0066b3;
     --color-link-bright:          #0078d4;
-    --color-selection-deep:       #b3dcff;
-    --color-selection-mid:        #d6ecff;
+    --color-selection-deep:       var(--color-bg-selected);
+    --color-selection-mid:        var(--color-accent-tint-25);
 
     /* ---------- Danger / red palette ------------------------------------- */
     --color-warning-text:         #785000;
@@ -1674,7 +1674,7 @@ input[type="radio"]:disabled,
     transition: background var(--ease-base);
 }
 .rr-button-primary:hover {
-    background: var(--color-accent-bright);
+    background: color-mix(in srgb, var(--color-accent) 90%, #000);
 }
 
 .rr-button-danger {
@@ -2878,7 +2878,7 @@ input[type="number"]::-webkit-outer-spin-button {
 }
 .rr-cb-row.is-off > label,
 .rr-cb-row.is-off .rr-cb-word {
-    color: var(--color-text-dim);
+    color: var(--color-text-muted);
 }
 .rr-cb-row > input[type="checkbox"] {
     margin: 0;

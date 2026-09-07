@@ -71,3 +71,6 @@ INSPIRATION/
 # Transient per-project state: open-project locks and playtest saves.
 .rpgreactor.lock
 template/*/save/
+
+# Battle Test snapshots are regenerated from the project database.
+/template/Demo/data/Test_*.json

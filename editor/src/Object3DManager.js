@@ -397,6 +397,7 @@ class Object3DManager {
     }
 
     selectObject(id) {
+        if (window.reactor?.mapTool !== 'paint') window.reactor?.tilesetPaletteViewer?.selectLayer('O');
         if (this.mapEditor?.mapStamp) this.mapEditor.clearMapStamp();
         this.selectedObject = Math.max(0, Math.min(255, id));
         const label = document.getElementById('selected-object3d-number');

@@ -11,7 +11,7 @@ test('a selected video effect shows its movie, smoothly, and keeps its card', ()
     assert.match(editor, /this\._playVideoPreview\(this\._effectWork\);/, 'selection starts the movie');
     // The movie counts as activity, or the preview throttles to the idle
     // rate the moment the mouse rests and plays as a slideshow.
-    assert.match(editor, /\|\| !!this\._fxVideo \|\| !!this\._fxLight \|\| !!\(this\._fxPreview && this\._fxPreview\.active\);/);
+    assert.match(editor, /\|\| !!this\._fxVideo \|\| !!this\._fxLight \|\| !!\(this\._fxPreview && this\._fxPreview\.active\)/);
     // A click on the model must not swap the effect card for a part card —
     // with a whole-object part, every click was a dismissal.
     const at = editor.indexOf('_pickPart(event) {');
@@ -148,7 +148,7 @@ test('a light effect previews the way the game lights: presets shared, a soft co
     assert.match(editor, /Reactor3D\.packLightUniforms\(packed, \{ intensity: this\.LIGHT_PREVIEW_AMBIENT/);
     assert.match(editor, /uniforms\.rrAmbient\.value\.set\(saved\.ambient\);\s*uniforms\.rrLightCount\.value = saved\.count;/);
     const three = fs.readFileSync(path.join(repoRoot, 'runtime', 'reactor_3d.js'), 'utf8');
-    assert.match(three, /Reactor3D\.packLightUniforms = function\(lights, ambient\) \{/);
+    assert.match(three, /Reactor3D\.packLightUniforms = function\(lights, ambient, uniforms = this\.lightUniforms\(\)\) \{/);
     // Always / Moving / Idle keep a light on in the preview, like a movie.
     assert.match(editor, /: isLight \? true : Number\(raw\.animation\) > 0\);/);
     assert.match(editor, /if \(isLight\) \{\s*if \(!wantedLight \|\| index === this\.selectedEffect\)/, 'a light previews beside another Always effect');

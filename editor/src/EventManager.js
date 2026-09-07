@@ -115,6 +115,62 @@ class EventManager {
         }
     }
 
+    _eventHeightsSnapshot() {
+        const heights = this.currentMap?.reactor3d?.eventZ;
+        return heights ? JSON.parse(JSON.stringify(heights)) : null;
+    }
+
+    _restoreEventHeights(snapshot) {
+        if (!Object.prototype.hasOwnProperty.call(snapshot, 'heights')) return;
+        const map = this.currentMap;
+        if (snapshot.heights && Object.keys(snapshot.heights).length) {
+            map.reactor3d ||= { version: 1, mode: '3d' };
+            map.reactor3d.eventZ = JSON.parse(JSON.stringify(snapshot.heights));
+        } else if (map.reactor3d) delete map.reactor3d.eventZ;
+    }
+
+    _eventPlacement(eventId) {
+        const sidecar = this.currentMap?.reactor3d;
+        return { height: Number(sidecar?.eventZ?.[eventId]) || 0, preview: sidecar?.eventPreviews?.[eventId] ?? null };
+    }
+
+    _setEventPlacement(eventId, placement) {
+        const map = this.currentMap;
+        if (!map) return;
+        for (const [field, value] of [['eventZ', placement?.height], ['eventPreviews', placement?.preview]]) {
+            const present = field === 'eventZ' ? Number.isFinite(value) && value > 0 : Number.isInteger(value) && value >= 0;
+            if (present) {
+                map.reactor3d ||= { version: 1, mode: '3d' };
+                map.reactor3d[field] ||= {};
+                map.reactor3d[field][String(eventId)] = value;
+            } else if (map.reactor3d?.[field]) {
+                delete map.reactor3d[field][String(eventId)];
+                if (!Object.keys(map.reactor3d[field]).length) delete map.reactor3d[field];
+            }
+        }
+    }
+
+    _eventPreviewsSnapshot() {
+        const previews = this.currentMap?.reactor3d?.eventPreviews;
+        return previews ? JSON.parse(JSON.stringify(previews)) : null;
+    }
+
+    _restoreEventPreviews(snapshot) {
+        if (!Object.prototype.hasOwnProperty.call(snapshot, 'previews')) return;
+        const map = this.currentMap;
+        if (snapshot.previews && Object.keys(snapshot.previews).length) {
+            map.reactor3d ||= { version: 1, mode: '3d' };
+            map.reactor3d.eventPreviews = JSON.parse(JSON.stringify(snapshot.previews));
+        } else if (map.reactor3d) delete map.reactor3d.eventPreviews;
+    }
+
+    _restoreEventSelection() {
+        if (!this.selectedEvent) return;
+        this.selectedEvent = this.currentMap.events.find(e => e && e.id === this.selectedEvent.id) || null;
+        this.selectedTileX = this.selectedEvent?.x ?? null;
+        this.selectedTileY = this.selectedEvent?.y ?? null;
+    }
+
     saveState() {
         if (!this.currentMap) return;
 
@@ -122,7 +178,9 @@ class EventManager {
         // model entries that belong to those events.
         const eventsData = {
             events: JSON.parse(JSON.stringify(this.currentMap.events || [])),
-            models: this._eventModelsSnapshot()
+            models: this._eventModelsSnapshot(),
+            heights: this._eventHeightsSnapshot(),
+            previews: this._eventPreviewsSnapshot()
         };
         this.undoStack.push(eventsData);
 
@@ -144,7 +202,9 @@ class EventManager {
         // Save current state to redo stack
         this.redoStack.push({
             events: JSON.parse(JSON.stringify(this.currentMap.events || [])),
-            models: this._eventModelsSnapshot()
+            models: this._eventModelsSnapshot(),
+            heights: this._eventHeightsSnapshot(),
+            previews: this._eventPreviewsSnapshot()
         });
 
         // Restore previous state
@@ -154,16 +214,11 @@ class EventManager {
             : popped;
         this.currentMap.events = previousData.events;
         this._restoreEventModels(previousData.models);
+        this._restoreEventHeights(previousData);
+        this._restoreEventPreviews(previousData);
 
-        // Clear selection if the selected event no longer exists
-        if (this.selectedEvent) {
-            const eventStillExists = this.currentMap.events.find(e => e && e.id === this.selectedEvent.id);
-            if (!eventStillExists) {
-                this.selectedEvent = null;
-                this.selectedTileX = null;
-                this.selectedTileY = null;
-            }
-        }
+        // Undo restores cloned data, so the selection must follow that object.
+        this._restoreEventSelection();
 
         // Re-render events
         this.renderEvents();
@@ -178,7 +233,9 @@ class EventManager {
         // Save current state to undo stack
         this.undoStack.push({
             events: JSON.parse(JSON.stringify(this.currentMap.events || [])),
-            models: this._eventModelsSnapshot()
+            models: this._eventModelsSnapshot(),
+            heights: this._eventHeightsSnapshot(),
+            previews: this._eventPreviewsSnapshot()
         });
 
         // Restore next state
@@ -188,16 +245,11 @@ class EventManager {
             : popped;
         this.currentMap.events = nextData.events;
         this._restoreEventModels(nextData.models);
+        this._restoreEventHeights(nextData);
+        this._restoreEventPreviews(nextData);
 
-        // Clear selection if the selected event no longer exists
-        if (this.selectedEvent) {
-            const eventStillExists = this.currentMap.events.find(e => e && e.id === this.selectedEvent.id);
-            if (!eventStillExists) {
-                this.selectedEvent = null;
-                this.selectedTileX = null;
-                this.selectedTileY = null;
-            }
-        }
+        // Undo restores cloned data, so the selection must follow that object.
+        this._restoreEventSelection();
 
         // Re-render events
         this.renderEvents();
@@ -329,7 +381,13 @@ class EventManager {
 
     // Enable/disable event mode
     setEventMode(enabled) {
+        // Release media authoring and its gizmos before Event mode owns the map.
+        if (enabled) {
+            if (typeof window !== 'undefined' && window.reactor?.claimMapTool) window.reactor.claimMapTool('events');
+            else this.projectController?.mediaSurfaceManager?.close();
+        }
         this.eventMode = enabled;
+        this.projectController?.mediaSurfacePreviewManager?.syncToolInteraction?.();
         console.debug(`Event mode: ${enabled ? 'enabled' : 'disabled'}`);
 
         if (enabled) {
@@ -1747,7 +1805,8 @@ class EventManager {
         const targetMap = session.map || this.currentMap;
         let isNew = session.isNew === true;
         this.eventEditor.showEventEditor(content, event, {
-            onCommit: (sourceEvent, committedEvent) => {
+            isNew,
+            onCommit: (sourceEvent, committedEvent, changes = {}) => {
                 if (this.currentMap !== targetMap) return false;
                 const events = targetMap.events || (targetMap.events = []);
 
@@ -1760,15 +1819,16 @@ class EventManager {
                     events[sourceEvent.id] = sourceEvent;
                     isNew = false;
                 } else {
-                    if (JSON.stringify(sourceEvent) === JSON.stringify(committedEvent)) return true;
+                    if (!changes.modelsChanged && JSON.stringify(sourceEvent) === JSON.stringify(committedEvent)) return true;
                     this.saveState();
                     this._replaceEventData(sourceEvent, committedEvent);
                 }
 
                 this.selectedEvent = sourceEvent;
-                this.renderEvents();
                 return true;
             },
+            // Rebuild only after the event AND its model/elevation are committed.
+            onAfterCommit: () => this.renderEvents(),
             onCancel: sourceEvent => {
                 if (isNew && this.selectedEvent === sourceEvent) this.selectedEvent = null;
             }
@@ -1792,8 +1852,10 @@ class EventManager {
         this.clipboard = JSON.parse(JSON.stringify(event));
         this.clipboard.cut = true;
         this.clipboardModels = this._eventModels(event.id);
+        this.clipboardPlacement = this._eventPlacement(event.id);
+        this._clipboardPlacementSource = this.clipboard;
         if (typeof ReactorClipboard !== 'undefined') {
-            ReactorClipboard.write('event', { event: this.clipboard, cut: true, models: this.clipboardModels });
+            ReactorClipboard.write('event', { event: this.clipboard, cut: true, models: this.clipboardModels, placement: this.clipboardPlacement });
         }
         this.deleteEvent(event);
         console.debug('Event cut to clipboard');
@@ -1806,8 +1868,10 @@ class EventManager {
         this.clipboard = JSON.parse(JSON.stringify(event));
         this.clipboard.cut = false;
         this.clipboardModels = this._eventModels(event.id);
+        this.clipboardPlacement = this._eventPlacement(event.id);
+        this._clipboardPlacementSource = this.clipboard;
         if (typeof ReactorClipboard !== 'undefined') {
-            ReactorClipboard.write('event', { event: this.clipboard, cut: false, models: this.clipboardModels });
+            ReactorClipboard.write('event', { event: this.clipboard, cut: false, models: this.clipboardModels, placement: this.clipboardPlacement });
         }
         console.debug('Event copied to clipboard');
     }
@@ -1822,13 +1886,16 @@ class EventManager {
 
         let eventData = null;
         let eventModels = null;
+        let eventPlacement = null;
         if (typeof ReactorClipboard !== 'undefined') {
             const clipboardData = await ReactorClipboard.read('event');
             eventData = clipboardData?.payload?.event || null;
             eventModels = clipboardData?.payload?.models || null;
+            eventPlacement = clipboardData?.payload?.placement || null;
         } else {
             eventData = this.clipboard;
             eventModels = this.clipboardModels || null;
+            eventPlacement = this._clipboardPlacementSource === this.clipboard ? this.clipboardPlacement : null;
         }
         if (this.currentMap !== targetMap) return;
 
@@ -1859,7 +1926,8 @@ class EventManager {
         // Add to map
         this.currentMap.events[nextId] = newEvent;
         // The clone keeps its 3D models, under its own id.
-        if (eventModels) this._setEventModels(nextId, eventModels);
+        this._setEventModels(nextId, eventModels);
+        this._setEventPlacement(nextId, eventPlacement);
 
         // Clear clipboard if it was a cut operation
         if (this.clipboard && this.clipboard.cut) {
@@ -1888,6 +1956,7 @@ class EventManager {
             if (eventIndex < 0) eventIndex = events.findIndex(entry => entry && entry.id === event.id);
             if (eventIndex >= 0) events[eventIndex] = null;
             this._setEventModels(event.id, null);
+            this._setEventPlacement(event.id, null);
 
             if (this.selectedEvent === event) {
                 this.selectedEvent = null;

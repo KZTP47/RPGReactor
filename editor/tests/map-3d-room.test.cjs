@@ -86,7 +86,10 @@ test('the editor loads the room images and edits the switch in Map Properties', 
     assert.equal((controller.match(/this\.saveMap3DSettings\(mapData, room, wants3D\)/g) || []).length, 2);
     assert.match(controller, /this\.tilemapManager\?\.loadMapSidecar\?\.\(map\)/);
     // The room never reaches Map###.json.
-    assert.doesNotMatch(controller, /mapData\.reactor3d\s*=/);
+    const properties = controller.slice(0, controller.indexOf('    async copyMap('));
+    assert.doesNotMatch(properties, /mapData\.reactor3d\s*=/);
+    // Clipboard copies may attach sidecar data in memory; paste serializes it separately.
+    assert.match(controller, /delete newMapData\.reactor3d/);
 
     const html = read('editor/index.html');
     for (const key of ['mapProps.threeD', 'mapProps.map3D', 'mapProps.roomHeight', 'mapProps.parallaxFloor',

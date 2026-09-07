@@ -563,7 +563,7 @@ class DatabaseAnimationEditor {
                             <div style="font-size: 10px; color: var(--color-text-muted); margin-bottom: 4px;">${tt('Effect File:')}</div>
                             <div style="display: flex; gap: 6px; align-items: stretch;">
                                 <div id="effekseer-effect-name" style="flex: 1; background: var(--color-bg-input-alt); padding: 6px; border: 1px solid var(--color-border-input); border-radius: 2px; word-break: break-word; font-size: 11px; display: flex; align-items: center;">${rrEscapeHtml(animation.effectName || tt('None'))}</div>
-                                <button id="effekseer-pick-effect" style="padding: 6px 12px; background: var(--color-info); border: 1px solid #3a7a9a; color: var(--color-text-strong); border-radius: 2px; cursor: pointer; font-size: 10px; white-space: nowrap;">${tt('Change...')}</button>
+                                <button id="effekseer-pick-effect" style="padding: 6px 12px; background: var(--color-accent); border: 1px solid var(--color-accent); color: var(--color-accent-on); border-radius: 2px; cursor: pointer; font-size: 10px; white-space: nowrap;">${tt('Change...')}</button>
                             </div>
                         </div>
 
@@ -4076,6 +4076,7 @@ class DatabaseAnimationEditor {
             }
             const flashWasActive = editorSelf._previewFlashActive();
             editorSelf._stepPreviewFlash();
+            effekseerContext._makeContextCurrent?.();
             effekseerContext.update();
             currentFrame++;
             return flashWasActive || editorSelf._previewFlashActive();
@@ -4122,6 +4123,7 @@ class DatabaseAnimationEditor {
             // Update frame counter
             frameCounter.textContent = `${tt('Frame:')} ${currentFrame}`;
 
+            effekseerContext._makeContextCurrent?.();
             // Clear canvas (transparent so background canvas shows through)
             gl.viewport(0, 0, canvas.width, canvas.height);
             gl.clearColor(0, 0, 0, 0);
@@ -4265,6 +4267,7 @@ class DatabaseAnimationEditor {
             }
 
             // Play effect
+            effekseerContext._makeContextCurrent?.();
             handle = effekseerContext.play(effect);
 
             if (handle) {
@@ -4314,6 +4317,7 @@ class DatabaseAnimationEditor {
             }
 
             if (handle) {
+                effekseerContext?._makeContextCurrent?.();
                 handle.stop();
                 handle = null;
             }
@@ -4348,6 +4352,7 @@ class DatabaseAnimationEditor {
             // are capped per page (~16 in Chromium) and are not reclaimed
             // just because their canvas left the DOM.
             this._registerDetailCleanup(() => {
+                effekseerContext?._makeContextCurrent?.();
                 try { if (handle) handle.stop(); } catch (e) {}
                 if (animationFrameId) {
                     cancelAnimationFrame(animationFrameId);
@@ -4922,6 +4927,7 @@ class DatabaseAnimationEditor {
                 previewAnimationFrameId = null;
             }
             if (previewHandle) {
+                previewEffekseerContext?._makeContextCurrent?.();
                 try { previewHandle.stop(); } catch (e) {}
                 previewHandle = null;
             }
@@ -4931,6 +4937,7 @@ class DatabaseAnimationEditor {
         const releasePreviewEffect = () => {
             if (!previewEffect || !previewEffekseerContext) return;
             try {
+                previewEffekseerContext._makeContextCurrent?.();
                 // Stopped instances retire on subsequent updates; advance them
                 // before freeing their effect memory.
                 previewEffekseerContext.update();
@@ -5020,6 +5027,7 @@ class DatabaseAnimationEditor {
             const startPlayback = () => {
                 if (requestId !== previewRequestId || currentPreviewEffect !== effectName) return;
 
+                previewEffekseerContext._makeContextCurrent?.();
                 previewHandle = previewEffekseerContext.play(previewEffect);
                 if (previewHandle) {
                     const scale = (animation.scale || 100) / 100;
@@ -5047,6 +5055,7 @@ class DatabaseAnimationEditor {
                     lastTime = now;
                     accumulator += deltaTime;
 
+                    previewEffekseerContext._makeContextCurrent?.();
                     while (accumulator >= fixedTimeStep) {
                         previewEffekseerContext.update();
                         accumulator -= fixedTimeStep;
@@ -5121,7 +5130,7 @@ class DatabaseAnimationEditor {
             const releasePending = () => {
                 if (!pending) return;
                 pendingEffects.delete(pending);
-                try { previewEffekseerContext?.releaseEffect(pending); } catch (e) {}
+                try { previewEffekseerContext?._makeContextCurrent?.(); previewEffekseerContext?.releaseEffect(pending); } catch (e) {}
                 pending = null;
             };
             const install = () => {
@@ -5129,7 +5138,7 @@ class DatabaseAnimationEditor {
                 pendingEffects.delete(pending);
                 loadedEffects.add(pending);
                 if (requestId !== previewRequestId || currentPreviewEffect !== effectName) {
-                    try { previewEffekseerContext.releaseEffect(pending); } catch (e) {}
+                    try { previewEffekseerContext._makeContextCurrent?.(); previewEffekseerContext.releaseEffect(pending); } catch (e) {}
                     loadedEffects.delete(pending);
                     return;
                 }
@@ -5176,6 +5185,7 @@ class DatabaseAnimationEditor {
             // contexts are capped per page and survive DOM removal.
             stopPreviewPlayback();
             if (previewEffekseerContext) {
+                previewEffekseerContext._makeContextCurrent?.();
                 releasePreviewEffect();
                 for (const effect of loadedEffects) {
                     try { previewEffekseerContext.releaseEffect(effect); } catch (e) {}

@@ -76,7 +76,7 @@ test('editor distribution staging includes runtime asset dependencies', async ()
             'template/Demo/js/reactor_main.js',
             'template/Demo/js/reactor_media_surfaces.js',
             'template/Demo/js/reactor_plugins.js',
-            'src/event/commands/VideoSurfaceEditor.js',
+            'src/event/commands/MediaSurfaceEditor.js',
             'template/Demo/audio/bgm/Psychronic - Acoustic Circuits.ogg',
             'template/Demo/effects/Absorb.efkefc',
             'template/Demo/img/system/Window.png'

@@ -313,6 +313,15 @@ class BattleTestConfigModal {
         actorRow.appendChild(actorSelect);
         area.appendChild(actorRow);
 
+        const missing = this.missingBattlerGraphics([battler]);
+        if (missing.length) {
+            const message = document.createElement('div');
+            message.className = 'battle-test-missing-graphics';
+            message.style.cssText = 'margin:8px 0;color:var(--color-danger-bright);white-space:pre-wrap;';
+            message.textContent = this._t('Missing battle graphic. Choose another actor or set their graphic in Actors.') + '\n' + missing.join('\n');
+            area.appendChild(message);
+        }
+
         // Level
         const levelRow = this.createFormRow('Level:');
         const levelInput = document.createElement('input');
@@ -545,6 +554,34 @@ class BattleTestConfigModal {
     // LAUNCH
     // ==========================================
 
+    missingBattlerGraphics(battlers = this.battlers) {
+        if (!window.RRAssetFiles?.findImage || !window.RRDatabase3DBindings) return [];
+        const fs = require('fs'), path = require('path');
+        const system = this.databaseManager.getSystem() || {};
+        // Encrypted imports are validated by their runtime loader.
+        if (system.hasEncryptedImages) return [];
+        let charset = false;
+        for (const name of ['reactor_plugins.js', 'plugins.js']) {
+            const file = path.join(this.project.path, 'js', name);
+            if (!fs.existsSync(file)) continue;
+            const match = fs.readFileSync(file, 'utf8').match(/(?:var|let|const)\s+\$plugins\s*=\s*(\[[\s\S]*\]);/);
+            try {
+                const plugin = (match ? JSON.parse(match[1]) : []).find(p => p.status && p.name === 'PSYCHRONIC_BattleEngineMZ');
+                charset = plugin && JSON.parse(plugin.parameters.actorBattlerSettings || '{}').type === 'Charset';
+            } catch (error) { console.warn('Could not read battle graphic settings:', error); }
+            break;
+        }
+        if (!system.optSideView && !charset) return [];
+        const folder = charset ? 'characters' : 'sv_actors';
+        return battlers.flatMap(battler => {
+            const actor = this.databaseManager.getActor(battler.actorId);
+            if (!actor || window.RRDatabase3DBindings.get(this.project.path, 'actors', actor.id, 'battler')) return [];
+            const name = charset ? actor.characterName : actor.battlerName;
+            if (!name || window.RRAssetFiles.findImage(path.join(this.project.path, 'img', folder), name)) return [];
+            return [`${actor.name}: img/${folder}/${name}`];
+        });
+    }
+
     async launch() {
         const system = this.databaseManager.getSystem();
         if (!system) {
@@ -557,6 +594,12 @@ class BattleTestConfigModal {
         // cannot open on nobody. Refuse here, where the fix is one dropdown away.
         if (!BattleTestConfigModal.hasBattleParty(this.battlers, this.databaseManager)) {
             alert(this._t('Please select at least one party member for the battle test.'));
+            return;
+        }
+
+        const missing = this.missingBattlerGraphics();
+        if (missing.length) {
+            alert(this._t('Missing battle graphic. Choose another actor or set their graphic in Actors.') + '\n' + missing.join('\n'));
             return;
         }
 

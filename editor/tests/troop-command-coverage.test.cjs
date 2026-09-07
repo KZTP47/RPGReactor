@@ -36,7 +36,7 @@ function loadTroopEditor() {
         'MovePictureEditor', 'ErasePictureEditor', 'ForceActionEditor',
         'ConditionalBranchEditor', 'LoopEditor', 'AudioCommandEditor',
         'ChangeVehicleBGMEditor', 'PluginCommandEditor', 'MessageCommandEditor',
-        'VideoSurfaceEditor'
+        'MediaSurfaceEditor'
     ]) context[name] = EditorStub;
     const DatabaseTroopEditor = vm.runInNewContext(`${source}\nDatabaseTroopEditor;`, context);
     // The class closes over the context's own document, so the recording one has

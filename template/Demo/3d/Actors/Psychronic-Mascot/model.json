@@ -13,6 +13,13 @@
       "name": "Running",
       "clip": "Running",
       "part": ""
+    },
+    {
+      "type": "clip",
+      "trigger": "idle",
+      "name": "Idle_11",
+      "clip": "Idle_11",
+      "part": ""
     }
   ],
   "effects": [
@@ -60,5 +67,41 @@
       },
       "trigger": "always"
     }
-  ]
+  ],
+  "landmarks": {
+    "eyes": {
+      "part": "",
+      "offset": [
+        0,
+        1.5279601034890118,
+        0.107575124439092
+      ]
+    },
+    "mouth": {
+      "part": "",
+      "offset": [
+        0,
+        1.4539028531291012,
+        0.10871401542121639
+      ],
+      "interior": "dark",
+      "interiorColor": "#080808"
+    },
+    "upperLip": {
+      "part": "",
+      "offset": [
+        0,
+        1.4746594102709605,
+        0.1158235730638787
+      ]
+    },
+    "lowerLip": {
+      "part": "",
+      "offset": [
+        0,
+        1.4408750442024527,
+        0.10469901602915573
+      ]
+    }
+  }
 }

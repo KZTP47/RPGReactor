@@ -8,10 +8,16 @@ const path = require('path');
 const root = path.resolve(__dirname, '..', '..');
 const read = rel => fs.readFileSync(path.join(root, rel), 'utf8');
 const Stock = require('../src/utils/StockInterfaces.js');
-const demoSystem = JSON.parse(read('template/Demo/data/System.json'));
+// Tests own their authoring input; the Demo is an editable project.
+const fixtureSystem = {
+    advanced: { screenWidth: 1280, screenHeight: 720, uiAreaWidth: 1280, uiAreaHeight: 720 },
+    terms: { commands: [] }, menuCommands: [true, true, true, true, true, true],
+    title1Name: 'FixtureTitle', title2Name: 'FixtureFrame', gameTitle: 'Fixture RPG',
+    optDrawTitle: false
+};
 
 test('build preserves stable ids and appends Options, Save, and Load deterministically', () => {
-    const records = Stock.build({ system: demoSystem });
+    const records = Stock.build({ system: fixtureSystem });
     assert.deepStrictEqual(records.map(r => [r.id, r.name, r.stock]), [
         [1, 'Title Screen', 'title'], [2, 'Main Menu', 'menu'], [3, 'Game End', 'gameEnd'], [4, 'Status', 'status'],
         [5, 'Options', 'options'], [6, 'Save', 'save'], [7, 'Load', 'load']
@@ -24,14 +30,14 @@ test('build preserves stable ids and appends Options, Save, and Load determinist
     assert.deepStrictEqual([box(menu).x, box(menu).y, box(menu).width, box(menu).height], [1040, 52, 240, 668 - 60]);
     const gold = menu.nodes.find(n => n.name === 'Gold' && n.type === 'box');
     assert.deepStrictEqual([gold.x, gold.y, gold.width, gold.height], [1040, 660, 240, 60]);
-    const party = menu.nodes.find(n => n.name === 'Party');
+    const party = menu.nodes.find(n => n.type === 'list' && n.rowLayout === 'actorPanel');
     assert.deepStrictEqual([party.x, party.y, party.width, party.height], [0, 52, 1040, 668]);
     assert.deepStrictEqual([box(gameEnd).x, box(gameEnd).y, box(gameEnd).width, box(gameEnd).height], [520, 312, 240, 96]);
     assert.strictEqual(status.nodes.find(node => node.name === 'Actor summary').y, 52);
 });
 
 test('unequal screen and UI-area dimensions stay in physical pixels with the stock 8px margin', () => {
-    const system = JSON.parse(JSON.stringify(demoSystem));
+    const system = JSON.parse(JSON.stringify(fixtureSystem));
     system.advanced.screenWidth = 1280;
     system.advanced.screenHeight = 720;
     system.advanced.uiAreaWidth = 1264;
@@ -40,21 +46,21 @@ test('unequal screen and UI-area dimensions stay in physical pixels with the sto
     const commands = record => record.nodes.find(node => node.type === 'box' && node.name === 'Commands');
     assert.deepStrictEqual([title.coordinateSpace, commands(title).x, commands(title).y], ['screen', 520, 484]);
     assert.deepStrictEqual([commands(menu).x, commands(menu).y, commands(menu).width], [1032, 60, 240]);
-    const party = menu.nodes.find(node => node.name === 'Party');
+    const party = menu.nodes.find(node => node.rowLayout === 'actorPanel');
     assert.deepStrictEqual([party.x, party.y, party.width, party.height], [8, 60, 1024, 652]);
     assert.strictEqual(commands(menu).x + commands(menu).width, 1272, 'the UI area ends 8px before the physical right edge');
 });
 
 test('buttons carry the project terms and the stock command actions', () => {
-    const system = JSON.parse(JSON.stringify(demoSystem));
+    const system = JSON.parse(JSON.stringify(fixtureSystem));
     system.terms.commands[4] = 'Inventory';
     system.menuCommands = [true, false, true, true, true, true];
     const [title, menu, gameEnd] = Stock.build({ system });
     const buttons = record => record.nodes.filter(n => n.type === 'button');
-    assert.deepStrictEqual(buttons(menu).map(b => b.text), ['Inventory', 'Equip', 'Status', 'Options', 'Save', 'Game End']);
-    assert.deepStrictEqual(buttons(menu).map(b => b.action.type === 'scene' ? b.action.scene : b.action.type), ['item', 'personalEquip', 'personalStatus', 'options', 'save', 'gameEnd']);
+    assert.deepStrictEqual(buttons(menu).map(b => b.text), ['Inventory', 'Equip', 'Status', 'Formation', 'Options', 'Save', 'Game End']);
+    assert.deepStrictEqual(buttons(menu).map(b => b.action.type === 'scene' ? b.action.scene : b.action.type), ['item', 'personalEquip', 'personalStatus', 'formation', 'options', 'save', 'gameEnd']);
     assert.strictEqual(buttons(menu).find(b => b.text === 'Inventory').enabled.script, '$gameParty.exists()');
-    assert.strictEqual(buttons(menu).some(b => b.text === 'Formation'), false, 'Formation is omitted until its workflow exists');
+    assert.strictEqual(buttons(menu).find(b => b.text === 'Formation').enabled.script, '$gameParty.size() > 1 && $gameSystem.isFormationEnabled()');
     assert.strictEqual(buttons(menu).find(b => b.text === 'Save').enabled.script, '!DataManager.isEventTest() && $gameSystem.isSaveEnabled()');
     assert.strictEqual(menu.firstFocus, buttons(menu)[0].id);
     for (const button of buttons(menu)) assert.strictEqual(button.parent, menu.nodes.find(n => n.name === 'Commands').id);
@@ -71,7 +77,7 @@ test('buttons carry the project terms and the stock command actions', () => {
 });
 
 test('Title baseline follows optDrawTitle and the stock 48px title draw baseline', () => {
-    const system = JSON.parse(JSON.stringify(demoSystem));
+    const system = JSON.parse(JSON.stringify(fixtureSystem));
     system.optDrawTitle = true;
     const title = Stock.build({ system })[0];
     const gameTitle = title.nodes.find(node => node.name === 'Game title');
@@ -82,26 +88,25 @@ test('Title baseline follows optDrawTitle and the stock 48px title draw baseline
     assert.strictEqual(hidden.firstFocus, hidden.nodes.find(node => node.type === 'button' && /New Game/i.test(node.text)).id);
 });
 
-test('the Main Menu publishes selectedActor and binds personal actions and details to it', () => {
-    const [, menu] = Stock.build({ system: demoSystem });
+test('the Main Menu selects actors directly in a portrait-and-stats panel', () => {
+    const [, menu] = Stock.build({ system: fixtureSystem });
     const party = menu.nodes.find(node => node.type === 'list' && node.dataSource === 'party');
-    assert.deepStrictEqual([party.contextName, party.rowText, party.action.type], ['selectedActor', '{name}  Lv {level}', 'none']);
-    const faces = menu.nodes.filter(n => n.type === 'image');
-    assert.strictEqual(faces.length, 1);
-    assert.deepStrictEqual([faces[0].source, faces[0].actorSource, faces[0].actorContextName], ['partyFace', 'context', 'selectedActor']);
-    const detail = menu.nodes.filter(node => node.actorContextName === 'selectedActor');
-    assert.ok(detail.some(node => node.type === 'text' && node.text === '{actor.name}'));
-    assert.deepStrictEqual(detail.filter(node => node.type === 'gauge').map(node => node.gauge), ['hp', 'mp', 'exp']);
+    assert.deepStrictEqual([party.contextName, party.rowLayout, party.action.type], ['selectedActor', 'actorPanel', 'none']);
+    assert.deepStrictEqual(party.actorFields, ['portrait','name','class','level','hp','mp','exp','states']);
+    assert.ok(party.rowHeight >= party.portraitSize);
+    assert.equal(menu.nodes.filter(node => node.dataSource === 'party').length, 1);
     for (const type of ['personalSkill', 'personalEquip', 'personalStatus']) {
         const button = menu.nodes.find(node => node.type === 'button' && node.action.type === type);
         assert.strictEqual(button.action.contextName, 'selectedActor');
-        assert.strictEqual(button.enabled.script, 'return !!scene.context("selectedActor");');
+        assert.strictEqual(button.enabled.script, '$gameParty.exists()');
     }
-    assert.ok(menu.nodes.some(node => node.type === 'text' && node.text === '\\GOLD \\G'));
+    const item = menu.nodes.find(node => node.action?.scene === 'item');
+    assert.equal(item.action.chooseActor, true);
+    assert.equal(item.action.contextName, 'selectedActor');
 });
 
 test('Status is a read-only menu-actor baseline with complete actor data and paging', () => {
-    const status = Stock.build({ system: demoSystem })[3];
+    const status = Stock.build({ system: fixtureSystem })[3];
     const actorNodes = status.nodes.filter(node => node.actorSource === 'menuActor');
     assert.ok(actorNodes.some(node => node.type === 'image' && node.source === 'partyFace'));
     const text = actorNodes.filter(node => node.type === 'text').map(node => node.text).join('\n');
@@ -122,7 +127,7 @@ test('Status is a read-only menu-actor baseline with complete actor data and pag
 });
 
 test('Options, Save, and Load baselines use typed sources and semantic actions only', () => {
-    const records = Stock.build({ system: demoSystem });
+    const records = Stock.build({ system: fixtureSystem });
     const [options, save, load] = records.slice(4);
     assert.deepStrictEqual(records.map(record => record.roles), records.map(record => [record.stock]));
     const optionsList = options.nodes.find(node => node.type === 'list');
@@ -149,11 +154,34 @@ test('missing system data falls back to MZ defaults without throwing', () => {
     assert.strictEqual(records[1].nodes.filter(n => n.type === 'button').map(b => b.text)[0], 'Item');
 });
 
-test('tracked Demo carries all generated records without opting into replacements', () => {
-    const demo = JSON.parse(read('template/Demo/data/UserInterfaces.json'));
-    const generated = Stock.build({ system: demoSystem });
-    for (const record of generated) assert.deepStrictEqual(demo[record.id], record);
-    assert.strictEqual(Object.keys(demoSystem).some(key => /^reactor(?:Title|Menu|Status|GameEnd|Options|Save|Load)InterfaceId$/.test(key)), false);
+test('database seeds missing interfaces and preserves authored records on reload', async t => {
+    const os = require('node:os');
+    const project = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-stock-interfaces-'));
+    t.after(() => fs.rmSync(project, { recursive: true, force: true }));
+    const dataPath = path.join(project, 'data');
+    fs.mkdirSync(dataPath);
+    fs.writeFileSync(path.join(dataPath, 'System.json'), JSON.stringify(fixtureSystem));
+    const DatabaseManager = new Function('RRStockInterfaces', 'require', 'RRJson',
+        read('editor/src/DatabaseManager.js') + '\nreturn DatabaseManager;')(Stock, require, require('../src/utils/JsonFiles.js'));
+    const manager = new DatabaseManager(); manager.fs = fs; manager.path = path;
+    assert.equal(await manager.loadAllData(project), true);
+    const generated = [null, ...Stock.build({ system: fixtureSystem })];
+    assert.deepStrictEqual(manager.data.userInterfaces, generated);
+    assert.strictEqual(Object.keys(manager.data.system).some(key => /^reactor(?:Title|Menu|Status|GameEnd|Options|Save|Load)InterfaceId$/.test(key)), false);
+    assert.equal(fs.existsSync(path.join(dataPath, 'UserInterfaces.json')), false, 'loading only seeds in memory');
+
+    const authored = structuredClone(generated);
+    authored[1].name = 'My title';
+    authored[1].nodes.find(node => node.type === 'box').x = 37;
+    const file = path.join(dataPath, 'UserInterfaces.json');
+    const bytes = JSON.stringify(authored);
+    fs.writeFileSync(file, bytes);
+    // Resizing a project must not regenerate or replace authored layouts.
+    fs.writeFileSync(path.join(dataPath, 'System.json'), JSON.stringify({ ...fixtureSystem,
+        advanced: { screenWidth: 1920, screenHeight: 1080, uiAreaWidth: 1920, uiAreaHeight: 1080 } }));
+    assert.equal(await manager.loadAllData(project), true);
+    assert.deepStrictEqual(manager.data.userInterfaces, authored);
+    assert.equal(fs.readFileSync(file, 'utf8'), bytes);
 });
 
 test('runtime and editor understand party faces and party codes', () => {

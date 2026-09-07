@@ -268,6 +268,45 @@ function addPathPropertyCatalogs(inventory, source, sourcePath) {
     }
 }
 
+// Shared battle widgets translate labels internally; do not mistake CSS classes,
+// enum IDs or project-authored option names for UI text.
+function callArguments(source, start) {
+    const args=[];let begin=start;
+    for(let i=start;i<source.length;i++){
+        const c=source[i];
+        if(c==='"'||c==="'"||c==='`'){const literal=readStaticLiteral(source,i);i=literal?literal.end-1:skipTemplate(source,i);if(i<0)break;}
+        else if('([{'.includes(c)){i=findMatchingBracket(source,i,c,{'(':')','[':']','{':'}'}[c]);if(i<0)break;}
+        else if(c===','||c===')'){args.push([begin,i]);begin=i+1;if(c===')')break;}
+    }
+    return args;
+}
+function addBattleWidgets(inventory, source, sourcePath) {
+    const battle=/^src\/(?:battle\/BattlePresentationEditor|database\/(?:DatabaseActionSequenceEditor|ActionSequencePreview))\.js$/.test(sourcePath);
+    const media=sourcePath==='src/MediaSurfaceManager.js';
+    if(!battle&&!media)return;
+    const calls=/\b(?:this(?:\.ui)?|U|e\.ui)\.(text|message|button|section|element|field|number|select|setText|t)\s*\(/g;
+    let m;
+    while((m=calls.exec(source))){
+        const args=callArguments(source,calls.lastIndex),method=m[1];
+        const index=method==='element'?2:['field','number','setText'].includes(method)?1:0;
+        if(method==='select'){
+            const range=args[0];if(!range)continue;
+            const tuples=/\[\s*(?:'[^']*'|"[^"]*"|\d+)\s*,\s*/g;tuples.lastIndex=range[0];let tuple;
+            while((tuple=tuples.exec(source))&&tuple.index<range[1]){const value=readStaticLiteral(source,tuples.lastIndex);if(value&&/^\s*(?:,\s*true\s*)?\]/.test(source.slice(value.end)))addOccurrence(inventory,value.value,sourcePath,source,value.start);}
+        }else if(args[index]){const value=readStaticLiteral(source,args[index][0]);if(value)addOccurrence(inventory,value.value,sourcePath,source,value.start);}
+    }
+    // Locally declared presentation catalogs and conditional labels. Lowercase
+    // storage IDs deliberately stay outside this inventory.
+    const literals=/(['"`])/g;
+    while((m=literals.exec(source))){const value=readStaticLiteral(source,m.index);if(!value)continue;literals.lastIndex=value.end;
+        if(/^[A-Z][a-z]/.test(value.value)&&!value.value.includes(':')&&!value.value.includes('#')&&!value.value.includes('Missing ')&&!value.value.includes('Array')&&!value.value.includes('Button')&&!value.value.includes('Data')&&!value.value.includes('SequencePreview')&&!value.value.includes('Editor')&&!value.value.includes('Camera.MODES')){
+            // Restrict indirect catalogs to their declaration, not diagnostics.
+            const before=source.slice(Math.max(0,m.index-100),m.index);
+            if(/(?:\?|:)\s*$/.test(before))addOccurrence(inventory,value.value,sourcePath,source,value.start);
+        }
+    }
+}
+
 function inventoryLocalizationSource(source, sourcePath = '<source>', inheritedAliases = []) {
     const inventory = new Map();
     const aliases = new Set([...enabledAliases(source), ...inheritedAliases]);
@@ -278,6 +317,7 @@ function inventoryLocalizationSource(source, sourcePath = '<source>', inheritedA
         const literal = readStaticLiteral(source, CALL_PATTERN.lastIndex);
         if (literal) addOccurrence(inventory, literal.value, sourcePath, source, literal.start);
     }
+    addBattleWidgets(inventory, source, sourcePath);
     addNamedArrayCatalogs(inventory, source, sourcePath, aliases);
     addNamedObjectCatalogs(inventory, source, sourcePath, aliases);
     addConsumedPropertyCatalogs(inventory, source, sourcePath, aliases);
@@ -329,6 +369,19 @@ function inventoryEditorLocalization(editorRoot) {
         if (!changed) break;
     }
     for (const file of files) mergeInventory(inventory, inventoryLocalizationSource(file.source, file.sourcePath, file.aliases));
+    // Runtime IDs stay English in saves, but templates and validation messages
+    // are displayed through the editor's shared text helper.
+    const battlePath=path.resolve(editorRoot,'../runtime/reactor_battle_data.js');
+    if(fs.existsSync(battlePath)){
+        const source=fs.readFileSync(battlePath,'utf8'),sourcePath='../runtime/reactor_battle_data.js';
+        for(const match of source.matchAll(/B\.(?:templates|basicSteps)\s*=\s*\[/g)){
+            const start=match.index+match[0].length-1,end=findMatchingBracket(source,start);
+            addLiteralsInRange(inventory,source,sourcePath,start,end);
+        }
+        for(const match of source.matchAll(/errors\.push\(\s*/g)){const value=readStaticLiteral(source,match.index+match[0].length);if(value)addOccurrence(inventory,value.value,sourcePath,source,value.start);}
+        const unsupported=source.match(/return \['Unsupported action sequence format\.'/);
+        if(unsupported)addOccurrence(inventory,'Unsupported action sequence format.',sourcePath,source,unsupported.index);
+    }
     return Array.from(inventory, ([phrase, locations]) => ({
         phrase, sources: Array.from(locations).sort()
     })).sort((a, b) => compareText(a.phrase, b.phrase));

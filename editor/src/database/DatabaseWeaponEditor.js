@@ -151,7 +151,7 @@ class DatabaseWeaponEditor {
                 <table class="traits-table" id="weapon-traits-table-${weapon.id}">
                     <thead>
                         <tr>
-                            <th colspan="2">${tt('Type')}</th>
+                            <th class="trait-indicator-heading" aria-hidden="true"></th><th scope="col">${tt('Type')}</th>
                             <th>${tt('Content')}</th>
                         </tr>
                     </thead>

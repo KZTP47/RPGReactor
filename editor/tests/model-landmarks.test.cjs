@@ -76,7 +76,29 @@ test('face points save and reopen without changing an imported/custom rig or car
     assert.equal(written.landmarks.eyes.part, 'Head');
     const before = structuredClone(e._rigMarkers);
     e.landmarks = written.landmarks; e.customParts = saved.parts;
-    e._detail = { querySelector: () => ({}) }; e.deselectPart = e._stopEffectPreview = e._rebuildInstance = e._buildRigVisuals = e.renderRigBar = () => {};
+    e._detail = { querySelector: () => ({}) }; e.deselectPart = e._stopEffectPreview = e._rebuildInstance = e._buildRigVisuals = e.renderRigBar = e.renderEditCard = () => {};
     assert.equal(e.enterRigMode(true), true, 'face points work on carved models too');
     for (const key of Object.keys(before)) e._rigMarkers[key].forEach((v, i) => assert.ok(Math.abs(v - before[key][i]) < 1e-9));
+});
+
+test('face axis dragging converts world travel into scaled, rotated model coordinates and rejects retired holds', () => {
+    const e = new Editor({}, {}), object = new THREE.Group();
+    object.scale.set(2, 3, 4); object.rotation.y = Math.PI / 2; object.position.set(5, 6, 7);
+    e._object = object; e._rigFaceMode = true; e._facePoint = 'eyes';
+    e._rigMarkers = { eyes: [0.1, 1.5, 0.2], mouth: [0, 1, 0.2] };
+    let syncs = 0;
+    e._syncFacePointVisuals = () => syncs++; e._syncFacePointControls = () => syncs++;
+    const start = object.localToWorld(new THREE.Vector3().fromArray(e._rigMarkers.eyes));
+    const hold = { object, key: 'eyes', start, grab: { axis: 'x', travel: () => 0.04 } };
+    e._dragFacePointArrow(hold, 0, 0);
+    const after = object.localToWorld(new THREE.Vector3().fromArray(e._rigMarkers.eyes));
+    assert.ok(Math.abs(after.x - start.x - 0.04) < 1e-9);
+    assert.ok(Math.abs(after.y - start.y) < 1e-9);
+    assert.ok(Math.abs(after.z - start.z) < 1e-9);
+    assert.equal(syncs, 2);
+    const saved = structuredClone(e._rigMarkers);
+    e._facePoint = 'mouth'; e._dragFacePointArrow(hold, 0, 0);
+    e._facePoint = 'eyes'; e._object = new THREE.Group(); e._dragFacePointArrow(hold, 0, 0);
+    assert.deepEqual(e._rigMarkers, saved);
+    assert.equal(syncs, 2);
 });

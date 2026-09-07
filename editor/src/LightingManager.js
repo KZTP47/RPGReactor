@@ -59,12 +59,13 @@ class LightingManager {
     // Mode
 
     setActive(enabled) {
+        if (enabled) window.reactor?.claimMapTool?.('lighting');
         if (this.active === !!enabled) return;
         this.active = !!enabled;
         const button = document.querySelector('[data-action="lighting-tool"]');
         if (button) button.classList.toggle('active', this.active);
         if (this.active) this._activate();
-        else this._deactivate();
+        else { this._deactivate(); window.reactor?.releaseMapTool?.('lighting'); }
     }
 
     toggle() {
@@ -84,9 +85,8 @@ class LightingManager {
         this.render();
         this._startTicking();
         this._sync3D();
-        // An unlit map arms placement by itself: open the tool, click the
-        // map, there is light — no reading required.
-        if (!this.lights().length) this.armPlacement('point');
+        // Choosing a preset arms placement; opening the tool changes no map data.
+        this.armPlacement(null);
         // And a session older than the map's file says so, with the fix.
         this._syncDiskNotice();
     }
@@ -103,7 +103,7 @@ class LightingManager {
             const file = path.join(project.path, 'data',
                 'Map' + String(map.id).padStart(3, '0') + '.r3d.json');
             if (!fs.existsSync(file)) return null;
-            const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+            const parsed = RRJson.parse(fs.readFileSync(file));
             return {
                 lights: Array.isArray(parsed.lights) ? parsed.lights : [],
                 lighting: parsed.lighting && typeof parsed.lighting === 'object'
@@ -147,7 +147,8 @@ class LightingManager {
     }
 
     _deactivate() {
-        this.placing = null;
+        this._cancelChipDrag?.();
+        this.armPlacement(null);
         this.drag = null;
         this._unbindPointer();
         this._unbind3DPointer();
@@ -253,20 +254,11 @@ class LightingManager {
             x: Math.round(x * 100) / 100,
             y: Math.round(y * 100) / 100
         };
-        // A compound drops its whole fixture at once, every part sharing a
-        // fresh group tag so they can be spoken to together.
         if (Array.isArray(template.compound)) {
-            let n = 1;
-            const taken = new Set(RRMapLights.list(map).map(entry => entry && entry.tag));
-            while (taken.has((template.key || 'group') + n)) n++;
-            const tag = (template.key || 'group') + n;
-            let first = null;
-            for (const part of template.compound) {
-                const light = RRMapLights.add(map,
-                    Object.assign({}, part, at, { tag }));
-                if (!first) first = light;
-            }
-            this.selectedId = first ? first.id : null;
+            const name = this._presets().find(p => p.key === template.key)?.label || this._k('lit.preset.compound');
+            const first = RRMapLights.createCompound(map, template.compound, at.x, at.y, name, template.key || 'compound');
+            this.selectedId = first?.id || null;
+            this._activeGroup = 'components';
             this._changed();
             return first;
         }
@@ -278,34 +270,42 @@ class LightingManager {
 
     /** Client coordinates to fractional map tiles, whichever view is on top. */
     _tileFromClient(clientX, clientY) {
+        const map = this.map();
+        const hit = document.elementFromPoint(clientX, clientY);
+        if (!map || !hit || this._panel?.contains(hit)) return null;
         const m3d = this.mapEditor3D();
+        let at;
         if (m3d?.isEnabled?.() && m3d.groundPointAt) {
-            return m3d.groundPointAt(clientX, clientY);
+            const surface = m3d.inputSurface || m3d.canvas;
+            if (!surface?.contains(hit) && !m3d.canvas?.contains(hit)) return null;
+            at = m3d.groundPointAt(clientX, clientY);
+        } else {
+            const app = this.tilemapManager?.app;
+            const canvas = app && (app.canvas || app.view);
+            const container = this.tilemapManager?.container;
+            if (!canvas || !container || !canvas.contains(hit)) return null;
+            const rect = canvas.getBoundingClientRect();
+            if (!rect.width || !rect.height) return null;
+            const global = new PIXI.Point(
+                (clientX - rect.left) * (canvas.width / rect.width),
+                (clientY - rect.top) * (canvas.height / rect.height));
+            const local = container.worldTransform.applyInverse(global);
+            at = { x: local.x / this.tileSize(), y: local.y / this.tileSize() };
         }
-        const app = this.tilemapManager?.app;
-        const canvas = app && (app.canvas || app.view);
-        const container = this.tilemapManager?.container;
-        if (!canvas || !container) return null;
-        const rect = canvas.getBoundingClientRect();
-        if (clientX < rect.left || clientX > rect.right
-            || clientY < rect.top || clientY > rect.bottom) return null;
-        const global = new PIXI.Point(
-            (clientX - rect.left) * (canvas.width / rect.width),
-            (clientY - rect.top) * (canvas.height / rect.height));
-        const local = container.worldTransform.applyInverse(global);
-        return { x: local.x / this.tileSize(), y: local.y / this.tileSize() };
+        return at && at.x >= 0 && at.y >= 0 && at.x < map.width && at.y < map.height ? at : null;
     }
 
-    /** The mid-drag preview, on whichever view is on top. */
+    /** Show a placement preview only over exposed map content. */
     _ghostFromClient(clientX, clientY) {
-        const m3d = this.mapEditor3D();
-        if (m3d?.isEnabled?.() && m3d.groundPointAt && m3d.mapScene) {
-            const at = m3d.groundPointAt(clientX, clientY);
-            if (at) this._showRingAt(m3d.mapScene, at);
+        const at = this._tileFromClient(clientX, clientY);
+        if (!at) {
+            if (this._ghost) this._ghost.visible = false;
+            if (this._ring3d) this._ring3d.visible = false;
             return;
         }
-        const at = this._tileFromClient(clientX, clientY);
-        if (at) this._moveGhost(at);
+        const m3d = this.mapEditor3D();
+        if (m3d?.isEnabled?.() && m3d.mapScene) this._showRingAt(m3d.mapScene, at);
+        else this._moveGhost(at);
     }
 
     updateSelected(patch) {
@@ -319,7 +319,7 @@ class LightingManager {
         const map = this.map();
         if (!map || !this.selectedId || typeof RRMapLights === 'undefined') return;
         this.pushUndo();
-        RRMapLights.remove(map, this.selectedId);
+        RRMapLights.removeFixture(map, this.selectedId);
         this.selectedId = null;
         this._changed();
     }
@@ -328,7 +328,7 @@ class LightingManager {
         const map = this.map();
         if (!map || !this.selectedId || typeof RRMapLights === 'undefined') return;
         this.pushUndo();
-        const copy = RRMapLights.duplicate(map, this.selectedId);
+        const copy = RRMapLights.duplicateFixture(map, this.selectedId);
         if (copy) this.selectedId = copy.id;
         this._changed();
     }
@@ -531,9 +531,9 @@ class LightingManager {
         const lights = this.resolvedLights(frame).concat(props?.preview2D?.lights || []);
         const enabled = ambient.enabled !== false && (this.active || lights.length > 0 || !!map.reactor3d?.lighting);
         state.darkness.visible = state.glow.visible = !!enabled;
-        // Ambient must stay below the glows. Tint the retained model sprites
-        // by the same factor, so moving the darkness below props neither
-        // brightens the models nor dims a light a second time.
+        // Ambient stays below floor glows. Live model textures apply ambient
+        // and surface lights themselves; the manager tints placeholders only
+        // so the retained models are not dimmed a second time.
         const propLayer = props?.container;
         const mapLayer = propLayer?.parent;
         if (mapLayer) {
@@ -589,17 +589,18 @@ class LightingManager {
         // Markers hold their screen size whatever the zoom: shrunk with the
         // map they became four-pixel dots nobody could see or hit.
         const zoom = Math.max(0.05, this._viewScale());
+        const current = this.selected();
         for (const raw of RRMapLights.list(map)) {
             const light = RRMapLights.normalize(raw, raw.id || 'light');
             const at = this._lightAnchor(light);
             if (!at) continue;
-            const selected = light.id === this.selectedId;
+            const selected = light.id === this.selectedId || (light.compoundId && light.compoundId === current?.compoundId);
             const colour = this._colourNumber(light.color);
             const x = at.x * tw, y = at.y * tw;
             g.circle(x, y, (selected ? 9 : 7) / zoom)
                 .fill({ color: light.on ? colour : 0x555555, alpha: 0.95 })
                 .stroke({ width: 2, color: selected ? 0xffffff : 0x000000, alpha: 0.9 });
-            if (!selected) continue;
+            if (light.id !== this.selectedId) continue;
             if (light.type === 'spot' || light.type === 'beam') {
                 const aim = this._aimPoint(light, at);
                 const spread = (light.angle * Math.PI) / 360;
@@ -697,11 +698,7 @@ class LightingManager {
         // the "you are here" the flat ghost provides in 2D.
         this._on3DHover = event => {
             if (!this.placing) return;
-            const m3d = this.mapEditor3D();
-            const at = m3d && m3d.groundPointAt
-                ? m3d.groundPointAt(event.clientX, event.clientY) : null;
-            const scene = m3d && m3d.mapScene;
-            if (at && scene) this._showRingAt(scene, at);
+            this._ghostFromClient(event.clientX, event.clientY);
         };
         surface.addEventListener('pointermove', this._on3DHover, true);
     }
@@ -733,7 +730,7 @@ class LightingManager {
                 return;
             }
         }
-        const at = m3d.groundPointAt(event.clientX, event.clientY);
+        const at = this._tileFromClient(event.clientX, event.clientY);
         if (!at) return;
         if (this.placing) {
             const preset = this._placingTemplate || this.placing;
@@ -781,7 +778,7 @@ class LightingManager {
         if (!light) return;
         const base = light.attach && light.attach.event
             ? this._carrierBase(light) : { x: 0, y: 0 };
-        RRMapLights.update(map, drag.id, {
+        RRMapLights.moveFixture(map, drag.id, {
             x: Math.round((at.x - drag.offsetX - base.x) * 100) / 100,
             y: Math.round((at.y - drag.offsetY - base.y) * 100) / 100
         });
@@ -900,7 +897,8 @@ class LightingManager {
                 ? { yaw: Math.round(-value) }
                 : { pitch: Math.max(-90, Math.min(90, Math.round(-value))) };
         }
-        RRMapLights.update(map, hold.id, patch);
+        if (hold.kind === 'arrow') RRMapLights.moveFixture(map, hold.id, patch);
+        else RRMapLights.update(map, hold.id, patch);
         this._changed();
     }
 
@@ -1019,7 +1017,7 @@ class LightingManager {
         if (drag.mode === 'move') {
             const base = light.attach && light.attach.event
                 ? this._carrierBase(light) : { x: 0, y: 0 };
-            RRMapLights.update(map, drag.id, {
+            RRMapLights.moveFixture(map, drag.id, {
                 x: Math.round((at.x - drag.offsetX - base.x) * 100) / 100,
                 y: Math.round((at.y - drag.offsetY - base.y) * 100) / 100
             });
@@ -1087,12 +1085,12 @@ class LightingManager {
     }
 
     _keyDown(event) {
-        if (!this.active) return;
-        const editing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '');
+        if (!this.active || event.defaultPrevented || window.reactor?.uiManager?.isEditorModalOpenForGlobalShortcuts?.()) return;
+        const editing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '') || document.activeElement?.isContentEditable;
         if (event.key === 'Escape') {
-            if (this.placing) {
-                this.placing = null;
-                this._syncAddButtons();
+            if (this.placing || this._cancelChipDrag) {
+                this._cancelChipDrag?.();
+                this.armPlacement(null);
             } else this.select(null);
             return;
         }
@@ -1128,6 +1126,22 @@ class LightingManager {
                 this._bind3DPointer();
                 this._sync3D();
             }
+            if (typeof Reactor3D !== 'undefined' && (this.map() !== this._boundMap || this._overlay?.root.parent !== this.tilemapManager?.container)) {
+                this._cancelChipDrag?.();
+                this.armPlacement(null);
+                this._boundMap = this.map();
+                this.selectedId = null;
+                this._undo = [];
+                this._redo = [];
+                this.drag = null;
+                this._unbindPointer();
+                this._end3DDrag();
+                if (this.active) this._bindPointer();
+                this._destroyOverlay();
+                this._buildOverlay();
+                this._syncPanel();
+                this._syncDiskNotice();
+            }
             if (this.mapEditor3D()?.isEnabled?.()) {
                 if (this._overlay) this._overlay.root.visible = false;
                 return;
@@ -1139,16 +1153,6 @@ class LightingManager {
                 if (!this._previewLibraries) this._previewLibraries = this.mapEditor3D()?.ensureLibraries?.()
                     .catch(error => console.warn('Could not load lighting preview:', error));
                 return;
-            }
-            if (this.map() !== this._boundMap || this._overlay?.root.parent !== this.tilemapManager?.container) {
-                this._boundMap = this.map();
-                this.selectedId = null;
-                this._undo = [];
-                this._redo = [];
-                this._destroyOverlay();
-                this._buildOverlay();
-                this._syncPanel();
-                this._syncDiskNotice();
             }
             if (this._overlay) this._overlay.root.visible = true;
             const modelLights = this.projectController?.modelPropsManager?.preview2D?.lights || [];
@@ -1298,7 +1302,7 @@ class LightingManager {
 
     _buildPanel() {
         this._destroyPanel();
-        const panel = this._el('div', 'lighting-panel');
+        const panel = this._el('div', 'lighting-panel rr-accent-scrollbar');
         panel.id = 'lighting-panel';
         // Docked inside the workspace, below the map info bar — floating
         // fixed at the window's top right it sat on the map checkboxes.
@@ -1390,12 +1394,22 @@ class LightingManager {
         return footer;
     }
 
-    /** A titled group inside a card body. */
-    _group(parent, title) {
-        const group = this._el('div', 'lit-group');
-        group.appendChild(this._el('div', 'lit-group-title', title));
+    /** Collapsible property cards retain their open section across edits. */
+    _group(parent, title, key) {
+        const group = this._el('details', 'lit-group');
+        group.name = 'lighting-properties';
+        group.dataset.lightSection = key;
+        group.open = (this._activeGroup === undefined ? 'light' : this._activeGroup) === key;
+        const header = this._el('summary', 'lit-group-title', title);
+        const body = this._el('div', 'lit-group-body');
+        group.append(header, body);
+        group.addEventListener('toggle', () => {
+            if (!group.isConnected) return;
+            if (group.open) this._activeGroup = key;
+            else if (this._activeGroup === key) this._activeGroup = null;
+        });
         parent.appendChild(group);
-        return group;
+        return body;
     }
 
     _row(label, control) {
@@ -1535,14 +1549,17 @@ class LightingManager {
         const box = card.body;
         const ambient = this.ambient();
 
-        const level = this._input('range', String(Math.round(ambient.ambient * 100)), () => {});
+        const level = this._el('input');
+        level.type = 'range';
+        level.value = String(Math.round(ambient.ambient * 100));
+        level.setAttribute('aria-label', this._k('lit.brightness'));
         level.min = '0';
         level.max = '100';
         level.step = '1';
         this._trackFill(level);
         const readout = this._el('span', '', Math.round(ambient.ambient * 100) + '%');
         const levelWrap = this._el('div');
-        levelWrap.style.cssText = 'display:flex;gap:6px;align-items:center;';
+        levelWrap.className = 'lit-ambient-slider';
         levelWrap.append(level, readout);
         const applyLevel = () => {
             readout.textContent = level.value + '%';
@@ -1568,9 +1585,6 @@ class LightingManager {
             button.type = 'button';
             button.style.cssText = 'padding:3px 8px;font-size:11px;';
             button.addEventListener('click', () => {
-                level.value = String(Math.round(values.ambient * 100));
-                readout.textContent = level.value + '%';
-                if (colour.setValue) colour.setValue(values.ambientColour); else colour.value = values.ambientColour;
                 this._setAmbient(values);
             });
             presets.appendChild(button);
@@ -1584,16 +1598,12 @@ class LightingManager {
         const map = this.map();
         if (!map || typeof RRMapLights === 'undefined') return;
         RRMapLights.setAmbient(map, values);
+        this._syncAmbientControls();
         this.render();
         this._sync3D();
     }
 
-    /**
-     * The light tray: a grid of glowing chips. Drag one onto the map and the
-     * glow follows the cursor until you drop it; click one to arm sticky
-     * placement instead. Each chip is drawn from the light's own texture in
-     * its own colour, so the tray reads like a box of lights, not buttons.
-     */
+    /** Preset buttons arm click placement or start a drag onto the visible map. */
     _buildAddRow() {
         const card = this._section(this._k('lit.tray'));
         const tray = this._el('div', 'lit-tray');
@@ -1602,10 +1612,14 @@ class LightingManager {
         for (const preset of this._presets()) {
             const chip = this._el('button', 'lit-chip');
             chip.type = 'button';
-            chip.title = this._k('lit.empty');
+            chip.title = this._k('lit.pickFirst');
+            chip.setAttribute('aria-pressed', 'false');
             chip.appendChild(this._presetIcon(preset));
             chip.appendChild(this._el('span', '', preset.label));
             chip.addEventListener('pointerdown', event => this._chipDown(event, preset));
+            chip.addEventListener('click', event => {
+                if (event.detail === 0) this.armPlacement(this._armedKey === preset.key ? null : preset.template);
+            });
             this._addButtons[preset.key] = chip;
             tray.appendChild(chip);
         }
@@ -1641,6 +1655,8 @@ class LightingManager {
             + '<stop stop-color="' + this._shade(colour, 0.6) + '"/>'
             + '<stop offset=".5" stop-color="' + colour + '"/>'
             + '<stop offset="1" stop-color="' + this._shade(colour, -0.55) + '"/>'
+            + '</linearGradient><linearGradient id="' + id + '-metal" x2="0.7" y2="1">'
+            + '<stop stop-color="#075cdd"/><stop offset=".5" stop-color="#072b95"/><stop offset="1" stop-color="#03102a"/>'
             + '</linearGradient></defs>'
             + this._presetSvg(preset.key, 'url(#' + id + ')', colour)
             + '</svg>';
@@ -1649,116 +1665,99 @@ class LightingManager {
 
     _presetSvg(key, fill, colour) {
         const INK = '#01030a';
-        const rim = this._shade(colour, 0.45);
-        const rays = pairs => variant =>
-            `<g stroke="${variant.stroke}" stroke-width="${variant.width}" stroke-linecap="round">`
-            + pairs.map(([x1, y1, x2, y2]) =>
-                `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"/>`).join('')
-            + '</g>';
+        const metal = d => `<path d="${d}" fill="url(#lit-${key}-metal)" stroke="${INK}" stroke-width="5"/><path d="${d}" fill="none" stroke="#24bdf3" stroke-width="1.5"/>`;
+        const glow = d => `<path d="${d}" fill="${fill}" stroke="${INK}" stroke-width="4"/><path d="${d}" fill="none" stroke="${this._shade(colour, 0.6)}" stroke-width="1.2"/>`;
+        const line = (d, color = colour, width = 2) => `<path d="${d}" fill="none" stroke="${color}" stroke-width="${width}"/>`;
+        const base = metal('M19 54H45L50 60H14Z');
         switch (key) {
-            case 'spot': return `<path d="M18 4 h28 l7 14 h-42 Z" fill="${INK}"/>`
-                + `<path d="M21 6.5 h22 l4.8 9.5 h-31.6 Z" fill="#cfd6e2" stroke="#24bdf3" stroke-width="2"/>`
-                + `<path d="M13 18 h38 L40.5 60 h-17 Z" fill="${INK}"/>`
-                + `<path d="M16.5 20.5 h31 L38.5 56.5 h-13 Z" fill="${fill}" stroke="${rim}" stroke-width="2.5"/>`;
-            case 'candle': return `<rect x="22.5" y="26.5" width="19" height="33" rx="4.5" fill="${INK}"/>`
-                + '<rect x="25.5" y="29.5" width="13" height="27" rx="2.5" fill="#e8e3d5" stroke="#c9b98f" stroke-width="2"/>'
-                + `<path d="M32 3.5 C41.5 12.5 40.5 20.5 32 26.5 C23.5 20.5 22.5 12.5 32 3.5 Z" fill="${INK}"/>`
-                + `<path d="M32 7 C38.8 13.8 38 19.4 32 23.6 C26 19.4 25.2 13.8 32 7 Z" fill="${fill}"/>`
-                + '<path d="M32 12.5 C35.6 16.2 35.3 18.8 32 21.2 C28.7 18.8 28.4 16.2 32 12.5 Z" fill="#fff2a0"/>';
-            case 'lamp': return `<circle cx="32" cy="24.5" r="19.5" fill="${INK}"/>`
-                + `<circle cx="32" cy="24.5" r="16.5" fill="${fill}" stroke="${rim}" stroke-width="2.5"/>`
-                + '<circle cx="25.5" cy="18" r="4.5" fill="#ffffff" opacity="0.65"/>'
-                + `<rect x="23" y="42" width="18" height="9" fill="${INK}"/>`
-                + '<rect x="25.5" y="44" width="13" height="5" fill="#cfd6e2"/>'
-                + `<rect x="25.5" y="50.5" width="13" height="9" rx="3.5" fill="${INK}"/>`
-                + '<rect x="27.5" y="52.5" width="9" height="5" rx="2" fill="#9aa0ad"/>';
-            case 'neon': return `<rect x="6" y="20" width="52" height="24" rx="12" fill="none" stroke="${INK}" stroke-width="13"/>`
-                + `<rect x="6" y="20" width="52" height="24" rx="12" fill="none" stroke="${fill}" stroke-width="7"/>`
-                + '<rect x="6" y="20" width="52" height="24" rx="12" fill="none" stroke="#ffffff" stroke-width="2" opacity="0.8"/>';
-            case 'alarm': return rays([[32, 3, 32, 11], [10, 9, 15.5, 15], [54, 9, 48.5, 15]])({ stroke: INK, width: 9 })
-                + rays([[32, 3, 32, 11], [10, 9, 15.5, 15], [54, 9, 48.5, 15]])({ stroke: colour, width: 4.5 })
-                + `<path d="M12 40 a20 20 0 0 1 40 0 v5.5 h-40 Z" fill="${INK}"/>`
-                + `<path d="M15 40 a17 17 0 0 1 34 0 v2.5 h-34 Z" fill="${fill}" stroke="${rim}" stroke-width="2"/>`
-                + '<path d="M20.5 36.5 a12.5 12.5 0 0 1 8 -10.5" stroke="#ffffff" stroke-width="3.2" fill="none" opacity="0.65" stroke-linecap="round"/>'
-                + `<rect x="8" y="46.5" width="48" height="9.5" rx="3.5" fill="${INK}"/>`
-                + '<rect x="10.5" y="48.7" width="43" height="5" rx="2" fill="#9aa0ad"/>';
-            case 'screen': return `<rect x="6" y="9.5" width="52" height="37" rx="5.5" fill="${INK}"/>`
-                + '<rect x="9" y="12.5" width="46" height="31" rx="3" fill="#0b1220" stroke="#24bdf3" stroke-width="2"/>'
-                + `<rect x="13" y="16.5" width="38" height="23" fill="${fill}"/>`
-                + `<path d="M13 23 h38 M13 29.5 h38 M13 36 h38" stroke="${INK}" stroke-width="1.8" opacity="0.5"/>`
-                + `<rect x="24" y="48" width="16" height="4.5" fill="${INK}"/>`
-                + `<rect x="17" y="53" width="30" height="7" rx="3" fill="${INK}"/>`
-                + '<rect x="19.5" y="54.8" width="25" height="3.4" rx="1.7" fill="#9aa0ad"/>';
-            case 'torch': return `<rect x="26.5" y="25" width="11" height="36" rx="4.5" fill="${INK}" transform="rotate(14 32 43)"/>`
-                + '<rect x="29" y="27.5" width="6" height="31" rx="3" fill="#8a6a4a" transform="rotate(14 32 43)"/>'
-                + '<rect x="27.6" y="28" width="8.8" height="6.5" rx="2" fill="#d7318f" transform="rotate(14 32 43)"/>'
-                + `<path d="M32 2 C43.5 11 42.5 21 32 28 C21.5 21 20.5 11 32 2 Z" fill="${INK}"/>`
-                + `<path d="M32 5.5 C41 13 40.2 20 32 25 C23.8 20 23 13 32 5.5 Z" fill="${fill}"/>`
-                + '<path d="M32 11.5 C36.8 15.6 36.4 19 32 22 C27.6 19 27.2 15.6 32 11.5 Z" fill="#fff2a0"/>';
-            case 'laser': return `<path d="M8 50 L50 12" stroke="${INK}" stroke-width="12" stroke-linecap="round"/>`
-                + `<path d="M8 50 L50 12" stroke="${colour}" stroke-width="6" stroke-linecap="round"/>`
-                + '<path d="M8 50 L50 12" stroke="#ffffff" stroke-width="1.8" stroke-linecap="round" opacity="0.85"/>'
-                + `<rect x="4" y="43" width="16" height="16" rx="4" fill="${INK}"/>`
-                + '<rect x="6.5" y="45.5" width="11" height="11" rx="2.5" fill="#9aa0ad"/>'
-                + `<circle cx="52" cy="10" r="7" fill="${INK}"/>`
-                + `<circle cx="52" cy="10" r="4.5" fill="${fill}"/>`;
-            case 'streetlamp': return `<rect x="14.5" y="13" width="10" height="47" rx="4" fill="${INK}"/>`
-                + '<rect x="17.5" y="16" width="4" height="42" fill="#9aa0ad"/>'
-                + `<rect x="7" y="54.5" width="25" height="7" rx="3" fill="${INK}"/>`
-                + '<rect x="9.5" y="56.2" width="20" height="3.6" rx="1.8" fill="#9aa0ad"/>'
-                + `<path d="M19 15 Q34 4.5 47 11.5" fill="none" stroke="${INK}" stroke-width="9.5" stroke-linecap="round"/>`
-                + '<path d="M19 15 Q34 4.5 47 11.5" fill="none" stroke="#9aa0ad" stroke-width="4" stroke-linecap="round"/>'
-                + `<circle cx="48" cy="17.5" r="11" fill="${INK}"/>`
-                + `<circle cx="48" cy="17.5" r="8" fill="${fill}" stroke="${rim}" stroke-width="2"/>`
-                + '<circle cx="45" cy="14.5" r="2.6" fill="#ffffff" opacity="0.7"/>'
-                + rays([[48, 31.5, 48, 38], [37.5, 27, 33, 31.5], [58.5, 27, 63, 31.5]])({ stroke: INK, width: 8 })
-                + rays([[48, 31.5, 48, 38], [37.5, 27, 33, 31.5], [58.5, 27, 63, 31.5]])({ stroke: colour, width: 3.6 });
-            default: {
-                const eight = [[32, 4, 32, 13], [32, 51, 32, 60], [4, 32, 13, 32], [51, 32, 60, 32],
-                    [12.2, 12.2, 18.6, 18.6], [45.4, 45.4, 51.8, 51.8],
-                    [51.8, 12.2, 45.4, 18.6], [18.6, 45.4, 12.2, 51.8]];
-                return rays(eight)({ stroke: INK, width: 9.5 })
-                    + rays(eight)({ stroke: colour, width: 5 })
-                    + `<circle cx="32" cy="32" r="16.5" fill="${INK}"/>`
-                    + `<circle cx="32" cy="32" r="13.5" fill="${fill}" stroke="${rim}" stroke-width="2.5"/>`
-                    + '<circle cx="27" cy="27" r="4" fill="#ffffff" opacity="0.75"/>';
-            }
+            case 'fluorescent': return metal('M8 10H56L61 15V49L56 54H8L3 49V15Z')
+                + glow('M13 17H22V47H13Z') + glow('M27 17H36V47H27Z') + glow('M41 17H50V47H41Z')
+                + line('M10 24H53M10 40H53', '#075cdd', 2);
+            case 'compound': return metal('M26 29H38V52H26Z') + line('M13 19L32 39L51 19', '#24bdf3', 4)
+                + glow('M7 8H19V20H7Z') + glow('M45 8H57L51 23Z')
+                + metal('M22 40H42L47 48L42 56H22L17 48Z') + line('M25 48H39', '#ffffff', 3);
+            case 'spot': return glow('M25 24L8 57H56L39 24Z')
+                + line('M28 32L20 51M36 32L44 51', '#ffffff', 1)
+                + metal('M17 7H47L51 13L45 29H19L13 13Z') + glow('M22 19H42L39 26H25Z');
+            case 'candle': return base + metal('M22 31H42V50L37 55H27L22 50Z')
+                + glow('M31 4L43 19L38 30H25L21 21L28 15Z') + line('M32 15L29 25', '#ffffff', 2)
+                + line('M27 37V48M37 37V48', '#24bdf3');
+            case 'lamp': return base + metal('M28 44H36V54H28Z')
+                + metal('M23 8H41L48 19V41L40 48H24L16 41V19Z')
+                + glow('M24 19H40V39L36 43H28L24 39Z') + line('M20 16H44M19 33H45', '#24bdf3');
+            case 'neon': return metal('M10 10H54L60 16V48L54 54H10L4 48V16Z')
+                + line('M13 42V22L20 16H44L51 23V39L44 46H20', INK, 9)
+                + line('M13 42V22L20 16H44L51 23V39L44 46H20', colour, 5)
+                + line('M14 39V23L21 17H43', '#fff1fb', 1.5);
+            case 'alarm': return base + metal('M17 45L21 24L28 18H36L43 24L47 45Z')
+                + glow('M24 39L27 26H37L40 39Z') + line('M32 4V12M10 12L17 18M54 12L47 18', colour, 3)
+                + line('M22 48H42', '#24bdf3', 2);
+            case 'screen': return base + metal('M27 43H37V54H27Z')
+                + metal('M8 7H56L60 11V40L55 45H9L4 40V11Z')
+                + glow('M12 15H52V35H12Z') + line('M17 21H34M17 26H44M17 31H27', '#ffffff', 1.5);
+            case 'torch': return glow('M29 24L34 3L61 19L43 32Z')
+                + metal('M6 47L25 20L32 19L47 30L47 37L27 59H18Z')
+                + glow('M26 22L43 33L39 39L22 28Z') + line('M15 43L26 51M19 37L31 45', '#24bdf3');
+            case 'laser': return line('M16 48L54 10', INK, 9) + line('M16 48L54 10', colour, 5)
+                + line('M18 46L52 12', '#ffffff', 1.5)
+                + metal('M4 42L13 33L30 50L21 60H11L4 53Z')
+                + glow('M15 36L27 48L31 44L19 32Z') + line('M42 5H59V22M42 13V22H51', '#24bdf3');
+            case 'streetlamp': return base + metal('M21 55V9L27 3H50L56 9V16H28V55Z')
+                + glow('M38 19L29 44H59L50 19Z') + metal('M34 13H54V23H34Z')
+                + line('M25 21V48', '#24bdf3');
+            default: return metal('M22 9H42L55 22V42L42 55H22L9 42V22Z')
+                + glow('M25 20H39L44 25V39L39 44H25L20 39V25Z')
+                + line('M32 3V14M32 50V61M3 32H14M50 32H61', '#24bdf3', 3)
+                + line('M27 25H35L39 29', '#ffffff', 2);
         }
     }
 
-    /** Drag a chip onto the map, or click it to arm sticky placement. */
+    /** Choose a type without creating a light; only a map drop commits it. */
     _chipDown(event, preset) {
         if (event.button !== 0) return;
         event.preventDefault();
+        event.stopPropagation();
+        this._cancelChipDrag?.();
+        const map = this.map(), chip = event.currentTarget;
         const start = { x: event.clientX, y: event.clientY };
         let dragging = false;
+        const cleanup = () => {
+            window.removeEventListener('pointermove', move, true);
+            window.removeEventListener('pointerup', up, true);
+            window.removeEventListener('pointercancel', cancel, true);
+            window.removeEventListener('blur', cancel);
+            this._cancelChipDrag = null;
+        };
+        const cancel = () => { cleanup(); this.armPlacement(null); };
         const move = e => {
-            if (!dragging && Math.hypot(e.clientX - start.x, e.clientY - start.y) < 5) return;
-            if (!dragging) {
-                dragging = true;
-                this.armPlacement(preset.template);
-            }
+            if (!dragging && Math.hypot(e.clientX - start.x, e.clientY - start.y) < 6) return;
+            if (!dragging) { dragging = true; this.armPlacement(preset.template); }
             this._ghostFromClient(e.clientX, e.clientY);
         };
         const up = e => {
-            window.removeEventListener('pointermove', move, true);
-            window.removeEventListener('pointerup', up, true);
+            cleanup();
+            if (!this.active || this.map() !== map) { this.armPlacement(null); return; }
             if (dragging) {
                 const at = this._tileFromClient(e.clientX, e.clientY);
                 this.armPlacement(null);
                 if (at) this.place(preset.template, at.x, at.y);
-            } else {
+                e.stopPropagation();
+            } else if (chip.contains(document.elementFromPoint(e.clientX, e.clientY))) {
                 this.armPlacement(this._armedKey === preset.key ? null : preset.template);
             }
         };
+        this._cancelChipDrag = cancel;
         window.addEventListener('pointermove', move, true);
         window.addEventListener('pointerup', up, true);
+        window.addEventListener('pointercancel', cancel, true);
+        window.addEventListener('blur', cancel);
     }
 
     _syncAddButtons() {
         for (const [key, button] of Object.entries(this._addButtons || {})) {
             const armed = this._armedKey === key;
             button.classList.toggle('active', armed);
+            button.setAttribute('aria-pressed', String(armed));
             button.style.outline = armed ? '2px solid var(--color-accent)' : '';
         }
         // The cursor says what a click will do, on both canvases.
@@ -1768,7 +1767,8 @@ class LightingManager {
         const surface = this._bound3D;
         if (surface && surface.style) surface.style.cursor = cursor;
         if (this._statusHost) {
-            this._statusHost.textContent = this.placing ? this._k('lit.placing') : '';
+            const label = this._presets().find(p => p.key === this._armedKey)?.label || this._typeLabel(this.placing);
+            this._statusHost.textContent = this.placing ? label + ': ' + this._k('lit.placing') : '';
             this._statusHost.style.display = this.placing ? '' : 'none';
         }
         if (!this.placing && this._ghost) this._ghost.visible = false;
@@ -1795,18 +1795,22 @@ class LightingManager {
         // The count doubles as a truth meter: a map that should have ten
         // lights showing "· 0" says the session is looking at stale data.
         if (this._titleHost) {
-            this._titleHost.textContent = this._k('lit.title') + ' · ' + this.lights().length;
+            this._titleHost.textContent = this._k('lit.title') + ' · ' + RRMapLights.fixtures(this.map()).length;
         }
-        if (this._listMeta) this._listMeta.textContent = String(this.lights().length);
+        if (this._listMeta) this._listMeta.textContent = String(RRMapLights.fixtures(this.map()).length);
         this._syncList();
         this._syncProps();
+        this._syncAmbientControls();
+    }
+
+    _syncAmbientControls() {
+        if (!this._ambientControls) return;
         const ambient = this.ambient();
-        if (this._ambientControls && document.activeElement !== this._ambientControls.level) {
-            this._ambientControls.level.value = String(Math.round(ambient.ambient * 100));
-            this._ambientControls.readout.textContent = Math.round(ambient.ambient * 100) + '%';
-            const colour = this._ambientControls.colour;
-            if (colour.setValue) colour.setValue(ambient.ambientColour); else colour.value = ambient.ambientColour;
-        }
+        const { level, readout, colour } = this._ambientControls;
+        level.value = String(Math.round(ambient.ambient * 100));
+        level.__rrPaint?.();
+        readout.textContent = level.value + '%';
+        if (colour.setValue) colour.setValue(ambient.ambientColour); else colour.value = ambient.ambientColour;
     }
 
     _typeLabel(type) {
@@ -1817,7 +1821,8 @@ class LightingManager {
         const host = this._listHost;
         if (!host) return;
         host.replaceChildren();
-        const lights = this.lights();
+        const lights = RRMapLights.fixtures(this.map());
+        const selected = this.selected();
         if (!lights.length) {
             // The empty state is the manual: make it read like one.
             host.appendChild(this._el('div', 'lit-empty', this._k('lit.empty')));
@@ -1826,15 +1831,20 @@ class LightingManager {
         for (const raw of lights) {
             const light = typeof RRMapLights !== 'undefined'
                 ? RRMapLights.normalize(raw, raw.id || 'light') : raw;
-            const row = this._el('button', 'lit-list-row' + (light.id === this.selectedId ? ' selected' : ''));
+            const active = light.id === this.selectedId || (light.compoundId && light.compoundId === selected?.compoundId);
+            const row = this._el('button', 'lit-list-row' + (active ? ' selected' : ''));
             row.type = 'button';
             const swatch = this._el('span', 'lit-swatch-dot');
             swatch.style.background = light.color;
             swatch.style.opacity = light.on ? '1' : '0.3';
             row.appendChild(swatch);
-            row.appendChild(this._el('span', 'lit-list-name', light.id + (light.tag ? ' #' + light.tag : '')));
-            row.appendChild(this._el('span', 'lit-list-kind', this._typeLabel(light.type)));
-            row.addEventListener('click', () => this.select(light.id));
+            row.appendChild(this._el('span', 'lit-list-name', light.compoundId
+                ? (light.compoundName || this._k('lit.preset.compound'))
+                : light.id + (light.tag ? ' #' + light.tag : '')));
+            row.appendChild(this._el('span', 'lit-list-kind', light.compoundId
+                ? String(RRMapLights.members(this.map(), light.id).length) + ' ' + this._k('lit.components')
+                : this._typeLabel(light.type)));
+            row.addEventListener('click', () => { if (!active) this.select(light.id); });
             host.appendChild(row);
         }
     }
@@ -1883,6 +1893,52 @@ class LightingManager {
         return host;
     }
 
+    _buildCompoundControls(parent, light) {
+        const map = this.map(), parts = RRMapLights.members(map, light.id);
+        const body = this._group(parent, this._k('lit.components'), 'components');
+        const name = this._input('text', light.compoundName || this._k('lit.preset.compound'), input => {
+            this.pushUndo();
+            for (const part of RRMapLights.members(map, light.id)) RRMapLights.update(map, part.id, { compoundName: input.value.trim() });
+            this._changed();
+        });
+        name.maxLength = 80;
+        body.appendChild(this._row(this._k('lit.compoundName'), name));
+        const component = this._select(parts.map((part, index) => [part.id,
+            (index + 1) + '. ' + this._typeLabel(part.type) + ' · ' + part.id]), light.id, id => this.select(id));
+        component.classList.add('lit-component-select');
+        body.appendChild(this._row(this._k('lit.component'), component));
+        const row = this._el('div', 'lit-component-add');
+        const types = this._select(['point', 'spot', 'beam'].map(type => [type, this._typeLabel(type)]), 'point', () => {});
+        types.setAttribute('aria-label', this._k('lit.type'));
+        const add = this._el('button', 'rr-btn-secondary', this._k('lit.addComponent'));
+        add.type = 'button';
+        add.addEventListener('click', () => {
+            this.pushUndo();
+            const source = RRMapLights.get(map, light.id);
+            if (!source) return;
+            const part = RRMapLights.add(map, { type: types.value, x: source.x, y: source.y, height: source.height,
+                color: source.color, compoundId: source.compoundId, compoundName: source.compoundName,
+                attach: source.attach, tag: source.tag, pitch: types.value === 'spot' ? -60 : 0 });
+            this.selectedId = part.id;
+            this._activeGroup = 'components';
+            this._changed();
+        });
+        row.append(types, add);
+        body.appendChild(row);
+        const remove = this._el('button', 'rr-btn-secondary lit-component-remove', this._k('lit.removeComponent'));
+        remove.type = 'button';
+        remove.disabled = parts.length < 2;
+        remove.addEventListener('click', () => {
+            this.pushUndo();
+            RRMapLights.remove(map, light.id);
+            this.selectedId = parts.find(part => part.id !== light.id)?.id || null;
+            this._changed();
+        });
+        body.appendChild(remove);
+        const hint = this._el('div', 'lit-component-hint', this._k('lit.componentHint'));
+        body.appendChild(hint);
+    }
+
     _syncProps() {
         const host = this._propsHost;
         if (!host) return;
@@ -1905,8 +1961,10 @@ class LightingManager {
         };
         const aimed = light.type !== 'point';
 
-        const card = this._section(this._k('lit.selected'), this._typeLabel(light.type));
+        const card = this._section(light.compoundId ? light.compoundName || this._k('lit.preset.compound') : this._k('lit.selected'), this._typeLabel(light.type));
         const body = card.body;
+
+        if (light.compoundId) this._buildCompoundControls(body, light);
 
         // Identity: the id events address the light by, and what kind it is.
         const id = this._input('text', light.id, field => this._renameSelected(field));
@@ -1917,13 +1975,13 @@ class LightingManager {
             if (event.key === 'Enter') { event.preventDefault(); id.blur(); }
             event.stopPropagation();
         });
-        body.appendChild(this._row(this._k('lit.id'), id));
+        body.appendChild(this._row(this._k(light.compoundId ? 'lit.componentId' : 'lit.id'), id));
         body.appendChild(this._row(this._k('lit.type'), this._select(
             [['point', this._k('lit.point')], ['spot', this._k('lit.spot')], ['beam', this._k('lit.beam')]],
             light.type, value => commit({ type: value }))));
 
         // The light itself.
-        const look = this._group(body, this._k('lit.section.light'));
+        const look = this._group(body, this._k('lit.section.light'), 'light');
         look.appendChild(this._row(this._k('lit.color'), this._colour(light.color,
             hex => this._liveUpdate({ color: hex }), hex => commit({ color: hex }))));
         look.appendChild(this._row(this._k('lit.intensity'), this._slider('intensity', light.intensity, 0, 4, 0.05)));
@@ -1937,7 +1995,7 @@ class LightingManager {
 
         // Where it stands: X and Y in tiles (offsets from the carrier when
         // attached), Z the height off the ground.
-        const position = this._group(body, this._k('lit.position'));
+        const position = this._group(body, this._k('lit.position'), 'position');
         const attached = !!light.attach;
         const spanX = attached ? [-10, 10] : [0, Math.max(1, map.width || 1)];
         const spanY = attached ? [-10, 10] : [0, Math.max(1, map.height || 1)];
@@ -1947,13 +2005,13 @@ class LightingManager {
 
         // Which way it aims — nothing to aim on a point light.
         if (aimed) {
-            const rotation = this._group(body, this._k('lit.rotation'));
+            const rotation = this._group(body, this._k('lit.rotation'), 'rotation');
             rotation.appendChild(this._row(this._k('lit.yaw'), this._slider('yaw', light.yaw, -180, 180, 1, { numberMin: -100000, numberMax: 100000 })));
             rotation.appendChild(this._row(this._k('lit.pitch'), this._slider('pitch', light.pitch, -90, 90, 1)));
         }
 
         // Motion in the light.
-        const animation = this._group(body, this._k('lit.animation'));
+        const animation = this._group(body, this._k('lit.animation'), 'animation');
         animation.appendChild(this._row(this._k('lit.flicker'), this._slider('flicker', light.flicker, 0, 1, 0.05)));
         const pulse = this._input('checkbox', '', input => {
             commit({ pulse: input.checked ? { min: 0.6, max: 1, period: 90 } : null });
@@ -1980,7 +2038,7 @@ class LightingManager {
         }
 
         // Who it belongs with, what it rides, and its switches.
-        const group = this._group(body, this._k('lit.group'));
+        const group = this._group(body, this._k('lit.group'), 'grouping');
         group.appendChild(this._row(this._k('lit.tag'), this._tagControl(light, commit)));
         const attachOptions = [['', this._k('lit.attachNone')], ['player', this._k('lit.attachPlayer')]];
         for (const event of map.events || []) {

@@ -18,6 +18,7 @@ quietConsole.error = () => {};
 function loadBrowserClass(relativePath, className, globals = {}) {
     const source = fs.readFileSync(path.join(editorRoot, 'src', relativePath), 'utf8');
     return vm.runInNewContext(`${source}\n${className};`, {
+        RRJson: require('../src/utils/JsonFiles.js'),
         console: quietConsole,
         process,
         require,

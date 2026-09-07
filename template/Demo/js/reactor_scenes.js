@@ -103,6 +103,7 @@ Scene_Base.prototype.startFadeOut = function(duration, white) {
 
 Scene_Base.prototype.createColorFilter = function() {
     this._colorFilter = new ColorFilter();
+    this._colorFilter.allowNeutralSceneSkip?.(this);
     this.filters = [this._colorFilter];
 };
 
@@ -911,10 +912,19 @@ Scene_Map.prototype.isMapTouchOk = function() {
 };
 
 Scene_Map.prototype.processMapTouch = function() {
+    // The relative camera handles its initial click before pointer lock can
+    // clear TouchInput. Do not pick it again at the now-locked screen center.
+    if (this._reactor3dTouchConsumed) {
+        if (!TouchInput.isPressed()) this._reactor3dTouchConsumed = false;
+        return;
+    }
     if (TouchInput.isTriggered() || this._touchCount > 0) {
         if (TouchInput.isPressed() && !this.isAnyButtonPressed()) {
-            if (this._touchCount === 0 || this._touchCount >= 15) {
+            const pointerMoved = TouchInput.x !== this._lastMapTouchX || TouchInput.y !== this._lastMapTouchY;
+            if (this._touchCount === 0 || (this._touchCount >= 15 && pointerMoved)) {
                 this.onMapTouch();
+                this._lastMapTouchX = TouchInput.x;
+                this._lastMapTouchY = TouchInput.y;
             }
             this._touchCount++;
         } else {
@@ -927,9 +937,18 @@ Scene_Map.prototype.isAnyButtonPressed = function() {
     return this._menuButton && this._menuButton.isPressed();
 };
 
-Scene_Map.prototype.onMapTouch = function() {
-    const x = $gameMap.canvasToMapX(TouchInput.x);
-    const y = $gameMap.canvasToMapY(TouchInput.y);
+Scene_Map.prototype.onMapTouch = function(screenX = TouchInput.x, screenY = TouchInput.y) {
+    const view = this._spriteset && this._spriteset._reactor3d;
+    if (view && typeof Reactor3D !== "undefined") {
+        const locked = typeof document !== "undefined" && document.pointerLockElement === Graphics._canvas;
+        const x = locked ? Graphics.width / 2 : screenX;
+        const y = locked ? Graphics.height / 2 : screenY;
+        const tile = Reactor3D.screenToGroundTile($dataMap, view.camera, x, y);
+        if (tile) $gameTemp.setDestination(tile.x, tile.y);
+        return;
+    }
+    const x = $gameMap.canvasToMapX(screenX);
+    const y = $gameMap.canvasToMapY(screenY);
     $gameTemp.setDestination(x, y);
 };
 

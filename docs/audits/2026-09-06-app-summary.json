@@ -1,0 +1,70 @@
+{
+  "date": "2026-09-06",
+  "scope": "Major application workflows; not exhaustive branch/platform coverage",
+  "findings": [
+    {
+      "id": "APP-01",
+      "status": "fixed_verified"
+    },
+    {
+      "id": "APP-02",
+      "status": "fixed_verified"
+    },
+    {
+      "id": "APP-03",
+      "status": "fixed_verified"
+    },
+    {
+      "id": "APP-04",
+      "status": "fixed_verified"
+    },
+    {
+      "id": "APP-05",
+      "status": "fixed_verified"
+    },
+    {
+      "id": "APP-06",
+      "status": "fixed_verified"
+    },
+    {
+      "id": "APP-07",
+      "status": "fixed_verified"
+    },
+    {
+      "id": "APP-08",
+      "status": "fixed_verified"
+    },
+    {
+      "id": "APP-09",
+      "status": "fixed_verified"
+    },
+    {
+      "id": "APP-10",
+      "status": "fixed_verified"
+    }
+  ],
+  "automated": {
+    "total": 2919,
+    "pass": 2919,
+    "fail": 0,
+    "new_regressions": 20
+  },
+  "native": {
+    "database_state_checks": 405,
+    "commands": 123,
+    "database_sections_in_matrix": 19,
+    "action_sequences_separate": true,
+    "nested_dialogs": 56,
+    "menu_theme_locale_cases": 32,
+    "legacy_2d_projects": 11,
+    "legacy_2d_checks": 92,
+    "battle_regressions": "passed",
+    "map_event_workflows": "passed",
+    "project_save": "passed",
+    "project_tools": "passed"
+  },
+  "browser_distribution_persistence": "passed",
+  "runtime_revision": "20260906.19",
+  "authored_project_changes": false,
+  "report": "../APP-AUDIT-2026-09-06.md"
+}

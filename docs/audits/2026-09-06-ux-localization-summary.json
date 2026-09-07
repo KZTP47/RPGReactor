@@ -1,0 +1,185 @@
+{
+  "date": "2026-09-06",
+  "runtimeRevision": "20260906.19",
+  "scope": "Editor UX, themes, localization; disposable project copies",
+  "changes": {
+    "translationSourcePhrases": 114,
+    "changedTranslations": 1908,
+    "nonEnglishLanguages": 17
+  },
+  "automated": {
+    "passed": 2924,
+    "failed": 0,
+    "log": "/tmp/rr-ux-full-final2.log",
+    "followup": "41 localization and contrast tests passed after final wording/style corrections; /tmp/rr-ux-locale-contrast-final.log"
+  },
+  "nativeLocalization": {
+    "languages": 18,
+    "sequenceLayouts": 36,
+    "stepForms": "All nine types plus transform and formation controls in every language",
+    "roomInspectors": 18,
+    "mediaSurfacePanels": 18,
+    "displayedSourcePhrases": 142,
+    "errors": [],
+    "artifactDirectory": "/tmp/rr-ux-localization-report-yb1Mgu"
+  },
+  "themes": [
+    {
+      "theme": "dark",
+      "commands": 123,
+      "nestedDialogs": 56,
+      "sampledText": 3965,
+      "below3to1": 0,
+      "offPaletteButtons": 0,
+      "missingTokens": 0,
+      "capturedErrors": 0
+    },
+    {
+      "theme": "light",
+      "commands": 123,
+      "nestedDialogs": 56,
+      "sampledText": 3965,
+      "below3to1": 0,
+      "offPaletteButtons": 0,
+      "missingTokens": 0,
+      "capturedErrors": 0
+    },
+    {
+      "theme": "bubblegum-dark",
+      "commands": 123,
+      "nestedDialogs": 56,
+      "sampledText": 3965,
+      "below3to1": 0,
+      "offPaletteButtons": 0,
+      "missingTokens": 0,
+      "capturedErrors": 0
+    },
+    {
+      "theme": "bubblegum-light",
+      "commands": 123,
+      "nestedDialogs": 56,
+      "sampledText": 3965,
+      "below3to1": 0,
+      "offPaletteButtons": 0,
+      "missingTokens": 0,
+      "capturedErrors": 0
+    },
+    {
+      "theme": "ocean-dark",
+      "commands": 123,
+      "nestedDialogs": 56,
+      "sampledText": 3965,
+      "below3to1": 0,
+      "offPaletteButtons": 0,
+      "missingTokens": 0,
+      "capturedErrors": 0
+    },
+    {
+      "theme": "ocean-light",
+      "commands": 123,
+      "nestedDialogs": 56,
+      "sampledText": 3965,
+      "below3to1": 0,
+      "offPaletteButtons": 0,
+      "missingTokens": 0,
+      "capturedErrors": 0
+    },
+    {
+      "theme": "cascadia-dark",
+      "commands": 123,
+      "nestedDialogs": 56,
+      "sampledText": 3965,
+      "below3to1": 0,
+      "offPaletteButtons": 0,
+      "missingTokens": 0,
+      "capturedErrors": 0
+    },
+    {
+      "theme": "cascadia-light",
+      "commands": 123,
+      "nestedDialogs": 56,
+      "sampledText": 3965,
+      "below3to1": 0,
+      "offPaletteButtons": 0,
+      "missingTokens": 0,
+      "capturedErrors": 0
+    },
+    {
+      "theme": "underworld-dark",
+      "commands": 123,
+      "nestedDialogs": 56,
+      "sampledText": 3965,
+      "below3to1": 0,
+      "offPaletteButtons": 0,
+      "missingTokens": 0,
+      "capturedErrors": 0
+    },
+    {
+      "theme": "underworld-light",
+      "commands": 123,
+      "nestedDialogs": 56,
+      "sampledText": 3965,
+      "below3to1": 0,
+      "offPaletteButtons": 0,
+      "missingTokens": 0,
+      "capturedErrors": 0
+    },
+    {
+      "theme": "creamsicle-dark",
+      "commands": 123,
+      "nestedDialogs": 56,
+      "sampledText": 3965,
+      "below3to1": 0,
+      "offPaletteButtons": 0,
+      "missingTokens": 0,
+      "capturedErrors": 0
+    },
+    {
+      "theme": "creamsicle-light",
+      "commands": 123,
+      "nestedDialogs": 56,
+      "sampledText": 3965,
+      "below3to1": 0,
+      "offPaletteButtons": 0,
+      "missingTokens": 0,
+      "capturedErrors": 0
+    },
+    {
+      "theme": "royalty-dark",
+      "commands": 123,
+      "nestedDialogs": 56,
+      "sampledText": 3965,
+      "below3to1": 0,
+      "offPaletteButtons": 0,
+      "missingTokens": 0,
+      "capturedErrors": 0
+    },
+    {
+      "theme": "royalty-light",
+      "commands": 123,
+      "nestedDialogs": 56,
+      "sampledText": 3965,
+      "below3to1": 0,
+      "offPaletteButtons": 0,
+      "missingTokens": 0,
+      "capturedErrors": 0
+    }
+  ],
+  "artifacts": {
+    "themeDirectory": "/tmp/rr-command-database-audit-Vsdi3N",
+    "themeLog": "/tmp/rr-ux-themes-certified.log",
+    "localizationLog": "/tmp/rr-ux-native-final3.log"
+  },
+  "limits": [
+    "Not a native-speaker review of every older translation.",
+    "Authored names, filenames, plugin prose and game dialogue retain their authored language.",
+    "Native computed-style threshold is 3:1; primary normal/hover contrast regressions enforce 4.5:1.",
+    "The sampled editor flows do not certify every OS, zoom, plugin or game playthrough."
+  ],
+  "nativeGeneral": {
+    "eventCommands": 123,
+    "databaseSections": 19,
+    "nestedDialogs": 56,
+    "menuCases": 32
+  }
+}

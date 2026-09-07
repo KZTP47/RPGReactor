@@ -18,6 +18,7 @@ class DatabaseManager {
             commonEvents: 9999,
             userInterfaces: 9999,
             quests: 9999,
+            actionSequences: 9999,
             elements: 512,
             skillTypes: 128,
             weaponTypes: 256,
@@ -70,6 +71,7 @@ class DatabaseManager {
             ['userInterfaces', 'UserInterfaces.json'],
             // Reactor's quests, stored beside the MZ files; absent in a
             // project that never authored one.
+            ['actionSequences', 'ActionSequences.json'],
             ['quests', 'ReactorQuests.json'],
             ['system', 'System.json']
         ];
@@ -92,6 +94,8 @@ class DatabaseManager {
             // absent in projects that never authored an interface.
             userInterfaces: [],
             quests: [],
+            actionSequences: [null],
+            battlePresentation: null,
             system: null,
             mapInfos: [],
             // Per-tile 3D classification. Not one of the dataFiles: those are
@@ -112,8 +116,7 @@ class DatabaseManager {
         let lastError = null;
         for (let attempt = 0; attempt < attempts; attempt++) {
             try {
-                const content = this.fs.readFileSync(filePath, 'utf8').replace(/^\uFEFF/, '');
-                return JSON.parse(content);
+                return RRJson.read(this.fs, filePath);
             } catch (error) {
                 lastError = error;
                 if (attempt + 1 < attempts && typeof setTimeout === 'function') {
@@ -130,11 +133,13 @@ class DatabaseManager {
         }
 
         try {
+            this.recoverBattlePresentation(projectPath);
             const dataPath = this.path.join(projectPath, 'data');
             const loaded = {};
             for (const [key, filename] of this.dataFiles) {
                 loaded[key] = await this.loadJSON(dataPath, filename);
             }
+            loaded.battlePresentation = await this.loadJSON(dataPath, 'BattlePresentation.json');
             loaded.tileset3d = await this.loadTileset3D(projectPath);
             loaded.editorNames = await this.loadEditorNames(projectPath);
             // An absent file reads as []; records start at id 1 behind the
@@ -147,6 +152,10 @@ class DatabaseManager {
                 loaded.userInterfaces = [null, ...stock];
             }
             if (!Array.isArray(loaded.quests) || loaded.quests.length === 0) loaded.quests = [null];
+            const battle = typeof ReactorBattleData !== 'undefined' ? ReactorBattleData : require('../../runtime/reactor_battle_data.js');
+            if (Array.isArray(loaded.actionSequences) && !loaded.actionSequences.length) loaded.actionSequences = [null];
+            if (Array.isArray(loaded.battlePresentation) && !loaded.battlePresentation.length) loaded.battlePresentation = battle.empty();
+            battle.validateStore(loaded.actionSequences, loaded.battlePresentation);
             Object.assign(this.data, loaded);
             this.projectPath = projectPath;
             this.dataGeneration++;
@@ -188,6 +197,23 @@ class DatabaseManager {
      */
     tileset3DClasses() {
         return (typeof globalThis !== 'undefined' && globalThis.RRTileset3DClass) || null;
+    }
+
+    getMaxBattleMembers() {
+        if (typeof ReactorBattleData === 'undefined') return 4;
+        let plugins = [];
+        if (this.projectPath && this.fs && this.path) {
+            for (const name of ['reactor_plugins.js', 'plugins.js']) {
+                const file = this.path.join(this.projectPath, 'js', name);
+                if (!this.fs.existsSync(file)) continue;
+                try {
+                    const match = this.fs.readFileSync(file, 'utf8').match(/(?:var|let|const)\s+\$plugins\s*=\s*(\[[\s\S]*\]);/);
+                    if (match) plugins = JSON.parse(match[1]);
+                } catch (error) { console.warn('Could not read the existing party limit:', error); }
+                break;
+            }
+        }
+        return ReactorBattleData.maxBattleMembers(this.data.system, plugins);
     }
 
     /** The live classification store, created empty on first use. */
@@ -324,6 +350,7 @@ class DatabaseManager {
         for (const [key] of entries) {
             this.savedState[key] = this.serialize(this.data[key]);
         }
+        if (!dataKey || dataKey === 'battlePresentation') this.savedState.battlePresentation = this.serialize(this.data.battlePresentation || null);
         if (!dataKey || dataKey === 'tileset3d') {
             this.savedState.tileset3d = this.serialize(this.data.tileset3d || null);
         }
@@ -346,6 +373,7 @@ class DatabaseManager {
             && this.serialize(this.data.editorNames || null) !== this.savedState.editorNames) {
             dirty.push('editorNames');
         }
+        if (this.savedState.battlePresentation !== undefined && this.serialize(this.data.battlePresentation || null) !== this.savedState.battlePresentation) dirty.push('battlePresentation');
         return dirty;
     }
 
@@ -659,6 +687,8 @@ class DatabaseManager {
                 this.data[dataKey][i] = newEntry;
             }
         } else if (newMax < currentMax) {
+            if(dataKey==='actionSequences'){const B=typeof ReactorBattleData!=='undefined'?ReactorBattleData:require('../../runtime/reactor_battle_data.js');for(let id=newMax+1;id<=currentMax;id++)if(B.references(this.data.battlePresentation,id).length)return false;}
+            const presentation=this.data.battlePresentation?.[dataKey];if(presentation)for(const id of Object.keys(presentation))if(Number(id)>newMax)delete presentation[id];
             // Truncate array
             this.data[dataKey].length = newMax + 1;
             const names = this.editorNamesModule();
@@ -670,6 +700,44 @@ class DatabaseManager {
         return true;
     }
 
+    recoverBattlePresentation(projectPath) {
+        const dir=this.path.join(projectPath,'data'),journal=this.path.join(dir,'.BattlePresentation.pending.json');
+        if(!this.fs.existsSync(journal))return;
+        const saved=RRJson.parse(this.fs.readFileSync(journal));
+        if(saved.version!==1||!Array.isArray(saved.files)||saved.files.length!==2)throw Error('Unsupported battle data recovery file.');
+        for(const entry of saved.files){
+            if(!['ActionSequences.json','BattlePresentation.json'].includes(entry.file)||entry.previous!==null&&typeof entry.previous!=='string')throw Error('Invalid battle data recovery file.');
+            const dest=this.path.join(dir,entry.file);
+            if(entry.previous===null)this.fs.rmSync(dest,{force:true});else this._writeFileAtomic(this.fs,dest,entry.previous);
+        }
+        this.fs.rmSync(journal,{force:true});
+    }
+
+    saveBattlePresentation(projectPath) {
+        const B=typeof ReactorBattleData!=='undefined'?ReactorBattleData:require('../../runtime/reactor_battle_data.js');
+        const sequences=this.data.actionSequences||[null],settings=this.data.battlePresentation||B.empty();
+        const dir=this.path.join(projectPath,'data'),journal=this.path.join(dir,'.BattlePresentation.pending.json');
+        try {
+            this.recoverBattlePresentation(projectPath);B.validateStore(sequences,settings);
+            const records=[['ActionSequences.json',sequences],['BattlePresentation.json',settings]].map(([file,value])=>{
+                const dest=this.path.join(dir,file),previous=this.fs.existsSync(dest)?this.fs.readFileSync(dest,'utf8'):null;
+                const empty=Array.isArray(value)?!value.some(Boolean):JSON.stringify(value)===JSON.stringify(B.empty());
+                return {file,dest,previous,next:empty&&previous===null?null:JSON.stringify(value,null,2)};
+            });
+            if(records.some(r=>r.next!==r.previous)){
+                // Removing this journal commits the pair. Recovery can be retried
+                // after an interrupted write, without losing the previous pair.
+                this._writeFileAtomic(this.fs,journal,JSON.stringify({version:1,files:records.map(({file,previous})=>({file,previous}))}));
+                for(const r of records)if(r.next!==null)this._writeFileAtomic(this.fs,r.dest,r.next);
+                this.fs.rmSync(journal,{force:true});
+            }
+            this.captureSavedState('actionSequences');this.captureSavedState('battlePresentation');return true;
+        }catch(error){
+            try{this.recoverBattlePresentation(projectPath);}catch(recovery){console.error('Battle data recovery remains pending:',recovery);}
+            console.error('Could not save battle presentation:',error);return false;
+        }
+    }
+
     async saveAllData(projectPath) {
         if (!this.fs || !this.path) return false;
 
@@ -677,7 +745,9 @@ class DatabaseManager {
         // Reject an unreadable sidecar before touching RPG Maker files, but do
         // not persist editor names until every normal database write succeeds.
         if (!this.canSaveEditorNames(projectPath)) return false;
+        if (!this.saveBattlePresentation(projectPath)) return false;
         for (const [key, filename] of this.dataFiles) {
+            if (key === 'actionSequences' || key === 'battlePresentation') continue;
             // A project that never authored an interface gains no file.
             if (key === 'userInterfaces' && !this.hasUserInterfaces()
                 && !this.fs.existsSync(this.path.join(projectPath, 'data', filename))) {

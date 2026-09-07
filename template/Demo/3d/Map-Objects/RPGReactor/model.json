@@ -70,6 +70,35 @@
         "occlude": true,
         "shadow": false,
         "body": true
+      },
+      "trigger": "always"
+    },
+    {
+      "name": "Core (2)",
+      "animation": 122,
+      "anchor": {
+        "part": "mesh_node",
+        "offset": [
+          0.004,
+          0.036,
+          -0.227
+        ]
+      },
+      "scale": 0.54,
+      "loop": true,
+      "rotate": [
+        0,
+        0,
+        0
+      ],
+      "trigger": "always",
+      "video": {
+        "file": "",
+        "width": 0.3,
+        "height": 0.2,
+        "loop": true,
+        "audio": false,
+        "volume": 100
       }
     }
   ],

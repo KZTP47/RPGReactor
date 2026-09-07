@@ -14,6 +14,7 @@ quietConsole.error = () => {};
 function loadDatabaseManager() {
     const source = fs.readFileSync(path.join(editorRoot, 'src', 'DatabaseManager.js'), 'utf8');
     return vm.runInNewContext(`${source}\nDatabaseManager;`, {
+        RRJson: require('../src/utils/JsonFiles.js'),
         console: quietConsole,
         process,
         require,

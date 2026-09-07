@@ -329,3 +329,70 @@ volume shader or atlas shadows.
 - **Per-vertex authored meshes from tiles.** If a project needs a genuine model,
   the answer is a model — now supported through the event and database
   bindings above — not a tileset.
+
+
+### Navigation and model inspector refinements (2026-09-05)
+
+Click-to-move picks the visible ground plane in perspective, including painted
+elevation. Its destination marker lies horizontally on that ground and is owned
+by the map scene; switching to a 2D map restores the flat marker. First/third-person
+mouse capture retains the initial ground click; subsequent locked clicks aim
+through the screen center. Manual movement cancels an active route. Holding a
+stationary pointer does not retarget as the camera follows.
+
+Player click routes cache their steps after finding the goal and check collision
+before each step. Moving obstacles, changed destinations, map changes and an
+unexpected player position cause a new search. Searches have a longer player
+horizon with a bounded expansion count; NPC search limits remain unchanged. This
+reduces repeated work and route changes, without replacing grid movement itself.
+The Demo movement plugin no longer stops on a tile adjacent to the destination.
+
+Isometric keyboard/gamepad directions rotate through the displayed camera yaw:
+at the default 45-degree view, Up advances east/north together, and Up+Right
+advances east. WASD follows the same mapping. Fixed and top-down controls keep
+their existing behavior.
+
+The 3D-M palette inspector groups model selection, Placement, Transform and
+Playback into compact themed cards. The 64-pixel model preview and model selector
+stay visible above the settings while the settings scroll. Placement, Transform
+and Playback open one at a time to fit the limited palette height; the action
+buttons stay at the bottom. Animations and Effects use searchable dropdowns with multiple checkboxes; hidden
+search results retain their selection. Animations preserve the model's declared
+order and effects can run together. Escape, outside clicks and leaving the tab
+close the dropdown. Transform changes remain synchronized with the placement
+fields so later playback edits do not restore old size or position values.
+Rigging spheres use half their previous radius, with a 10-pixel selection radius.
+
+Model-prop input is rebound when map canvases change. The selected palette tool
+is restored after the map and event managers bind the new map; Events and 3D-M
+keep separate pointer ownership. Returning to a regular tileset restores painting.
+Global Delete/Backspace routing gives the active Lights or 3D-M tool priority over
+the map tree, including repeated presses after deletion. Form fields and modal
+editors keep their own keys. Model and light deletion use their existing undo histories.
+The Lights property groups (Light, Position, Rotation, Animation, Grouping) are
+collapsible cards with accent-strip headers; the open group survives field edits.
+
+Lighting preset buttons use angular SVG housings and colored emitters. Choosing
+a preset arms placement and names the pending type in the status text; only a
+click or completed drag over exposed map content creates a record. Drops over
+the Lighting panel or other editor surfaces are cancelled. Escape, closing the
+tool, and changing maps cancel pending placement. The panel refreshes map-local
+selection, list, ambient controls, and pointer bindings in both 2D and 3D views.
+Ambient changes synchronize the slider value, filled rail, percentage, and tint
+from the map's stored lighting block. New maps and the generated starter map
+store Day (1.0 brightness, white tint) in their sidecar; existing authored
+lighting and legacy runtime defaults are preserved.
+
+The light tray contains twelve presets in three rows of four, including Compound
+Light and Fluorescent. Compound fixtures contain ordinary Point, Spot, and Beam
+light records linked by `compoundId` and a shared `compoundName`. The editor
+lists each fixture once; its Components section adds/removes parts and selects
+which part the normal light controls edit. Editing a component's position changes
+that component; dragging a fixture or its translation arrows moves every part by
+the same delta. Whole-fixture duplicate/delete preserve relative placement and
+remain undoable. New Streetlamp placements use this fixture grouping too.
+The runtime receives the existing flat native-light records, so each component
+retains its independent type, animation, attachment, and settings. Shared tags
+remain available for existing light-event commands; fixture membership is separate
+from tags and survives tag edits. New Fluorescent presets use a cool white point
+light with seven-tile reach and subtle flicker.

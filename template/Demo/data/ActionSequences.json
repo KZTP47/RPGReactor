@@ -1,0 +1,182 @@
+[
+  null,
+  {
+    "id": 1,
+    "version": 1,
+    "name": "Unarmed Punch",
+    "note": "Run into range, punch on frame 46, then return home.",
+    "steps": [
+      {
+        "id": "step-pa6kx6iv39",
+        "type": "motion",
+        "duration": 0,
+        "role": "user",
+        "anchor": "home",
+        "x": 0,
+        "y": 0,
+        "z": 0,
+        "easing": "smooth",
+        "motion": "run"
+      },
+      {
+        "id": "step-of2zfuo3d9a",
+        "type": "move",
+        "duration": 30,
+        "role": "user",
+        "anchor": "approach",
+        "x": -0.8,
+        "y": 0,
+        "z": 0,
+        "easing": "linear",
+        "face": "movement"
+      },
+      {
+        "id": "step-vco2qy44o2",
+        "type": "motion",
+        "duration": 16,
+        "role": "user",
+        "anchor": "home",
+        "x": 0,
+        "y": 0,
+        "z": 0,
+        "easing": "smooth",
+        "motion": "punch",
+        "transform": {
+          "x": 0.18,
+          "y": 0,
+          "z": 0,
+          "rotateX": -15.6,
+          "rotateY": 24.200000000000003,
+          "rotateZ": 0,
+          "scale": 1,
+          "scaleX": 1,
+          "scaleY": 1,
+          "scaleZ": 1
+        }
+      },
+      {
+        "id": "step-t8cahbu5a0d",
+        "type": "sound",
+        "duration": 0,
+        "role": "user",
+        "anchor": "home",
+        "x": 0,
+        "y": 0,
+        "z": 0,
+        "easing": "smooth",
+        "audio": {
+          "name": "hit-01",
+          "volume": 90,
+          "pitch": 100,
+          "pan": 0
+        }
+      },
+      {
+        "id": "step-n7sopb609vd",
+        "type": "animation",
+        "duration": 20,
+        "role": "target",
+        "anchor": "home",
+        "x": 0,
+        "y": 0,
+        "z": 0,
+        "easing": "smooth",
+        "animationId": 1
+      },
+      {
+        "id": "step-ue1fcwlk29f",
+        "type": "impact",
+        "duration": 0,
+        "role": "allTargets",
+        "anchor": "home",
+        "x": 0,
+        "y": 0,
+        "z": 0,
+        "easing": "smooth"
+      },
+      {
+        "id": "step-3eegr1wf8xm",
+        "type": "motion",
+        "duration": 0,
+        "role": "user",
+        "anchor": "home",
+        "x": 0,
+        "y": 0,
+        "z": 0,
+        "easing": "smooth",
+        "motion": "run"
+      },
+      {
+        "id": "step-w2zc3323j6r",
+        "type": "wait",
+        "duration": 20,
+        "role": "user",
+        "anchor": "home",
+        "x": 0,
+        "y": 0,
+        "z": 0,
+        "easing": "smooth"
+      },
+      {
+        "id": "step-28f6k34req0j",
+        "type": "motion",
+        "duration": 0,
+        "role": "user",
+        "anchor": "home",
+        "x": 0,
+        "y": 0,
+        "z": 0,
+        "easing": "smooth",
+        "motion": "run"
+      },
+      {
+        "id": "step-6fltcd54hj",
+        "type": "move",
+        "duration": 30,
+        "role": "user",
+        "anchor": "home",
+        "x": 0,
+        "y": 0,
+        "z": 0,
+        "easing": "linear",
+        "face": "movement"
+      },
+      {
+        "id": "step-n6n2jt5b87f",
+        "type": "motion",
+        "duration": 0,
+        "role": "user",
+        "anchor": "home",
+        "x": 0,
+        "y": 0,
+        "z": 0,
+        "easing": "smooth",
+        "motion": "idle"
+      },
+      {
+        "id": "step-qn4o1hqx86",
+        "type": "move",
+        "duration": 0,
+        "role": "user",
+        "anchor": "home",
+        "x": 0,
+        "y": 0,
+        "z": 0,
+        "easing": "smooth",
+        "face": "home"
+      },
+      {
+        "id": "step-g1aw8tne07m",
+        "type": "motion",
+        "duration": 0,
+        "role": "user",
+        "anchor": "home",
+        "x": 0,
+        "y": 0,
+        "z": 0,
+        "easing": "smooth",
+        "motion": "run"
+      }
+    ]
+  }
+]

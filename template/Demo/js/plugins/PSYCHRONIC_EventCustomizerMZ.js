@@ -2307,8 +2307,8 @@
                 const distanceY = Math.abs(this.y - destY);
                 const totalDistance = distanceX + distanceY;
 
-                // Clear destination if reached (within 1 tile)
-                if (totalDistance === 0 || (enableDiagonalMovement && distanceX <= 1 && distanceY <= 1 && totalDistance <= 1)) {
+                // Arrive on the clicked tile, including with diagonal movement enabled.
+                if (totalDistance === 0) {
                     $gameTemp.clearDestination();
                     return;
                 }
@@ -2348,10 +2348,6 @@
             const distanceY = Math.abs(this.y - goalY);
 
             if (distanceX === 0 && distanceY === 0) {
-                return 0;
-            }
-
-            if (distanceX <= 1 && distanceY <= 1 && (distanceX + distanceY) <= 1) {
                 return 0;
             }
 

@@ -6,6 +6,12 @@ Use RPG Reactor to create, edit, playtest, and package 2D RPGs with familiar RPG
 
 Pre-built download binaries are available at <https://psychronic.itch.io/rpg-reactor>. The current development version is 0.98.5 and is not published yet; the latest tagged source release is [0.98.4](https://github.com/Psychronic-Games/RPGReactor/releases/tag/v0.98.4).
 
+## What's new in 0.98.5
+
+Build map-based Battle Rooms and visual Action Sequences with reusable attack steps, 2D/3D battlers, and cinematic cameras. Place native lighting and image/video media surfaces, author quests and custom interfaces, and use the expanded audio and model tools. This release also includes MV/MZ compatibility fixes, safer event/map saving, and a theme/localization pass.
+
+Read the [0.98.5 release notes](docs/posts/release-notes-0.98.5.md), [battle authoring guide](docs/BATTLE-PRESENTATION.md), and [media surface guide](docs/MEDIA-SURFACES.md). New battle presentation is opt-in; the guides describe current plugin and feature limitations.
+
 ## Repository Layout
 
 ```text

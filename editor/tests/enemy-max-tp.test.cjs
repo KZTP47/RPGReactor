@@ -167,22 +167,14 @@ test('an enemy with no params still yields the full row list', () => {
 });
 
 // ---------------------------------------------------------------------------
-// The value boxes size to what they hold
+// Consistent value boxes, independent of the number being edited.
 // ---------------------------------------------------------------------------
 
-test('a parameter box is sized from its digits, with a floor and a ceiling', () => {
+test('all parameter boxes have equal room for large values and steppers', () => {
     const editor = loadEnemyEditor();
-    const chOf = value => Number(/calc\((\d+)ch/.exec(editor.paramInputWidth(value))[1]);
-
-    assert.equal(chOf(7), 2, 'a single digit still gets a box wide enough to click');
-    assert.equal(chOf(25), 2);
-    assert.equal(chOf(200), 3);
-    assert.equal(chOf(123456), 6, 'a six-digit Max HP gets the room it needs');
-    assert.equal(chOf('1234567890123'), 13, 'a thirteen-digit value is still shown whole');
-    assert.equal(chOf('123456789012345678'), 15,
-        'and past the length a Number holds exactly, the box stops growing');
-    assert.equal(chOf(''), 2, 'an empty box does not collapse');
-    assert.equal(chOf('-40'), 2, 'the sign is not a digit');
+    const widths = [7, 25, 200, 123456, '123456789012345', ''].map(value => editor.paramInputWidth(value));
+    assert.equal(new Set(widths).size, 1);
+    assert.match(widths[0], /15ch/);
 });
 
 test('the width allowance leaves the digits clear of the arrows', () => {

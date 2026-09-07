@@ -132,12 +132,88 @@ Options mutation, and Save/Load slots.
 
 The generic stock-scene action is limited to Title, Main Menu, Item, Skill,
 Equip, Status, Options, Save, Load, and Game End. It does not accept arbitrary
-named plugin scenes and it does not provide Shop goods or transaction behavior.
+named plugin scenes; **Open plugin scene** is a separate action for that purpose.
+Neither scene action provides Shop goods or transaction behavior.
 Opening a stock scene is not the same as replacing that workflow.
 
-The generated Main Menu publishes `selectedActor`. Its Skill and Equip commands
-set that actor and launch the stock Skill or Equip scene; Status sets the actor
-and opens the configured Status replacement when valid, otherwise stock Status.
+The generated Main Menu publishes `selectedActor` through an **Actor Panel**.
+This is a party List with `rowLayout: "actorPanel"`: each selectable row contains
+the actual actor's portrait, name, class, level and enabled gauges. Add Node
+includes Actor Panel; the Inspector edits row height, portrait size, visible
+fields (portrait/name/class/level/HP/MP/TP/EXP/States), text styling and selection styles.
+**Panel elements → Edit element** selects the portrait, name, class, level, or
+an individual gauge bar, label, or value. Each part has its own X/Y, width,
+height and visibility. Text parts have font size, alignment and color; bars
+have gradient/background colors, Rectangle, Rounded, Cut Corners and Circular shapes. Circular gauges expose
+ring thickness; other shapes expose corner size where applicable. A larger
+style preview makes the result visible even when a bar is thin. Values can show current, current/maximum, or percent. A dashed outline
+identifies the selected part in the first preview row. Coordinates are relative
+to each actor row, so one edit applies to the whole party. **Reset Element** removes
+only that part's overrides. Padding and spacing control the automatic layout.
+Bars and text occupy separate rectangles by default, and text/icon rendering
+respects the element's font and bounds. Legacy 192-pixel rows upgrade once to
+256 pixels for readable defaults; version 2 and later preserve subsequent manual
+row-height choices. `actorLayoutVersion: 3` adds States once to existing panels
+and preserves later decisions to turn it off. `actorElements` stores sparse overrides by part name, such
+as `hp`, `hpLabel`, and `hpValue`.
+
+The **Custom Element / Custom Label / Custom Value / Custom Gauge** picker adds
+parts with independent placement and styling. Custom Element draws a decorative
+shape; labels support actor tokens and text codes; values and gauges bind to
+actor stats or a game variable. A variable gauge uses a fixed maximum or a second
+variable. Game variables are shared across actors. Editor variable previews use
+sample values; playtests use the live values. Custom parts use `custom_N` keys in
+`actorElements`, with a validated kind, source and variable IDs. Remove deletes a
+custom part; Reset Element restores its layout/style while retaining its source.
+
+**States** shows the actor's active state and buff icons. Adjust its position,
+size, icon size and spacing like other parts. The editor shows example database
+icons; the runtime only shows active effects. State, stat and referenced-variable
+changes refresh visible rows without requiring a selection change.
+
+Behavior script and condition fields resize vertically. **Expand Script** opens
+a larger multiline editor with Apply and Cancel; Apply participates in undo.
+
+The normal windowskin cursor covers the entire actor row. Portraits honor
+runtime 3D face bindings. Labels render escape codes, including `\i[n]` and
+`\I[n]`; the editor preview accepts both cases too.
+
+Item, Skill, Equip and Status buttons transfer focus to the panel before opening
+the requested scene. Confirm sets the menu actor; cancel returns to the command.
+No second list or popup is created. A custom party List bound to the action's
+context can also be used. The **Select Actor** action checkbox controls this
+step; turn it off to open directly from an already selected actor context.
+Personal actions on List rows execute directly. Item still uses the stock shared
+party inventory and recipient-selection workflow after the actor choice.
+Status respects its configured replacement.
+
+**Formation** focuses the same Actor Panel. Confirm one actor, then another to
+swap them; a pending highlight marks the first actor. Cancel clears a pending
+choice, then returns to the command. Party size, formation enablement and each
+actor's formation lock are respected. Generated menus include Formation when
+System enables it. Existing baseline command groups upgrade once, tracked by
+`menuCommandVersion: 2`, so subsequently deleting Formation remains intentional.
+
+Custom commands are Button nodes. Visible and Enabled accept script expressions
+or explicit return bodies. An optional Label expression supplies dynamic text;
+the Text field is the editor preview and runtime fallback. **Open plugin scene**
+takes an exported scene class name and an optional array expression of arguments.
+For the Demo's skill-tree plugin, use `Scene_SkillTree` and `[actor.actorId()]`.
+**Select actor first** also works for Plugin command and Run script actions.
+Scripts receive `scene` and `actor`; plugin-command arguments can use `{actor.id}`
+and `{actor.name}`. Scene pushes preserve the interface and command focus on
+return, including synchronous pushes made by a script or plugin command.
+
+Older stock Main Menus upgrade their named Party box and generated single-actor
+details to the integrated panel when normalized, retaining the party section's
+outer geometry and unrelated authored nodes. Existing projects need no manual
+JSON edits. Actor contexts initialize from the current menu actor so older
+context-based enable conditions work before the player makes a selection.
+
+Script conditions accept either an expression (`$gameParty.exists()`) or a
+function body with an explicit `return`. Action scripts keep statement semantics.
+One input event is consumed once, including when a List confirmation or cancel
+changes focus during the window update.
 
 The `options` List is functional rather than decorative. It exposes Always
 Dash, Command Remember, Touch UI where supported, and BGM/BGS/ME/SE volume.
@@ -192,7 +268,14 @@ at 620px. Layers are listed **Back -> Front**. A
 parent always draws before its children and later rows draw on top. Four sibling
 operations move a whole subtree to either endpoint or by one step, and safe
 drag-and-drop can reorder siblings or put a subtree inside a Box/Image while
-preserving its screen rectangle. The canvas supports drag/resize, anchors,
+preserving its screen rectangle. Ctrl/Cmd-click toggles layers, Shift-click
+selects a range, and Ctrl/Cmd+A selects all. Selected roots move together on the
+canvas or with arrow-key nudges (Shift for larger steps); selected descendants
+follow their parents once. The Inspector exposes group X/Y. Reordering,
+reparenting, duplication and deletion operate on the selection with one undo
+step. Duplicating a parent carries its subtree and remaps internal parent/focus
+links. Layers have a wider column and contrasting selection handles. The canvas
+supports drag/resize, anchors,
 parenting, grid/snap, undo/redo, and **Playtest Interface**. That preview sets up
 game objects, opens no title or map, draws over black, and exits when the root
 interface closes. It is the authoritative runtime preview.
@@ -256,7 +339,7 @@ does not recurse.
 
 ## Explicit boundaries
 
-Item, Skill, Equip, Shop, Formation, Name Input and message-input workflows,
+Item, Skill, Equip, Shop, Name Input and message-input workflows,
 and Battle remain stock and unreplaceable until dedicated workflow adapters
 exist. They may be launched where a stock-scene action exists, and they may be
 captured as visual references, but a custom record cannot assume their selection,

@@ -130,7 +130,7 @@ test('responsive editor uses one bounded workspace with a contained intermediate
     assert.doesNotMatch(source, /rr-ui-props-panel is-open/, 'the narrow Inspector drawer starts closed');
     assert.doesNotMatch(source, /rr-ui-general|rr-ui-more|Select a node on the canvas or in the list\./);
     assert.match(source, /<div class="rr-ui-toolbar"[\s\S]*?rr-ui-toolbar-name[\s\S]*?rr-ui-toolbar-presentation[\s\S]*?rr-ui-replacements[\s\S]*?rr-ui-interface-settings[\s\S]*?rr-ui-playtest[\s\S]*?<\/div>\s*<div class="rr-ui-workspace">/);
-    assert.match(css, /@container database-detail \(max-width: 1050px\)[\s\S]*?grid-template-columns: minmax\(190px, 230px\) minmax\(0, 1fr\)/);
+    assert.match(css, /@container database-detail \(max-width: 1050px\)[\s\S]*?grid-template-columns: minmax\(240px, 300px\) minmax\(0, 1fr\)/);
     assert.match(css, /\.rr-ui-workspace > \.database-section\.rr-ui-props-panel \{[\s\S]*?display: none;[\s\S]*?position: absolute;[\s\S]*?bottom: 0/);
     assert.match(css, /\.rr-ui-workspace > \.database-section\.rr-ui-props-panel\.is-open \{[\s\S]*?display: flex/);
     assert.match(css, /@container database-detail \(max-width: 620px\)/);
@@ -191,4 +191,72 @@ test('all redesign labels are hand-authored in every non-English locale', () => 
     for (const [locale, entries] of Object.entries(context.deep)) for (const phrase of phrases) {
         assert.ok(entries[phrase], `${locale}: ${phrase}`);
     }
+});
+
+test('multi-selection toggles and ranges in layer order; movement carries selected descendants only once', () => {
+    const editor = editorWith();
+    silenceRendering(editor);
+    editor.current = { nodes: [
+        {...Editor.defaultNode('box', 1), x: 100, y: 80},
+        {...Editor.defaultNode('text', 2), parent: 1, x: 10, y: 12},
+        {...Editor.defaultNode('button', 3), x: 400, y: 90},
+        {...Editor.defaultNode('text', 4), x: 500, y: 120}
+    ], firstFocus: 3 };
+    editor.select(1);
+    editor.select(3, {range:true});
+    assert.deepEqual(editor.selectedNodes().map(n=>n.id), [1,2,3]);
+    assert.deepEqual(editor.selectionRoots().map(n=>n.id), [1,3]);
+    const before = editor.snapshot();
+    editor.pushUndo();
+    editor.translateSelection(17, -9);
+    assert.deepEqual(editor.current.nodes.map(n=>[n.x,n.y]), [[117,71],[10,12],[417,81],[500,120]]);
+    editor.undo();
+    assert.equal(editor.snapshot(), before);
+    editor.redo();
+    assert.equal(editor.node(2).x, 10);
+    editor.select(2, {toggle:true});
+    assert.deepEqual(editor.selectedNodes().map(n=>n.id), [1,3]);
+    editor.select(4, {toggle:true});
+    assert.deepEqual(editor.selectedNodes().map(n=>n.id), [1,3,4]);
+});
+
+test('group reparent, reorder, duplicate and delete preserve subtree links and undo atomically', () => {
+    const editor = editorWith();
+    silenceRendering(editor);
+    editor.current = {nodes:[
+        {...Editor.defaultNode('box',1),x:80,y:40},
+        {...Editor.defaultNode('text',2),parent:1,x:8,y:12},
+        {...Editor.defaultNode('button',3),x:300,y:20,focusRight:4},
+        {...Editor.defaultNode('button',4),x:420,y:30,focusLeft:3},
+        {...Editor.defaultNode('box',5),x:500,y:100}
+    ],firstFocus:3};
+    editor.select(1); editor.select(3,{toggle:true});
+    const before=editor.snapshot(), rects=editor.rects();
+    assert.equal(editor.moveNodeTo(1,2,'inside'),false,'cannot drop a group into its descendant');
+    assert.equal(editor.moveNodeTo(1,5,'inside'),true);
+    for (const id of [1,2,3]) assert.deepEqual(editor.rects().get(id),rects.get(id));
+    assert.equal(editor.undoStack.length,1);
+    editor.undo(); assert.equal(editor.snapshot(),before);
+    editor.select(3); editor.select(4,{toggle:true});
+    editor.moveNode(3,-Infinity);
+    assert.deepEqual(editor.current.nodes.map(n=>n.id),[3,4,1,2,5]);
+    editor.duplicateNode(3);
+    const copies=editor.selectedNodes();
+    assert.equal(copies.length,2);
+    assert.equal(copies[0].focusRight,copies[1].id);
+    assert.equal(copies[1].focusLeft,copies[0].id);
+    editor.deleteNode(copies[0].id);
+    assert.equal(editor.current.nodes.length,5);
+    editor.undo(); assert.equal(editor.current.nodes.length,7);
+    editor.select(1); editor.select(2,{toggle:true}); editor.deleteNode(1);
+    assert.equal(editor.node(1),null); assert.equal(editor.node(2),null);
+    editor.undo(); assert.equal(editor.node(2).parent,1);
+});
+
+test('text preview accepts lowercase and uppercase icon and color escape codes', () => {
+    const editor=editorWith();
+    const node={...Editor.defaultNode('text',1),text:'\\i[305] Knowledge \\I[4] \\c[2]Color'};
+    const runs=editor.parseText(node)[0].runs;
+    assert.deepEqual(runs.filter(run=>run.icon!==undefined).map(run=>run.icon),[305,4]);
+    assert.equal(runs.at(-1).text,'Color');
 });

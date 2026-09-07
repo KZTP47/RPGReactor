@@ -105,7 +105,7 @@ test('the game overlay context follows the same policy through Graphics', () => 
     assert.equal((sprites.match(/Graphics\.effekseer\.endDraw\(\);\s*\n\s*Graphics\.settleEffekseerState\(\);/g) || []).length, 2,
         'both Sprite_Animation draw paths settle after endDraw');
     assert.match(read('runtime/reactor_3d.js'), /efx\.endDraw\(\);\s*\n\s*if \(typeof Graphics !== "undefined" && Graphics\.settleEffekseerState\) Graphics\.settleEffekseerState\(\);/);
-    assert.match(read('runtime/reactor_main.js'), /runtime revision: 20260904.17/);
+    assert.match(read('runtime/reactor_main.js'), /runtime revision: 20260906\.19/);
 });
 
 test('the editor lights pass draws nothing but the light group', () => {
@@ -135,6 +135,6 @@ test('i18n text passes write only what changed, so the observer cannot feed itse
 });
 
 test('a video surface preview recompiles its material only when its blend state changes', () => {
-    const source = read('editor/src/VideoSurfacePreviewManager.js');
+    const source = read('editor/src/MediaSurfacePreviewManager.js');
     assert.match(source, /if \(owner\.material\.transparent !== transparent \|\| owner\.material\.depthWrite !== depthWrite\) \{\s*\n\s*owner\.material\.transparent = transparent;\s*\n\s*owner\.material\.depthWrite = depthWrite;\s*\n\s*owner\.material\.needsUpdate = true;/);
 });

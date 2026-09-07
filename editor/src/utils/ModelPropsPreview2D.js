@@ -112,7 +112,7 @@ class ModelPropsPreview2D {
                 repeat: entry.prop.repeat, speed: entry.prop.animationSpeed
             });
             entry.driver = this.animatedModels.find(driver => driver.object === entry.object);
-            this.isolateLighting(entry.object);
+            entry.lighting = this.isolateLighting(entry.object);
             const sharedGeometry = new Set();
             template.traverse(node => { if (node.geometry) sharedGeometry.add(node.geometry); });
             entry.ownedGeometry = new Set();
@@ -140,12 +140,17 @@ class ModelPropsPreview2D {
     }
 
     isolateLighting(object) {
-        // Imported materials normally read the runtime's shared map uniforms.
-        // A database/3D preview must not change the retained flat model's next
-        // frame. Flat ambient is applied once by the manager's sprite tint.
-        const uniforms = this._modelLighting || (this._modelLighting = {
-            rrLightCount: { value: 0 }, rrAmbient: { value: new Float32Array([1, 1, 1]) }
-        });
+        // Each retained texture owns its light field. Other viewports can
+        // update the runtime singleton without changing this model's pixels.
+        const count = Reactor3D.SHADER_LIGHTS;
+        const uniforms = {
+            rrLightCount: { value: 0 }, rrAmbient: { value: new Float32Array([1, 1, 1]) },
+            rrLightPos: { value: new Float32Array(count * 4) },
+            rrLightColor: { value: new Float32Array(count * 4) },
+            rrLightAim: { value: new Float32Array(count * 4) },
+            rrLightShadow: { value: new Float32Array(count).fill(-1) },
+            rrLightGridEnabled: { value: 0 }
+        };
         const materials = new Set();
         object.traverse(node => [node.material].flat().filter(Boolean).forEach(material => materials.add(material)));
         for (const material of materials) {
@@ -155,9 +160,31 @@ class ModelPropsPreview2D {
                 earlier.call(this, shader, renderer);
                 Object.assign(shader.uniforms, uniforms);
             };
-            material.customProgramCacheKey = function() { return key.call(this) + '|flat-preview-ambient'; };
+            material.customProgramCacheKey = function() { return key.call(this) + '|flat-preview-light-field'; };
             material.needsUpdate = true;
         }
+        return uniforms;
+    }
+
+    syncLighting(entry, lights, ambient) {
+        if (!entry.lighting) return;
+        const prop = entry.prop, reach = entry.radius || 0;
+        const local = [];
+        for (const light of lights) {
+            const source = FlatLightField2D.source(light);
+            const x = source.x - (prop.x + 0.5), y = source.y - (prop.z || 0), z = source.z - (prop.y + 0.5);
+            // A conservative sphere includes tall models and lights that
+            // reach a surface without ever reaching the floor.
+            if (Math.hypot(x, y, z) > reach + light.radius) continue;
+            local.push({ ...light, x: x - 0.5, y: z - 1, height: y, groundY: 0, yaw: -(light.yaw || 0) });
+        }
+        local.sort((a, b) => Math.hypot(a.x + 0.5, a.height, a.y + 1) - Math.hypot(b.x + 0.5, b.height, b.y + 1));
+        const selected = local.slice(0, Reactor3D.SHADER_LIGHTS);
+        const key = JSON.stringify([ambient, selected.map(l => [l.type, l.x, l.y, l.height, l.radius, l.colour, l.intensity, l.yaw, l.pitch, l.angle, l.width])]);
+        if (key === entry.lightingKey) return;
+        Reactor3D.packLightUniforms(selected, ambient, entry.lighting);
+        entry.lightingKey = key;
+        entry.dirty = true;
     }
 
     ensureViewport() {
@@ -235,6 +262,7 @@ class ModelPropsPreview2D {
             entry.texture = new PIXI.Texture({ source, rotate: PIXI.groupD8.MIRROR_VERTICAL });
             entry.sprite.texture = entry.texture;
         }
+        entry.media?.paint();
         viewport.renderInto(entry.target, entry.scene, entry.camera);
         entry.sprite.width = entry.sprite.height = entry.radius * 2 * entry.tw;
         entry.dirty = false;
@@ -282,11 +310,10 @@ class ModelPropsPreview2D {
             if (entry.density !== density) { entry.density = density; entry.dirty = true; }
             const moving = !!entry.driver && (!!entry.driver.action || entry.driver.rules.some(rule => ['always', 'idle'].includes(rule.trigger)));
             if (entry.wasMoving && !moving) entry.dirty = true;
-            const paintTick = Math.floor(now * 0.06);
-            if (visible && entry.paintedTick !== paintTick && (entry.dirty || (moving && entry.paintedFrame !== entry.driver.previewFrame) || (entry.wasMoving && !moving) || !entry.decoded)) {
-                this.paint(entry); entry.paintedTick = paintTick;
-            }
+            entry.visible = visible;
+            entry.moving = moving;
             entry.wasMoving = moving;
+            if (decoded && !entry.decoded) entry.dirty = true;
             entry.decoded = decoded;
             for (const effect of entry.effects) {
                 if (effect.type !== 'light' && !effect.light) continue;
@@ -302,7 +329,21 @@ class ModelPropsPreview2D {
                     height: 0, yaw: -light.yaw, animated: true });
             }
         }
-        this.shadows.update(lights.concat(this.manager.projectController?.lightingManager?.resolvedLights(now * 0.06) || []), now);
+        const lighting = manager.projectController?.lightingManager;
+        const allLights = lights.concat(lighting?.resolvedLights(now * 0.06) || []);
+        const rawAmbient = lighting?.ambient();
+        const enabled = rawAmbient?.enabled !== false;
+        const ambient = enabled && rawAmbient ? { intensity: rawAmbient.ambient ?? 1,
+            colour: Number.parseInt((rawAmbient.ambientColour || '#ffffff').slice(1), 16) } : { intensity: 1, colour: 0xffffff };
+        for (const entry of this.entries.values()) {
+            if (!entry.sprite) continue;
+            this.syncLighting(entry, enabled ? allLights : [], ambient);
+            if (entry.visible && entry.paintedTick !== previewTick && (entry.dirty ||
+                (entry.moving && entry.paintedFrame !== entry.driver.previewFrame) || !entry.decoded)) {
+                this.paint(entry); entry.paintedTick = previewTick;
+            }
+        }
+        this.shadows.update(enabled ? allLights : [], now);
         this.lights = lights;
     }
 }

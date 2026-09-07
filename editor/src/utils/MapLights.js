@@ -56,7 +56,14 @@
           template: { key: 'streetlamp', color: '#ffd9a0', type: 'point', compound: [
               { type: 'point', color: '#ffd9a0', radius: 5.5, intensity: 1.2, height: 3 },
               { type: 'point', color: '#fff3d6', radius: 1.2, intensity: 1.6, height: 3.2, flicker: 0.06 }
-          ] } }
+          ] } },
+        { key: 'compound', labelKey: 'lit.preset.compound',
+          template: { key: 'compound', type: 'point', color: '#a583ff', compound: [
+              { type: 'point', color: '#a583ff', radius: 3, intensity: 0.5, height: 2.5 },
+              { type: 'spot', color: '#eaf6ff', radius: 6, intensity: 1, height: 2.5, pitch: -60 }
+          ] } },
+        { key: 'fluorescent', labelKey: 'lit.preset.fluorescent',
+          template: { key: 'fluorescent', type: 'point', color: '#d9f3ff', radius: 7, intensity: 1.15, height: 3, flicker: 0.06 } }
     ];
     /** A preset's template as a fresh copy, so a caller can write into it. */
     const presetTemplate = key => {
@@ -122,6 +129,10 @@
                 period: number(raw.pulse.period, 90, 2, 100000)
             } : null
         };
+        if (raw.compoundId && ID_PATTERN.test(String(raw.compoundId))) {
+            light.compoundId = String(raw.compoundId);
+            light.compoundName = String(raw.compoundName || '').slice(0, 80);
+        }
         if (!light.attach) light.attach = null;
         return light;
     };
@@ -204,6 +215,99 @@
         return add(mapData, copy);
     };
 
+    /** Components stay ordinary runtime lights; this metadata groups editor operations. */
+    const members = (mapData, id) => {
+        const light = get(mapData, id);
+        return !light ? [] : light.compoundId
+            ? list(mapData).filter(entry => entry.compoundId === light.compoundId) : [light];
+    };
+
+    const fixtures = mapData => {
+        const seen = new Set();
+        return list(mapData).filter(light => {
+            if (!light.compoundId) return true;
+            if (seen.has(light.compoundId)) return false;
+            seen.add(light.compoundId);
+            return true;
+        });
+    };
+
+    const freshCompoundId = (mapData, prefix = 'compound') => {
+        const taken = new Set(list(mapData).flatMap(light => [light.compoundId, light.tag]));
+        let n = 1;
+        while (taken.has(prefix + n)) n++;
+        return prefix + n;
+    };
+
+    const freshCompoundName = (mapData, name) => {
+        const taken = new Set(fixtures(mapData).map(light => light.compoundName));
+        if (!taken.has(name)) return name;
+        let n = 2;
+        while (taken.has(name + ' ' + n)) n++;
+        return name + ' ' + n;
+    };
+
+    const createCompound = (mapData, parts, x, y, name, prefix = 'compound') => {
+        const compoundId = freshCompoundId(mapData, prefix);
+        name = freshCompoundName(mapData, name);
+        let first = null;
+        for (const part of parts) {
+            const light = add(mapData, Object.assign({}, part, {
+                x: x + number(part.x, 0, -10000, 10000), y: y + number(part.y, 0, -10000, 10000),
+                compoundId, compoundName: name, tag: compoundId
+            }));
+            if (!first) first = light;
+        }
+        return first;
+    };
+
+    const moveFixture = (mapData, id, patch) => {
+        const source = get(mapData, id);
+        if (!source) return null;
+        const anchor = normalize(source, id);
+        const bounded = normalize(Object.assign({}, anchor, patch), id);
+        const parts = members(mapData, id).map(light => normalize(light, light.id));
+        const offsets = {};
+        for (const key of ['x', 'y', 'height']) {
+            if (patch[key] === undefined) continue;
+            const min = key === 'height' ? 0 : -10000, max = key === 'height' ? 512 : 10000;
+            const low = Math.max(...parts.map(light => min - light[key]));
+            const high = Math.min(...parts.map(light => max - light[key]));
+            offsets[key] = Math.max(low, Math.min(high, bounded[key] - anchor[key]));
+        }
+        for (const light of parts) {
+            const moved = {};
+            for (const key of Object.keys(offsets)) moved[key] = light[key] + offsets[key];
+            update(mapData, light.id, moved);
+        }
+        return get(mapData, id);
+    };
+
+    const removeFixture = (mapData, id) => {
+        const parts = members(mapData, id);
+        for (const light of parts) remove(mapData, light.id);
+        return parts.length > 0;
+    };
+
+    const duplicateFixture = (mapData, id) => {
+        const source = get(mapData, id);
+        if (!source?.compoundId) return duplicate(mapData, id);
+        const compoundId = freshCompoundId(mapData);
+        const compoundName = freshCompoundName(mapData, source.compoundName);
+        let first = null;
+        for (const part of members(mapData, id)) {
+            const copy = JSON.parse(JSON.stringify(part));
+            delete copy.id;
+            copy.x += 1;
+            copy.compoundId = compoundId;
+            copy.compoundName = compoundName;
+            if (copy.tag === source.compoundId) copy.tag = compoundId;
+            const light = add(mapData, copy);
+            if (!first) first = light;
+        }
+        return first;
+    };
+
     /** The ambient block with the runtime's own defaults filled in. */
     const ambient = mapData => {
         const sidecar = mapData && mapData.reactor3d;
@@ -280,6 +384,7 @@
         tags,
         remove,
         duplicate,
+        members, fixtures, createCompound, moveFixture, removeFixture, duplicateFixture,
         ambient,
         setAmbient,
         snapshot,

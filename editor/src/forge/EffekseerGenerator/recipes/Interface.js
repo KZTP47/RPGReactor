@@ -9,8 +9,8 @@
  * eased-scale bars, glyph flickers and data columns. Each interface has
  * its own distinct silhouette, motion rhythm, and palette hooks.
  *
- * Conventions (see project rules): authored Y-up (the editor's category
- * flip wrapper turns it upright), easing params [0,0,1] = linear
+ * Conventions: authored Y-up, matching the editor and runtime Effekseer
+ * cameras without a category flip. Easing params [0,0,1] = linear
  * ([0,0,0] freezes), fade envelopes keep [0,0,0], UV scroll on closed
  * rings uses INTEGER repeats, world-fixed planes use billboard 2 and
  * screen-space HUD elements billboard 0, flat ground rings need a
@@ -1879,7 +1879,7 @@
                 }));
             }
 
-            // route waypoints (authored Y-up; flip renders it upright)
+            // Route waypoints in the camera's Y-up coordinates.
             const WP = [[-0.6, -0.22], [-0.16, 0.16], [0.28, -0.12], [0.62, 0.3]];
             for (const [wx, wy] of WP) {
                 nodes.push(band({ tex: TEX.ring, radius: 0.035, width: 0.3, color: cr,

@@ -54,7 +54,7 @@ class DatabaseEnemyEditor {
                         </span>
                     </div>
                 </div>
-                <div class="form-row">
+                <div class="form-row enemy-image-controls">
                     <div class="form-group-fixed">
                         <label class="database-field-label">${tt('Battler Image:')}</label>
                         <span class="database-field-value" style="display: inline-block; width: 150px; padding: 4px 6px; background: var(--color-bg-menubar); border: 1px solid var(--color-border-input); border-radius: 3px; color: var(--color-text); font-size: 12px; vertical-align: middle; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${enemy.battlerName ? this.escapeHTML(enemy.battlerName) : tt('(None)')}</span>
@@ -64,7 +64,7 @@ class DatabaseEnemyEditor {
                 <div id="enemy-battler-preview-${enemy.id}" style="min-height: 100px; background: var(--color-bg-base); border: 1px solid var(--color-border); border-radius: 4px; display: flex; align-items: center; justify-content: center; margin: 4px 0 8px 0; overflow: hidden; padding: 8px;">
                     <span style="color: var(--color-border-input); font-size: 11px;">${tt('(No battler)')}</span>
                 </div>
-                <div class="form-row">
+                <div class="form-row enemy-image-controls">
                     <div class="form-group" style="flex: 1;">
                         <label class="database-field-label">${tt('Battler Hue:')}</label>
                         <div style="display: flex; align-items: center; gap: 8px;">
@@ -90,11 +90,21 @@ class DatabaseEnemyEditor {
         topRow.appendChild(generalSection);
 
         if (typeof RRDatabase3DBindings !== 'undefined') {
-            RRDatabase3DBindings.attachRow(generalSection.querySelector('.database-section-content'), {
+            const host = generalSection.querySelector('.database-section-content');
+            const row = RRDatabase3DBindings.attachRow(host, {
                 projectManager: this.projectManager,
                 section: 'enemies',
-                id: enemy.id
+                id: enemy.id,
+                onSync: spec => {
+                    for (const controls of host.querySelectorAll('.enemy-image-controls')) {
+                        controls.style.display = spec ? 'none' : '';
+                        for (const input of controls.querySelectorAll('input,button')) input.disabled = !!spec;
+                    }
+                },
+                onChange: () => { this.loadBattlerPreview(enemy); this.parentEditor.refreshListIcon(enemy, 'enemies'); }
             });
+            // Choose the active graphic above its preview, as on actor slots.
+            if (row) host.insertBefore(row, host.querySelector('.enemy-image-controls'));
         }
 
         // Parameters Section
@@ -135,7 +145,7 @@ class DatabaseEnemyEditor {
                                            data-field="${row.field}"
                                            ${row.index === null ? '' : `data-param-index="${row.index}"`}
                                            data-enemy-id="${enemy.id}"
-                                           style="width: ${this.paramInputWidth(row.value)}; background: var(--color-bg-panel);">
+                                           style="width: ${this.paramInputWidth()}; background: var(--color-bg-panel);">
                                 </td>
                             </tr>
                         `).join('')}
@@ -162,6 +172,7 @@ class DatabaseEnemyEditor {
 
         // Battler change button listener + preview + hue slider
         setTimeout(() => {
+            if (!wrapper.isConnected || this.currentEnemy !== enemy) return;
             const battlerBtn = document.getElementById(`enemy-change-battler-${enemy.id}`);
             if (battlerBtn) {
                 battlerBtn.addEventListener('click', () => this.selectBattlerImage(enemy));
@@ -178,7 +189,7 @@ class DatabaseEnemyEditor {
             if (hueSlider && hueNumber) {
                 const applyHue = (val) => {
                     if (previewContainer) {
-                        previewContainer.style.filter = val > 0 ? `hue-rotate(${val}deg)` : '';
+                        previewContainer.style.filter = !previewContainer.dataset.model && val > 0 ? `hue-rotate(${val}deg)` : '';
                     }
                 };
 
@@ -272,7 +283,7 @@ class DatabaseEnemyEditor {
                 <table class="traits-table" id="enemy-traits-table-${enemy.id}">
                     <thead>
                         <tr>
-                            <th colspan="2">${tt('Type')}</th>
+                            <th class="trait-indicator-heading" aria-hidden="true"></th><th scope="col">${tt('Type')}</th>
                             <th>${tt('Content')}</th>
                         </tr>
                     </thead>
@@ -350,7 +361,6 @@ class DatabaseEnemyEditor {
             // Setup drop kind change listeners for show/hide behavior
             this.setupDropKindListeners(enemy);
             this.setupDropRateListeners(enemy);
-            this.setupParamInputListeners(enemy);
         }, 0);
     }
 
@@ -385,43 +395,10 @@ class DatabaseEnemyEditor {
         return Number.isFinite(stored) ? Math.max(0, stored) : DatabaseEnemyEditor.DEFAULT_MAX_TP;
     }
 
-    /**
-     * A value box sized to the number it holds, in `ch` (a digit in the
-     * field's own font) plus the chrome beside the digits: 12px of input
-     * padding, the wrapper's 1px borders and the 22px themed stepper, with
-     * the remainder slack so the caret never sits against the arrows.
-     *
-     * Two digits is the floor, so a single digit is not a sliver. Fifteen is
-     * the ceiling, because that is the last length every value of which a
-     * Number holds exactly -- MAX_SAFE_INTEGER is sixteen digits and does not
-     * reach the end of them -- so a number the box refuses to widen for is
-     * already a number the engine cannot store. It is also short enough that
-     * the Value column still has slack at the narrowest the section is laid
-     * out, so even the widest box grows without moving anything.
-     */
-    paramInputWidth(value) {
-        const digits = String(value ?? '').replace(/[^0-9]/g, '').length;
-        return `calc(${Math.min(15, Math.max(2, digits))}ch + 48px)`;
-    }
-
-    /**
-     * NumberSteppers wraps every number field: it moves the field's width onto
-     * the `.rr-number-stepper` wrapper and leaves the input flexing to fill
-     * whatever the wrapper is. A width written to the input is therefore
-     * ignored, and the box stays at the size it was first rendered at while
-     * the digits typed into it run past the edge. Size whichever element
-     * actually owns the box, resolved on each pass because the wrapper is
-     * added by an observer rather than by this render.
-     */
-    setupParamInputListeners(enemy) {
-        document.querySelectorAll(`.enemy-param-input[data-enemy-id="${enemy.id}"]`).forEach(input => {
-            const resize = () => {
-                const box = input.closest('.rr-number-stepper') || input;
-                box.style.width = this.paramInputWidth(input.value);
-            };
-            input.addEventListener('input', resize);
-            resize();
-        });
+    // Every parameter gets the same space, including the themed stepper.
+    // Editing HP must not change the alignment of the other values.
+    paramInputWidth() {
+        return 'calc(15ch + 48px)';
     }
 
     // ==========================================
@@ -1459,19 +1436,50 @@ class DatabaseEnemyEditor {
     // BATTLER PREVIEW
     // ==========================================
 
-    loadBattlerPreview(enemy) {
+    async loadBattlerPreview(enemy) {
         const tt = text => window.I18n ? window.I18n.tText(text) : text;
         const container = document.getElementById(`enemy-battler-preview-${enemy.id}`);
         if (!container) return;
 
-        const battlerName = enemy.battlerName;
-        if (!battlerName) {
-            container.innerHTML = `<span style="color: var(--color-border-input); font-size: 11px;">${tt('(No battler)')}</span>`;
-            return;
-        }
-
         const project = this.projectManager.getCurrentProject();
         if (!project) return;
+        const request = {};
+        container._battlerPreviewRequest = request;
+        const isCurrent = () => container.isConnected
+            && container._battlerPreviewRequest === request
+            && this.projectManager.getCurrentProject() === project;
+        const message = text => {
+            container.replaceChildren();
+            const label = document.createElement('span');
+            label.style.cssText = 'color:var(--color-text-muted);font-size:11px;';
+            label.textContent = tt(text);
+            container.appendChild(label);
+        };
+        try {
+            const spec = typeof RRDatabase3DBindings !== 'undefined'
+                ? RRDatabase3DBindings.get(project.path, 'enemies', enemy.id) : null;
+            container.dataset.model = spec ? 'true' : '';
+            container.style.filter = !spec && enemy.battlerHue > 0 ? `hue-rotate(${enemy.battlerHue}deg)` : '';
+            if (spec) {
+                message('Loading...');
+                const url = await RRDatabase3DBindings.modelThumbnail(this.parentEditor.reactor3dEditor, spec);
+                if (!isCurrent()) return;
+                if (!url) { message('(Failed to load)'); return; }
+                const model = new Image();
+                model.alt = spec.name;
+                model.style.cssText = 'max-width:100%;height:200px;object-fit:contain;image-rendering:auto;';
+                model.onerror = () => { if (isCurrent()) message('(Failed to load)'); };
+                model.src = url;
+                container.replaceChildren(model);
+                return;
+            }
+        } catch (error) {
+            if (isCurrent()) message('(Failed to load)');
+            console.error('Could not preview enemy model:', error);
+            return;
+        }
+        const battlerName = enemy.battlerName;
+        if (!battlerName) { message('(No battler)'); return; }
 
         const path = require('path');
 
@@ -1498,6 +1506,7 @@ class DatabaseEnemyEditor {
 
         const img = new Image();
         img.onload = () => {
+            if (!isCurrent()) return;
             container.innerHTML = '';
 
             if (isCharBattler) {
@@ -1529,6 +1538,7 @@ class DatabaseEnemyEditor {
             }
         };
         img.onerror = () => {
+            if (!isCurrent()) return;
             container.innerHTML = `<span style="color: var(--color-border-input); font-size: 11px;">${tt('(Failed to load)')}</span>`;
         };
         img.src = imagePath;

@@ -4898,3 +4898,520 @@ for (const [locale, translations] of Object.entries(RR_REVIEWED_PASSIVE_TEXT)) {
     target[key] = translations[index];
   });
 }
+
+// Battle Test identifies missing graphics before launching the game.
+for (const [locale, text] of Object.entries({
+  "ja": "戦闘グラフィックが見つかりません。別のアクターを選ぶか、アクター設定でグラフィックを指定してください。",
+  "zh-Hant": "缺少戰鬥圖像。請選擇其他角色，或在角色設定中指定圖像。",
+  "zh-Hans": "缺少战斗图像。请选择其他角色，或在角色设置中指定图像。",
+  "ko": "전투 그래픽이 없습니다. 다른 액터를 선택하거나 액터 설정에서 그래픽을 지정하세요.",
+  "es": "Falta el gráfico de batalla. Selecciona otro actor o configura su gráfico en Actores.",
+  "pt": "Gráfico de batalha ausente. Escolha outro ator ou configure seu gráfico em Atores.",
+  "fr": "Graphisme de combat introuvable. Choisissez un autre acteur ou définissez son graphisme dans Acteurs.",
+  "it": "Grafica di battaglia mancante. Scegli un altro attore o imposta la sua grafica in Attori.",
+  "de": "Kampfgrafik fehlt. Wähle einen anderen Akteur oder lege seine Grafik unter Akteure fest.",
+  "ru": "Нет боевой графики. Выберите другого персонажа или задайте его графику в разделе «Персонажи».",
+  "pl": "Brak grafiki walki. Wybierz innego aktora lub ustaw jego grafikę w sekcji Aktorzy.",
+  "el": "Λείπει το γραφικό μάχης. Επιλέξτε άλλον χαρακτήρα ή ορίστε το γραφικό του στους Χαρακτήρες.",
+  "ar": "رسوم المعركة مفقودة. اختر شخصية أخرى أو عيّن رسومها في قسم الشخصيات.",
+  "tr": "Savaş görseli eksik. Başka bir aktör seçin veya Aktörler bölümünde görselini ayarlayın.",
+  "id": "Grafis pertempuran tidak ditemukan. Pilih aktor lain atau atur grafisnya di bagian Aktor.",
+  "vi": "Thiếu hình ảnh chiến đấu. Chọn nhân vật khác hoặc đặt hình ảnh trong mục Nhân vật.",
+  "th": "ไม่พบภาพต่อสู้ เลือกตัวละครอื่นหรือตั้งค่าภาพในส่วนตัวละคร"
+})) {
+    globalThis.RR_REVIEWED_TRANSLATIONS.text[locale]["Missing battle graphic. Choose another actor or set their graphic in Actors."] = text;
+}
+
+// Visual unarmed attack building blocks and facing controls.
+{
+ const keys=['Unarmed Punch','Run to Target','Punch','Return Home','Approach Target','Stop Short (tiles)','Keep Facing','Direction of Travel','Home Facing','Unarmed Attack Sequence','Unknown facing mode.'];
+ const rows={
+ 'ja':['素手パンチ','対象へ走る','パンチ','初期位置に戻る','対象に接近','手前で停止（タイル）','向きを維持','移動方向','初期の向き','素手攻撃シーケンス','不明な向きモードです。'],
+ 'zh-Hant':['徒手拳擊','跑向目標','拳擊','返回原位','接近目標','提前停下（格）','保持朝向','移動方向','初始朝向','徒手攻擊序列','未知的朝向模式。'],
+ 'zh-Hans':['徒手拳击','跑向目标','拳击','返回原位','接近目标','提前停下（格）','保持朝向','移动方向','初始朝向','徒手攻击序列','未知的朝向模式。'],
+ 'ko':['맨손 펀치','대상에게 달리기','펀치','원위치로 돌아가기','대상에게 접근','앞에서 멈추기(타일)','방향 유지','이동 방향','원래 방향','맨손 공격 시퀀스','알 수 없는 방향 모드입니다.'],
+ 'es':['Puñetazo sin arma','Correr al objetivo','Puñetazo','Volver al origen','Acercarse al objetivo','Distancia de parada (casillas)','Mantener orientación','Dirección de movimiento','Orientación inicial','Secuencia de ataque sin arma','Modo de orientación desconocido.'],
+ 'pt':['Soco desarmado','Correr até o alvo','Soco','Voltar à origem','Aproximar-se do alvo','Distância de parada (blocos)','Manter direção','Direção do movimento','Direção inicial','Sequência de ataque desarmado','Modo de direção desconhecido.'],
+ 'fr':['Coup de poing à mains nues','Courir vers la cible','Coup de poing','Revenir au départ','Approcher la cible','Distance d’arrêt (cases)','Garder l’orientation','Sens du déplacement','Orientation initiale','Séquence d’attaque à mains nues','Mode d’orientation inconnu.'],
+ 'it':['Pugno a mani nude','Corri verso il bersaglio','Pugno','Torna alla posizione iniziale','Avvicinati al bersaglio','Distanza di arresto (caselle)','Mantieni orientamento','Direzione di movimento','Orientamento iniziale','Sequenza di attacco a mani nude','Modalità di orientamento sconosciuta.'],
+ 'de':['Faustschlag ohne Waffe','Zum Ziel laufen','Faustschlag','Zum Ausgangspunkt zurück','Dem Ziel nähern','Halteabstand (Kacheln)','Blickrichtung beibehalten','Bewegungsrichtung','Ursprüngliche Blickrichtung','Angriffssequenz ohne Waffe','Unbekannter Blickrichtungsmodus.'],
+ 'ru':['Удар кулаком без оружия','Бежать к цели','Удар кулаком','Вернуться на место','Приблизиться к цели','Дистанция остановки (клетки)','Сохранить направление','Направление движения','Исходное направление','Последовательность атаки без оружия','Неизвестный режим направления.'],
+ 'pl':['Cios bez broni','Biegnij do celu','Cios pięścią','Wróć na miejsce','Podejdź do celu','Odstęp od celu (pola)','Zachowaj kierunek','Kierunek ruchu','Początkowy kierunek','Sekwencja ataku bez broni','Nieznany tryb kierunku.'],
+ 'el':['Γροθιά χωρίς όπλο','Τρέξε στον στόχο','Γροθιά','Επιστροφή στην αρχική θέση','Προσέγγιση στόχου','Απόσταση στάσης (πλακίδια)','Διατήρηση κατεύθυνσης','Κατεύθυνση κίνησης','Αρχική κατεύθυνση','Ακολουθία επίθεσης χωρίς όπλο','Άγνωστη λειτουργία κατεύθυνσης.'],
+ 'ar':['لكمة دون سلاح','الجري نحو الهدف','لكمة','العودة إلى البداية','الاقتراب من الهدف','مسافة التوقف (بلاطات)','الحفاظ على الاتجاه','اتجاه الحركة','الاتجاه الأصلي','تسلسل هجوم دون سلاح','وضع اتجاه غير معروف.'],
+ 'tr':['Silahsız Yumruk','Hedefe Koş','Yumruk','Başlangıca Dön','Hedefe Yaklaş','Durma Mesafesi (kare)','Yönü Koru','Hareket Yönü','Başlangıç Yönü','Silahsız Saldırı Dizisi','Bilinmeyen yön modu.'],
+ 'id':['Pukulan Tanpa Senjata','Lari ke Target','Pukulan','Kembali ke Posisi Awal','Dekati Target','Jarak Berhenti (petak)','Pertahankan Arah','Arah Gerakan','Arah Awal','Urutan Serangan Tanpa Senjata','Mode arah tidak dikenal.'],
+ 'vi':['Đấm tay không','Chạy tới mục tiêu','Đấm','Về vị trí ban đầu','Tiếp cận mục tiêu','Khoảng cách dừng (ô)','Giữ hướng','Hướng di chuyển','Hướng ban đầu','Chuỗi tấn công tay không','Chế độ hướng không xác định.'],
+ 'th':['ชกมือเปล่า','วิ่งเข้าหาเป้าหมาย','ชก','กลับจุดเริ่มต้น','เข้าใกล้เป้าหมาย','ระยะหยุดก่อนถึง (ช่อง)','คงทิศทาง','ทิศทางการเคลื่อนที่','ทิศทางเริ่มต้น','ลำดับโจมตีมือเปล่า','ไม่รู้จักโหมดทิศทาง']
+ };
+ for(const [locale,values] of Object.entries(rows))keys.forEach((key,i)=>globalThis.RR_REVIEWED_TRANSLATIONS.text[locale][key]=values[i]);
+}
+for(const [locale,text] of Object.entries({
+ 'ja':'武器を装備していない通常攻撃にのみ使用します。スキルと武器の設定は従来どおりです。',
+ 'zh-Hant':'僅用於未裝備武器的普通攻擊。技能與武器設定保持原有行為。',
+ 'zh-Hans':'仅用于未装备武器的普通攻击。技能与武器设置保持原有行为。',
+ 'ko':'무기를 장착하지 않은 일반 공격에만 사용합니다. 스킬과 무기 설정은 기존 동작을 유지합니다.',
+ 'es':'Solo se usa para un ataque normal sin arma equipada. Las habilidades y las armas conservan su comportamiento.',
+ 'pt':'Usada apenas para ataques normais sem arma equipada. Habilidades e armas mantêm seu comportamento.',
+ 'fr':'Utilisée uniquement pour une attaque normale sans arme équipée. Les compétences et les armes conservent leur comportement.',
+ 'it':'Usata solo per un attacco normale senza armi equipaggiate. Abilità e armi mantengono il proprio comportamento.',
+ 'de':'Gilt nur für normale Angriffe ohne ausgerüstete Waffe. Fertigkeiten und Waffenzuweisungen behalten ihr Verhalten.',
+ 'ru':'Используется только для обычной атаки без оружия. Настройки навыков и оружия сохраняют своё поведение.',
+ 'pl':'Używana tylko dla zwykłego ataku bez wyposażonej broni. Umiejętności i broń zachowują swoje ustawienia.',
+ 'el':'Χρησιμοποιείται μόνο για κανονική επίθεση χωρίς εξοπλισμένο όπλο. Οι δεξιότητες και τα όπλα διατηρούν τη συμπεριφορά τους.',
+ 'ar':'يُستخدم فقط للهجوم العادي دون سلاح مجهز. تحتفظ المهارات والأسلحة بسلوكها الحالي.',
+ 'tr':'Yalnızca silah kuşanılmamış normal saldırılarda kullanılır. Beceriler ve silah atamaları kendi davranışlarını korur.',
+ 'id':'Hanya digunakan untuk serangan normal tanpa senjata. Keterampilan dan penetapan senjata tetap mengikuti perilakunya.',
+ 'vi':'Chỉ dùng cho đòn tấn công thường khi không trang bị vũ khí. Kỹ năng và thiết lập vũ khí giữ nguyên hành vi.',
+ 'th':'ใช้เฉพาะการโจมตีปกติเมื่อไม่ได้สวมอาวุธ ทักษะและการกำหนดอาวุธยังทำงานตามเดิม'
+}))globalThis.RR_REVIEWED_TRANSLATIONS.text[locale]['Used only for a normal attack with no weapon equipped. Skills and weapon assignments keep their own behavior.']=text;
+
+// Action Sequence preview tools share the model editor's manipulation language.
+{
+ const keys=['Step Transform','Preview Formation','Model Transform','Override Transform','Position Offset','Proportional','Action Steps','Zoom In','Zoom Out','Reset View','Reset Transform','Target {n}','Arrange test battlers here. Battle formations are set in Troops.','Enable to offset, rotate or reshape this motion.','Choose a valid target number.','Choose finite transform values and scales between 0.01 and 100.'];
+ const rows={
+ ja:'ステップ変形|プレビュー配置|モデル変形|変形を上書き|位置オフセット|縦横比を維持|アクションステップ|拡大|縮小|ビューをリセット|変形をリセット|対象 {n}|テスト用の戦闘キャラクターを配置します。実際の戦闘配置は敵グループで設定します。|有効にすると、このモーションの位置、回転、形状を変更できます。|有効な対象番号を選択してください。|変形には有限の値を、スケールには0.01～100を指定してください。',
+ 'zh-Hant':'步驟變形|預覽陣形|模型變形|覆寫變形|位置偏移|等比例|動作步驟|放大|縮小|重設視角|重設變形|目標 {n}|在此安排測試戰鬥角色。實際戰鬥陣形在敵群中設定。|啟用以偏移、旋轉或調整此動作的形狀。|請選擇有效的目標編號。|請使用有限的變形值，縮放值須介於0.01到100之間。',
+ 'zh-Hans':'步骤变形|预览阵形|模型变形|覆盖变形|位置偏移|等比例|动作步骤|放大|缩小|重置视角|重置变形|目标 {n}|在此安排测试战斗角色。实际战斗阵形在敌群中设置。|启用以偏移、旋转或调整此动作的形状。|请选择有效的目标编号。|请使用有限的变形值，缩放值须介于0.01到100之间。',
+ ko:'단계 변형|미리보기 배치|모델 변형|변형 덮어쓰기|위치 오프셋|비율 유지|행동 단계|확대|축소|시점 초기화|변형 초기화|대상 {n}|테스트 전투 캐릭터를 배치합니다. 실제 전투 배치는 적 그룹에서 설정합니다.|활성화하면 이 모션의 위치, 회전 및 형태를 변경할 수 있습니다.|유효한 대상 번호를 선택하세요.|변형은 유한한 값으로, 배율은 0.01~100으로 설정하세요.',
+ es:'Transformación del paso|Formación de vista previa|Transformación del modelo|Sobrescribir transformación|Desplazamiento|Proporcional|Pasos de acción|Acercar|Alejar|Restablecer vista|Restablecer transformación|Objetivo {n}|Coloca aquí los combatientes de prueba. Las formaciones de batalla se configuran en Grupos enemigos.|Activa para desplazar, girar o cambiar la forma de este movimiento.|Elige un número de objetivo válido.|Usa valores finitos y escalas entre 0.01 y 100.',
+ pt:'Transformação da etapa|Formação de prévia|Transformação do modelo|Substituir transformação|Deslocamento|Proporcional|Etapas da ação|Aproximar|Afastar|Restaurar vista|Restaurar transformação|Alvo {n}|Posicione aqui os combatentes de teste. As formações de batalha são definidas em Tropas.|Ative para deslocar, girar ou alterar a forma deste movimento.|Escolha um número de alvo válido.|Use valores finitos e escalas entre 0.01 e 100.',
+ fr:'Transformation de l’étape|Formation de l’aperçu|Transformation du modèle|Remplacer la transformation|Décalage de position|Proportionnel|Étapes de l’action|Zoom avant|Zoom arrière|Réinitialiser la vue|Réinitialiser la transformation|Cible {n}|Placez les combattants de test ici. Les formations de combat se règlent dans les Groupes ennemis.|Activez pour déplacer, tourner ou déformer ce mouvement.|Choisissez un numéro de cible valide.|Utilisez des valeurs finies et des échelles entre 0.01 et 100.',
+ it:'Trasformazione del passo|Formazione di anteprima|Trasformazione del modello|Sostituisci trasformazione|Spostamento|Proporzionale|Passi dell’azione|Ingrandisci|Riduci|Ripristina vista|Ripristina trasformazione|Bersaglio {n}|Disponi qui i combattenti di prova. Le formazioni di battaglia si impostano in Gruppi nemici.|Attiva per spostare, ruotare o deformare questo movimento.|Scegli un numero di bersaglio valido.|Usa valori finiti e scale comprese tra 0.01 e 100.',
+ de:'Schritttransformation|Vorschauaufstellung|Modelltransformation|Transformation überschreiben|Positionsversatz|Proportional|Aktionsschritte|Vergrößern|Verkleinern|Ansicht zurücksetzen|Transformation zurücksetzen|Ziel {n}|Ordne hier die Testkämpfer an. Kampfaufstellungen werden unter Gegnergruppen festgelegt.|Aktivieren, um diese Bewegung zu versetzen, zu drehen oder zu verformen.|Wähle eine gültige Zielnummer.|Verwende endliche Werte und Skalierungen zwischen 0.01 und 100.',
+ ru:'Преобразование шага|Расстановка предпросмотра|Преобразование модели|Переопределить преобразование|Смещение позиции|Пропорционально|Шаги действия|Приблизить|Отдалить|Сбросить вид|Сбросить преобразование|Цель {n}|Расставьте здесь тестовых бойцов. Боевые построения задаются в разделе «Группы врагов».|Включите для смещения, поворота или изменения формы этого движения.|Выберите допустимый номер цели.|Задайте конечные значения и масштаб от 0.01 до 100.',
+ pl:'Transformacja kroku|Ustawienie podglądu|Transformacja modelu|Nadpisz transformację|Przesunięcie pozycji|Proporcjonalnie|Kroki akcji|Przybliż|Oddal|Resetuj widok|Resetuj transformację|Cel {n}|Ustaw tutaj testowych uczestników walki. Szyk bojowy określa się w Grupach wrogów.|Włącz, aby przesunąć, obrócić lub zmienić kształt tego ruchu.|Wybierz prawidłowy numer celu.|Użyj wartości skończonych i skali od 0.01 do 100.',
+ el:'Μετασχηματισμός βήματος|Διάταξη προεπισκόπησης|Μετασχηματισμός μοντέλου|Παράκαμψη μετασχηματισμού|Μετατόπιση θέσης|Αναλογικά|Βήματα ενέργειας|Μεγέθυνση|Σμίκρυνση|Επαναφορά προβολής|Επαναφορά μετασχηματισμού|Στόχος {n}|Τοποθετήστε εδώ τους δοκιμαστικούς μαχητές. Οι διατάξεις μάχης ορίζονται στις Ομάδες εχθρών.|Ενεργοποιήστε για μετατόπιση, περιστροφή ή αλλαγή σχήματος αυτής της κίνησης.|Επιλέξτε έγκυρο αριθμό στόχου.|Χρησιμοποιήστε πεπερασμένες τιμές και κλίμακες από 0.01 έως 100.',
+ ar:'تحويل الخطوة|تشكيل المعاينة|تحويل النموذج|تجاوز التحويل|إزاحة الموضع|متناسب|خطوات الحركة|تكبير|تصغير|إعادة ضبط العرض|إعادة ضبط التحويل|الهدف {n}|رتّب مقاتلي الاختبار هنا. تُضبط تشكيلات المعركة في مجموعات الأعداء.|فعّل لإزاحة هذه الحركة أو تدويرها أو تغيير شكلها.|اختر رقم هدف صالحًا.|استخدم قيمًا محدودة ومقاييس بين 0.01 و100.',
+ tr:'Adım Dönüşümü|Önizleme Dizilişi|Model Dönüşümü|Dönüşümü Geçersiz Kıl|Konum Ofseti|Orantılı|Eylem Adımları|Yakınlaştır|Uzaklaştır|Görünümü Sıfırla|Dönüşümü Sıfırla|Hedef {n}|Test savaşçılarını burada yerleştirin. Savaş dizilişleri Birlikler bölümünde ayarlanır.|Bu hareketi kaydırmak, döndürmek veya yeniden şekillendirmek için etkinleştirin.|Geçerli bir hedef numarası seçin.|Sonlu değerler ve 0.01 ile 100 arasında ölçekler kullanın.',
+ id:'Transformasi Langkah|Formasi Pratinjau|Transformasi Model|Timpa Transformasi|Offset Posisi|Proporsional|Langkah Aksi|Perbesar|Perkecil|Atur Ulang Tampilan|Atur Ulang Transformasi|Target {n}|Atur petarung uji di sini. Formasi pertempuran diatur di Pasukan.|Aktifkan untuk menggeser, memutar, atau mengubah bentuk gerakan ini.|Pilih nomor target yang valid.|Gunakan nilai hingga dan skala antara 0.01 dan 100.',
+ vi:'Biến đổi bước|Đội hình xem trước|Biến đổi mô hình|Ghi đè biến đổi|Độ lệch vị trí|Giữ tỉ lệ|Các bước hành động|Phóng to|Thu nhỏ|Đặt lại góc nhìn|Đặt lại biến đổi|Mục tiêu {n}|Sắp xếp nhân vật thử nghiệm ở đây. Đội hình chiến đấu được đặt trong Nhóm địch.|Bật để dịch chuyển, xoay hoặc thay đổi hình dạng của chuyển động này.|Chọn số mục tiêu hợp lệ.|Dùng giá trị hữu hạn và tỉ lệ từ 0.01 đến 100.',
+ th:'ปรับรูปทรงขั้นตอน|จัดตำแหน่งตัวอย่าง|ปรับรูปทรงโมเดล|แทนที่การปรับรูปทรง|ระยะเยื้องตำแหน่ง|คงสัดส่วน|ขั้นตอนการกระทำ|ซูมเข้า|ซูมออก|รีเซ็ตมุมมอง|รีเซ็ตรูปทรง|เป้าหมาย {n}|จัดตัวละครทดสอบที่นี่ การจัดตำแหน่งต่อสู้ตั้งค่าในกลุ่มศัตรู|เปิดใช้เพื่อเลื่อน หมุน หรือเปลี่ยนรูปทรงของท่าทางนี้|เลือกหมายเลขเป้าหมายที่ถูกต้อง|ใช้ค่าที่มีขอบเขตและขนาดระหว่าง 0.01 ถึง 100'
+ };
+ for(const [locale,row] of Object.entries(rows)){const values=row.split('|'),target=globalThis.RR_REVIEWED_TRANSLATIONS.text[locale];keys.forEach((key,i)=>{if(key==='Target {n}'){for(let n=1;n<=4;n++)target['Target '+n]=values[i].replace('{n}',n);}else target[key]=values[i];});}
+}
+
+// Sequence insertion/playback and the battle-room cinematic camera preset.
+{
+ const keys=['Play Step','Cinematic Cuts','Drag into the step list, or click to add below the selected step.','Sweeps toward the acting battler, then the target at impact. Eases back to this overview after the action.'];
+ const rows={
+ ja:['ステップを再生','シネマティックカット','ステップ一覧へドラッグするか、クリックして選択中のステップの下に追加します。','行動する戦闘キャラへ滑らかに回り込み、命中時に対象へ移動します。行動後はこの全景へ滑らかに戻ります。'],
+ 'zh-Hant':['播放步驟','電影式切鏡','拖曳到步驟清單，或按一下以新增到所選步驟下方。','平滑環繞行動角色，命中時轉向目標，行動結束後平滑返回此全景。'],
+ 'zh-Hans':['播放步骤','电影式切镜','拖到步骤列表，或单击以添加到所选步骤下方。','平滑环绕行动角色，命中时转向目标，行动结束后平滑返回此全景。'],
+ ko:['단계 재생','시네마틱 컷','단계 목록으로 끌거나 클릭하여 선택한 단계 아래에 추가합니다.','행동하는 캐릭터 주위를 부드럽게 돌며 비추고, 타격 시 대상으로 이동한 뒤 이 전체 화면으로 부드럽게 돌아옵니다.'],
+ es:['Reproducir paso','Cortes cinematográficos','Arrastra a la lista o haz clic para añadir debajo del paso seleccionado.','Gira suavemente hacia el combatiente activo y después hacia el objetivo al impactar. Vuelve suavemente a esta vista general al terminar.'],
+ pt:['Reproduzir etapa','Cortes cinematográficos','Arraste para a lista ou clique para adicionar abaixo da etapa selecionada.','Gira suavemente até o combatente ativo e depois até o alvo no impacto. Retorna suavemente a esta visão geral após a ação.'],
+ fr:['Lire l’étape','Coupes cinématiques','Glissez dans la liste ou cliquez pour ajouter sous l’étape sélectionnée.','Pivote en douceur vers le combattant actif, puis vers la cible à l’impact. Revient progressivement à cette vue d’ensemble après l’action.'],
+ it:['Riproduci passo','Stacchi cinematografici','Trascina nell’elenco o fai clic per aggiungere sotto il passo selezionato.','Ruota dolcemente verso il combattente attivo, poi verso il bersaglio all’impatto. Torna gradualmente a questa panoramica dopo l’azione.'],
+ de:['Schritt abspielen','Filmische Schnitte','In die Schrittliste ziehen oder klicken, um unter dem ausgewählten Schritt einzufügen.','Schwenkt sanft zum handelnden Kämpfer und beim Treffer zum Ziel. Kehrt nach der Aktion sanft zu dieser Übersicht zurück.'],
+ ru:['Воспроизвести шаг','Кинематографические склейки','Перетащите в список или нажмите, чтобы добавить под выбранным шагом.','Плавно обходит действующего бойца, затем переводит камеру на цель при ударе. После действия плавно возвращается к этому общему плану.'],
+ pl:['Odtwórz krok','Filmowe cięcia','Przeciągnij na listę lub kliknij, aby dodać poniżej wybranego kroku.','Płynnie obraca kamerę ku działającemu wojownikowi, a przy trafieniu ku celowi. Po akcji łagodnie wraca do tego widoku ogólnego.'],
+ el:['Αναπαραγωγή βήματος','Κινηματογραφικές εναλλαγές','Σύρετε στη λίστα ή κάντε κλικ για προσθήκη κάτω από το επιλεγμένο βήμα.','Περιστρέφεται ομαλά προς τον ενεργό μαχητή και έπειτα προς τον στόχο στο χτύπημα. Επιστρέφει ομαλά στη γενική προβολή μετά την ενέργεια.'],
+ ar:['تشغيل الخطوة','لقطات سينمائية','اسحب إلى قائمة الخطوات أو انقر للإضافة أسفل الخطوة المحددة.','تدور الكاميرا بسلاسة نحو المقاتل النشط، ثم نحو الهدف عند الإصابة، وتعود برفق إلى هذه النظرة العامة بعد الحركة.'],
+ tr:['Adımı Oynat','Sinematik Kesimler','Adım listesine sürükleyin veya seçili adımın altına eklemek için tıklayın.','Eylemi yapan savaşçıya, ardından vuruşta hedefe doğru yumuşakça döner. Eylemden sonra bu genel görünüme yumuşakça döner.'],
+ id:['Putar Langkah','Potongan Sinematik','Seret ke daftar atau klik untuk menambahkan di bawah langkah terpilih.','Berputar halus menuju petarung yang beraksi, lalu target saat benturan. Kembali perlahan ke tampilan umum setelah aksi.'],
+ vi:['Phát bước','Chuyển cảnh điện ảnh','Kéo vào danh sách hoặc nhấp để thêm bên dưới bước đã chọn.','Lướt nhẹ quanh nhân vật đang hành động, rồi hướng đến mục tiêu lúc va chạm. Trở về góc nhìn tổng thể một cách mượt mà sau hành động.'],
+ th:['เล่นขั้นตอน','ตัดมุมกล้องแบบภาพยนตร์','ลากลงในรายการขั้นตอน หรือคลิกเพื่อเพิ่มใต้ขั้นตอนที่เลือก','กล้องหมุนอย่างนุ่มนวลไปยังตัวละครที่กำลังทำท่า แล้วเคลื่อนไปยังเป้าหมายเมื่อปะทะ ก่อนกลับมุมมองรวมอย่างนุ่มนวลเมื่อจบการกระทำ']
+ };
+ for(const [locale,values] of Object.entries(rows))keys.forEach((key,i)=>globalThis.RR_REVIEWED_TRANSLATIONS.text[locale][key]=values[i]);
+}
+
+// Action-sequence media controls. Audio levels remain in the shared picker.
+{
+ const keys=['Choose Sound…','Wait (frames)','Wait for Sound','Wait for Animation'];
+ const rows={
+ ja:['サウンドを選択…','待機（フレーム）','サウンドの終了を待つ','アニメーションの終了を待つ'],
+ 'zh-Hant':['選擇音效…','等待（影格）','等待音效結束','等待動畫結束'],
+ 'zh-Hans':['选择音效…','等待（帧）','等待音效结束','等待动画结束'],
+ ko:['사운드 선택…','대기 (프레임)','사운드 종료 대기','애니메이션 종료 대기'],
+ es:['Elegir sonido…','Espera (fotogramas)','Esperar al sonido','Esperar a la animación'],
+ pt:['Escolher som…','Espera (quadros)','Aguardar o som','Aguardar a animação'],
+ fr:['Choisir un son…','Attente (images)','Attendre la fin du son','Attendre la fin de l’animation'],
+ it:['Scegli suono…','Attesa (fotogrammi)','Attendi la fine del suono','Attendi la fine dell’animazione'],
+ de:['Ton auswählen…','Wartezeit (Frames)','Auf Tonende warten','Auf Animationsende warten'],
+ ru:['Выбрать звук…','Ожидание (кадры)','Ждать окончания звука','Ждать окончания анимации'],
+ pl:['Wybierz dźwięk…','Oczekiwanie (klatki)','Czekaj na koniec dźwięku','Czekaj na koniec animacji'],
+ el:['Επιλογή ήχου…','Αναμονή (καρέ)','Αναμονή ολοκλήρωσης ήχου','Αναμονή ολοκλήρωσης εφέ'],
+ ar:['اختيار صوت…','انتظار (إطارات)','انتظار انتهاء الصوت','انتظار انتهاء الحركة'],
+ tr:['Ses seç…','Bekleme (kare)','Sesin bitmesini bekle','Animasyonun bitmesini bekle'],
+ th:['เลือกเสียง…','รอ (เฟรม)','รอเสียงจบ','รอแอนิเมชันจบ'],
+ vi:['Chọn âm thanh…','Chờ (khung hình)','Chờ âm thanh kết thúc','Chờ hoạt ảnh kết thúc'],
+ id:['Pilih Suara…','Tunggu (bingkai)','Tunggu Suara Selesai','Tunggu Animasi Selesai']
+ };
+ for(const [locale,values] of Object.entries(rows)){const target=globalThis.RR_REVIEWED_TRANSLATIONS.text[locale];if(target)keys.forEach((key,i)=>target[key]=values[i]);}
+}
+
+// Permanent map media and free camera inspection.
+{
+ const keys=['Media Surfaces','Map Media Surface','Place Surface…','No map surfaces yet.','Images and videos that belong to this map. Save the map to keep your changes.','Click the map to place · Esc cancels','This Surface ID is already used on the map.','Ctrl + right-drag: look around. WASD: move. Q/E: down/up.'];
+ const rows={
+ ja:'メディアサーフェス|マップのメディアサーフェス|サーフェスを配置…|このマップにはまだサーフェスがありません。|このマップに属する画像と動画です。変更を残すにはマップを保存してください。|マップをクリックして配置 · Esc でキャンセル|このサーフェス ID はマップですでに使われています。|Ctrl＋右ドラッグ：見回す。WASD：移動。Q/E：下降／上昇。',
+ 'zh-Hant':'媒體表面|地圖媒體表面|放置表面…|地圖尚無媒體表面。|屬於此地圖的圖片與影片。儲存地圖以保留變更。|點擊地圖放置 · Esc 取消|此表面 ID 已在地圖中使用。|Ctrl＋右鍵拖曳：環顧。WASD：移動。Q/E：下降／上升。',
+ 'zh-Hans':'媒体表面|地图媒体表面|放置表面…|地图尚无媒体表面。|属于此地图的图片与视频。保存地图以保留更改。|点击地图放置 · Esc 取消|此表面 ID 已在地图中使用。|Ctrl＋右键拖动：环顾。WASD：移动。Q/E：下降／上升。',
+ ko:'미디어 표면|맵 미디어 표면|표면 배치…|아직 맵 표면이 없습니다.|이 맵에 속하는 이미지와 동영상입니다. 변경 사항을 유지하려면 맵을 저장하세요.|맵을 클릭하여 배치 · Esc 취소|이 표면 ID는 맵에서 이미 사용 중입니다.|Ctrl + 오른쪽 드래그: 둘러보기. WASD: 이동. Q/E: 아래/위.',
+ es:'Superficies multimedia|Superficie multimedia del mapa|Colocar superficie…|Aún no hay superficies en el mapa.|Imágenes y vídeos de este mapa. Guarda el mapa para conservar los cambios.|Haz clic en el mapa para colocar · Esc cancela|Este ID de superficie ya se usa en el mapa.|Ctrl + arrastrar con botón derecho: mirar. WASD: mover. Q/E: bajar/subir.',
+ pt:'Superfícies de mídia|Superfície de mídia do mapa|Posicionar superfície…|Ainda não há superfícies no mapa.|Imagens e vídeos deste mapa. Salve o mapa para manter as alterações.|Clique no mapa para posicionar · Esc cancela|Este ID de superfície já é usado no mapa.|Ctrl + arrastar com botão direito: olhar. WASD: mover. Q/E: descer/subir.',
+ fr:'Surfaces multimédias|Surface multimédia de la carte|Placer une surface…|Aucune surface sur cette carte.|Images et vidéos de cette carte. Enregistrez la carte pour conserver les modifications.|Cliquez sur la carte pour placer · Échap annule|Cet ID de surface est déjà utilisé sur la carte.|Ctrl + glisser avec le bouton droit : regarder. WASD : déplacer. Q/E : descendre/monter.',
+ it:'Superfici multimediali|Superficie multimediale della mappa|Posiziona superficie…|Nessuna superficie nella mappa.|Immagini e video di questa mappa. Salva la mappa per conservare le modifiche.|Fai clic sulla mappa per posizionare · Esc annulla|Questo ID di superficie è già usato nella mappa.|Ctrl + trascina col tasto destro: guarda. WASD: muovi. Q/E: scendi/sali.',
+ de:'Medienflächen|Medienfläche der Karte|Fläche platzieren…|Noch keine Medienflächen auf der Karte.|Bilder und Videos dieser Karte. Speichere die Karte, um Änderungen zu behalten.|Zum Platzieren auf die Karte klicken · Esc bricht ab|Diese Flächen-ID wird bereits auf der Karte verwendet.|Strg + Ziehen mit rechter Maustaste: umsehen. WASD: bewegen. Q/E: abwärts/aufwärts.',
+ ru:'Медиаповерхности|Медиаповерхность карты|Разместить поверхность…|На карте пока нет медиаповерхностей.|Изображения и видео этой карты. Сохраните карту, чтобы сохранить изменения.|Щёлкните по карте для размещения · Esc — отмена|Этот ID поверхности уже используется на карте.|Ctrl + перетаскивание правой кнопкой: осмотр. WASD: движение. Q/E: вниз/вверх.',
+ pl:'Powierzchnie multimedialne|Powierzchnia multimedialna mapy|Umieść powierzchnię…|Na mapie nie ma jeszcze powierzchni.|Obrazy i filmy tej mapy. Zapisz mapę, aby zachować zmiany.|Kliknij mapę, aby umieścić · Esc anuluje|Ten identyfikator powierzchni jest już używany na mapie.|Ctrl + przeciąganie prawym przyciskiem: rozglądanie. WASD: ruch. Q/E: w dół/w górę.',
+ el:'Επιφάνειες πολυμέσων|Επιφάνεια πολυμέσων χάρτη|Τοποθέτηση επιφάνειας…|Δεν υπάρχουν ακόμη επιφάνειες στον χάρτη.|Εικόνες και βίντεο αυτού του χάρτη. Αποθηκεύστε τον χάρτη για να κρατήσετε τις αλλαγές.|Κλικ στον χάρτη για τοποθέτηση · Esc για ακύρωση|Αυτό το ID επιφάνειας χρησιμοποιείται ήδη στον χάρτη.|Ctrl + σύρσιμο με δεξί κουμπί: περιήγηση βλέμματος. WASD: κίνηση. Q/E: κάτω/πάνω.',
+ ar:'أسطح الوسائط|سطح وسائط الخريطة|وضع سطح…|لا توجد أسطح على الخريطة بعد.|صور ومقاطع فيديو تابعة لهذه الخريطة. احفظ الخريطة للاحتفاظ بالتغييرات.|انقر على الخريطة للوضع · Esc للإلغاء|معرّف السطح هذا مستخدم بالفعل على الخريطة.|Ctrl + سحب بالزر الأيمن: النظر حولك. WASD: حركة. Q/E: أسفل/أعلى.',
+ tr:'Medya yüzeyleri|Harita medya yüzeyi|Yüzey yerleştir…|Haritada henüz yüzey yok.|Bu haritaya ait resimler ve videolar. Değişiklikleri korumak için haritayı kaydedin.|Yerleştirmek için haritaya tıklayın · Esc iptal eder|Bu yüzey kimliği haritada zaten kullanılıyor.|Ctrl + sağ tuşla sürükle: etrafa bak. WASD: hareket. Q/E: aşağı/yukarı.',
+ th:'พื้นผิวสื่อ|พื้นผิวสื่อบนแผนที่|วางพื้นผิว…|ยังไม่มีพื้นผิวบนแผนที่|ภาพและวิดีโอของแผนที่นี้ บันทึกแผนที่เพื่อเก็บการเปลี่ยนแปลง|คลิกแผนที่เพื่อวาง · Esc ยกเลิก|ID พื้นผิวนี้ถูกใช้บนแผนที่แล้ว|Ctrl + ลากปุ่มขวา: มองรอบตัว WASD: เคลื่อนที่ Q/E: ลง/ขึ้น',
+ vi:'Bề mặt đa phương tiện|Bề mặt đa phương tiện trên bản đồ|Đặt bề mặt…|Bản đồ chưa có bề mặt nào.|Hình ảnh và video của bản đồ này. Lưu bản đồ để giữ thay đổi.|Nhấp bản đồ để đặt · Esc để hủy|ID bề mặt này đã được dùng trên bản đồ.|Ctrl + kéo chuột phải: nhìn quanh. WASD: di chuyển. Q/E: xuống/lên.',
+ id:'Permukaan media|Permukaan media peta|Tempatkan permukaan…|Belum ada permukaan di peta.|Gambar dan video milik peta ini. Simpan peta untuk mempertahankan perubahan.|Klik peta untuk menempatkan · Esc membatalkan|ID permukaan ini sudah digunakan di peta.|Ctrl + seret tombol kanan: lihat sekitar. WASD: bergerak. Q/E: turun/naik.'
+ };
+ for(const [locale,row] of Object.entries(rows)){const target=globalThis.RR_REVIEWED_TRANSLATIONS.text[locale];if(target)keys.forEach((key,i)=>target[key]=row.split('|')[i]);}
+}
+{
+ const key='Drag arrows to move, rings to rotate, and yellow corners to resize.';
+ const rows={ja:'矢印をドラッグして移動し、リングで回転、黄色い角でサイズを変更します。','zh-Hant':'拖曳箭頭移動、圓環旋轉、黃色角點調整大小。','zh-Hans':'拖动箭头移动、圆环旋转、黄色角点调整大小。',ko:'화살표를 드래그하여 이동하고, 링으로 회전하고, 노란 모서리로 크기를 조절하세요.',es:'Arrastra las flechas para mover, los anillos para girar y las esquinas amarillas para cambiar el tamaño.',pt:'Arraste as setas para mover, os anéis para girar e os cantos amarelos para redimensionar.',fr:'Faites glisser les flèches pour déplacer, les anneaux pour tourner et les coins jaunes pour redimensionner.',it:'Trascina le frecce per spostare, gli anelli per ruotare e gli angoli gialli per ridimensionare.',de:'Ziehe Pfeile zum Verschieben, Ringe zum Drehen und gelbe Ecken zum Skalieren.',ru:'Тяните стрелки для перемещения, кольца для вращения и жёлтые углы для изменения размера.',pl:'Przeciągaj strzałki, aby przesuwać, pierścienie, aby obracać, i żółte narożniki, aby zmieniać rozmiar.',el:'Σύρετε τα βέλη για μετακίνηση, τους δακτυλίους για περιστροφή και τις κίτρινες γωνίες για αλλαγή μεγέθους.',ar:'اسحب الأسهم للتحريك والحلقات للتدوير والزوايا الصفراء لتغيير الحجم.',tr:'Taşımak için okları, döndürmek için halkaları, boyutlandırmak için sarı köşeleri sürükleyin.',th:'ลากลูกศรเพื่อย้าย วงแหวนเพื่อหมุน และมุมสีเหลืองเพื่อปรับขนาด',vi:'Kéo mũi tên để di chuyển, vòng để xoay và góc vàng để đổi kích thước.',id:'Seret panah untuk memindahkan, cincin untuk memutar, dan sudut kuning untuk mengubah ukuran.'};
+ for(const [locale,value] of Object.entries(rows)){const target=globalThis.RR_REVIEWED_TRANSLATIONS.text[locale];if(target){target[key]=value;target['Keep Proportions']=target['Proportional'];}}
+}
+
+// Battle authoring localization audit (2026-09-06).
+{
+ const keys=["Action Sequence", "Battler Motion", "Move / Position Key", "Play Sound", "Projectile", "Weapon Icon", "Apply Action Effect", "Camera Key", "Battle Room", "Battle Room Setup", "Battle Scene", "Default Action Sequence", "Weapon Attack Sequence", "Open Sequence", "Use Existing Behavior", "Use Template", "Melee Strike", "Projectile Shot", "Cast on Target", "Heal", "Self Buff", "Add Step", "Timeline", "Play / Pause", "Previous Frame", "Next Frame", "Mirror Formation", "Targets", "Current Target", "All Targets", "Battler", "Idle"];
+ const rows={
+  "de": "Aktionssequenz|Kämpferbewegung|Bewegungs- / Positionsschlüssel|Ton abspielen|Geschoss|Waffensymbol|Aktionseffekt anwenden|Kameraschlüssel|Kampfraum|Kampfraum einrichten|Kampfszene|Standard-Aktionssequenz|Waffenangriffssequenz|Sequenz öffnen|Bestehendes Verhalten verwenden|Vorlage verwenden|Nahkampfschlag|Geschoss abfeuern|Zauber auf Ziel|Heilen|Selbst stärken|Schritt hinzufügen|Zeitleiste|Wiedergabe / Pause|Vorheriges Bild|Nächstes Bild|Formation spiegeln|Ziele|Aktuelles Ziel|Alle Ziele|Kämpfer|Bereitstehen",
+  "ja": "アクションシーケンス|バトラーモーション|移動・位置キー|効果音を再生|飛び道具|武器アイコン|アクション効果を適用|カメラキー|バトルルーム|バトルルーム設定|戦闘シーン|標準アクションシーケンス|武器攻撃シーケンス|シーケンスを開く|既存の動作を使用|テンプレートを使用|近接攻撃|飛び道具を発射|対象に詠唱|回復|自身を強化|ステップを追加|タイムライン|再生／一時停止|前のフレーム|次のフレーム|隊列を反転|対象数|現在の対象|すべての対象|バトラー|待機",
+  "es": "Secuencia de acción|Movimiento del combatiente|Clave de movimiento / posición|Reproducir sonido|Proyectil|Icono del arma|Aplicar efecto de la acción|Clave de cámara|Sala de batalla|Configurar sala de batalla|Escena de batalla|Secuencia de acción predeterminada|Secuencia de ataque del arma|Abrir secuencia|Usar comportamiento existente|Usar plantilla|Golpe cuerpo a cuerpo|Disparo de proyectil|Lanzar hechizo al objetivo|Curar|Potenciarse|Añadir paso|Línea de tiempo|Reproducir / Pausar|Fotograma anterior|Fotograma siguiente|Reflejar formación|Objetivos|Objetivo actual|Todos los objetivos|Combatiente|En espera",
+  "pt": "Sequência de ação|Movimento do combatente|Chave de movimento / posição|Reproduzir som|Projétil|Ícone da arma|Aplicar efeito da ação|Chave de câmera|Sala de batalha|Configurar sala de batalha|Cena de batalha|Sequência de ação padrão|Sequência de ataque da arma|Abrir sequência|Usar comportamento existente|Usar modelo|Golpe corpo a corpo|Disparo de projétil|Conjurar no alvo|Curar|Fortalecer a si mesmo|Adicionar etapa|Linha do tempo|Reproduzir / Pausar|Quadro anterior|Próximo quadro|Espelhar formação|Alvos|Alvo atual|Todos os alvos|Combatente|Em espera",
+  "fr": "Séquence d’action|Mouvement du combattant|Clé de déplacement / position|Jouer un son|Projectile|Icône d’arme|Appliquer l’effet de l’action|Clé de caméra|Salle de combat|Configurer la salle de combat|Scène de combat|Séquence d’action par défaut|Séquence d’attaque de l’arme|Ouvrir la séquence|Utiliser le comportement existant|Utiliser le modèle|Frappe au corps à corps|Tir de projectile|Lancer un sort sur la cible|Soigner|Se renforcer|Ajouter une étape|Chronologie|Lecture / Pause|Image précédente|Image suivante|Inverser la formation|Cibles|Cible actuelle|Toutes les cibles|Combattant|Au repos",
+  "it": "Sequenza d’azione|Movimento del combattente|Chiave di movimento / posizione|Riproduci suono|Proiettile|Icona dell’arma|Applica effetto dell’azione|Chiave della telecamera|Stanza di battaglia|Configura stanza di battaglia|Scena di battaglia|Sequenza d’azione predefinita|Sequenza d’attacco dell’arma|Apri sequenza|Usa comportamento esistente|Usa modello|Colpo ravvicinato|Lancio di proiettile|Lancia incantesimo sul bersaglio|Cura|Potenzia sé stesso|Aggiungi passo|Linea temporale|Riproduci / Pausa|Fotogramma precedente|Fotogramma successivo|Specchia formazione|Bersagli|Bersaglio attuale|Tutti i bersagli|Combattente|In attesa",
+  "ru": "Последовательность действий|Движение бойца|Ключ движения / позиции|Воспроизвести звук|Снаряд|Значок оружия|Применить эффект действия|Ключ камеры|Боевая комната|Настройка боевой комнаты|Сцена боя|Последовательность по умолчанию|Последовательность атаки оружием|Открыть последовательность|Использовать прежнее поведение|Применить шаблон|Удар в ближнем бою|Выстрел снарядом|Заклинание на цель|Лечение|Усиление себя|Добавить шаг|Шкала времени|Воспроизведение / Пауза|Предыдущий кадр|Следующий кадр|Отразить построение|Цели|Текущая цель|Все цели|Боец|Ожидание",
+  "pl": "Sekwencja akcji|Ruch walczącego|Klucz ruchu / pozycji|Odtwórz dźwięk|Pocisk|Ikona broni|Zastosuj efekt akcji|Klucz kamery|Sala walki|Ustawienia sali walki|Scena walki|Domyślna sekwencja akcji|Sekwencja ataku bronią|Otwórz sekwencję|Użyj dotychczasowego zachowania|Użyj szablonu|Cios wręcz|Wystrzał pocisku|Rzuć zaklęcie na cel|Leczenie|Wzmocnienie siebie|Dodaj krok|Oś czasu|Odtwórz / Pauza|Poprzednia klatka|Następna klatka|Odbij szyk|Cele|Bieżący cel|Wszystkie cele|Walczący|Bezczynność",
+  "el": "Ακολουθία ενεργειών|Κίνηση μαχητή|Κλειδί κίνησης / θέσης|Αναπαραγωγή ήχου|Βλήμα|Εικονίδιο όπλου|Εφαρμογή αποτελέσματος ενέργειας|Κλειδί κάμερας|Αίθουσα μάχης|Ρύθμιση αίθουσας μάχης|Σκηνή μάχης|Προεπιλεγμένη ακολουθία ενεργειών|Ακολουθία επίθεσης όπλου|Άνοιγμα ακολουθίας|Χρήση υπάρχουσας συμπεριφοράς|Χρήση προτύπου|Χτύπημα σώμα με σώμα|Βολή βλήματος|Ξόρκι στον στόχο|Θεραπεία|Αυτοενίσχυση|Προσθήκη βήματος|Χρονογραμμή|Αναπαραγωγή / Παύση|Προηγούμενο καρέ|Επόμενο καρέ|Κατοπτρισμός σχηματισμού|Στόχοι|Τρέχων στόχος|Όλοι οι στόχοι|Μαχητής|Αναμονή",
+  "ar": "تسلسل الإجراءات|حركة المقاتل|مفتاح الحركة / الموضع|تشغيل صوت|مقذوف|أيقونة السلاح|تطبيق تأثير الإجراء|مفتاح الكاميرا|غرفة المعركة|إعداد غرفة المعركة|مشهد المعركة|تسلسل الإجراءات الافتراضي|تسلسل هجوم السلاح|فتح التسلسل|استخدام السلوك الحالي|استخدام القالب|ضربة قريبة|إطلاق مقذوف|إلقاء تعويذة على الهدف|شفاء|تقوية الذات|إضافة خطوة|الخط الزمني|تشغيل / إيقاف مؤقت|الإطار السابق|الإطار التالي|عكس التشكيل|الأهداف|الهدف الحالي|كل الأهداف|المقاتل|انتظار",
+  "tr": "Eylem dizisi|Savaşçı hareketi|Hareket / konum anahtarı|Ses çal|Mermi|Silah simgesi|Eylem etkisini uygula|Kamera anahtarı|Savaş odası|Savaş odası ayarı|Savaş sahnesi|Varsayılan eylem dizisi|Silah saldırısı dizisi|Diziyi aç|Mevcut davranışı kullan|Şablonu kullan|Yakın dövüş darbesi|Mermi atışı|Hedefe büyü yap|İyileştir|Kendini güçlendir|Adım ekle|Zaman çizelgesi|Oynat / Duraklat|Önceki kare|Sonraki kare|Dizilimi yansıt|Hedefler|Geçerli hedef|Tüm hedefler|Savaşçı|Bekleme",
+  "id": "Urutan aksi|Gerakan petarung|Kunci gerakan / posisi|Putar suara|Proyektil|Ikon senjata|Terapkan efek aksi|Kunci kamera|Ruang pertempuran|Pengaturan ruang pertempuran|Adegan pertempuran|Urutan aksi bawaan|Urutan serangan senjata|Buka urutan|Gunakan perilaku yang ada|Gunakan templat|Pukulan jarak dekat|Tembakan proyektil|Sihir ke sasaran|Sembuhkan|Perkuat diri|Tambah langkah|Garis waktu|Putar / Jeda|Bingkai sebelumnya|Bingkai berikutnya|Cerminkan formasi|Sasaran|Sasaran saat ini|Semua sasaran|Petarung|Siaga",
+  "vi": "Chuỗi hành động|Chuyển động đấu sĩ|Khóa di chuyển / vị trí|Phát âm thanh|Đạn|Biểu tượng vũ khí|Áp dụng hiệu ứng hành động|Khóa máy quay|Phòng chiến đấu|Thiết lập phòng chiến đấu|Cảnh chiến đấu|Chuỗi hành động mặc định|Chuỗi tấn công bằng vũ khí|Mở chuỗi|Dùng hành vi hiện có|Dùng mẫu|Đòn cận chiến|Bắn đạn|Niệm phép lên mục tiêu|Hồi phục|Tự cường hóa|Thêm bước|Dòng thời gian|Phát / Tạm dừng|Khung hình trước|Khung hình sau|Lật đội hình|Mục tiêu|Mục tiêu hiện tại|Tất cả mục tiêu|Đấu sĩ|Chờ",
+  "ko": "행동 시퀀스|전투원 동작|이동 / 위치 키|소리 재생|투사체|무기 아이콘|행동 효과 적용|카메라 키|전투 방|전투 방 설정|전투 장면|기본 행동 시퀀스|무기 공격 시퀀스|시퀀스 열기|기존 동작 사용|템플릿 사용|근접 타격|투사체 발사|대상에게 주문 시전|치유|자신 강화|단계 추가|타임라인|재생 / 일시 정지|이전 프레임|다음 프레임|대형 반전|대상 수|현재 대상|모든 대상|전투원|대기",
+  "zh-Hant": "動作序列|戰鬥者動作|移動／位置關鍵格|播放音效|投射物|武器圖示|套用行動效果|攝影機關鍵格|戰鬥房間|戰鬥房間設定|戰鬥場景|預設動作序列|武器攻擊序列|開啟序列|使用原有行為|使用範本|近戰打擊|發射投射物|對目標施法|治療|強化自身|新增步驟|時間軸|播放／暫停|上一影格|下一影格|鏡像隊形|目標數|目前目標|所有目標|戰鬥者|待機",
+  "zh-Hans": "动作序列|战斗者动作|移动／位置关键帧|播放音效|投射物|武器图标|应用行动效果|摄像机关键帧|战斗房间|战斗房间设置|战斗场景|默认动作序列|武器攻击序列|打开序列|使用原有行为|使用模板|近战打击|发射投射物|对目标施法|治疗|强化自身|添加步骤|时间轴|播放／暂停|上一帧|下一帧|镜像队形|目标数|当前目标|所有目标|战斗者|待机",
+  "th": "ลำดับแอ็กชัน|ท่าทางผู้ต่อสู้|คีย์การเคลื่อนที่ / ตำแหน่ง|เล่นเสียง|วัตถุพุ่ง|ไอคอนอาวุธ|ใช้ผลของแอ็กชัน|คีย์กล้อง|ห้องต่อสู้|ตั้งค่าห้องต่อสู้|ฉากต่อสู้|ลำดับแอ็กชันเริ่มต้น|ลำดับโจมตีด้วยอาวุธ|เปิดลำดับ|ใช้พฤติกรรมเดิม|ใช้แม่แบบ|โจมตีระยะประชิด|ยิงวัตถุพุ่ง|ร่ายเวทใส่เป้าหมาย|รักษา|เสริมพลังตนเอง|เพิ่มขั้นตอน|เส้นเวลา|เล่น / หยุดชั่วคราว|เฟรมก่อนหน้า|เฟรมถัดไป|กลับด้านรูปขบวน|เป้าหมาย|เป้าหมายปัจจุบัน|ทุกเป้าหมาย|ผู้ต่อสู้|ยืนรอ"
+};
+ for(const [locale,row] of Object.entries(rows)){const values=row.split('|');keys.forEach((key,i)=>globalThis.RR_REVIEWED_TRANSLATIONS.text[locale][key]=values[i]);}
+}
+{
+ const keys=["Camera", "Camera Settings", "Free Camera", "Top Down", "Set Up Room", "Use Map Camera", "Override for This Troop", "Called Only", "On Room Enter", "Parallel During Battle", "Choose Map…", "Reset Formation", "Home", "Relative To", "Easing", "Smooth", "Move", "Display", "Equipped Weapon", "Skill / Item", "Choose Icon", "Size (pixels)", "Rotation (degrees)", "Rotation {axis} (degrees)", "{axis} (tiles)", "Distance", "Field of View", "Selection", "Duration (frames)", "Modified", "Cast", "Evade"];
+ const rows={
+  "de": "Kamera|Kameraeinstellungen|Freie Kamera|Draufsicht|Raum einrichten|Kartenkamera verwenden|Für diese Truppe überschreiben|Nur bei Aufruf|Beim Betreten des Raums|Parallel im Kampf|Karte wählen…|Formation zurücksetzen|Ausgangsposition|Relativ zu|Übergang|Sanft|Verschieben|Anzeige|Ausgerüstete Waffe|Fertigkeit / Gegenstand|Symbol wählen|Größe (Pixel)|Drehung (Grad)|Drehung {axis} (Grad)|{axis} (Kacheln)|Abstand|Sichtfeld|Auswahl|Dauer (Frames)|Geändert|Zaubern|Ausweichen",
+  "ja": "カメラ|カメラ設定|自由カメラ|真上視点|ルームを設定|マップのカメラを使用|この敵グループで上書き|呼び出し時のみ|ルーム入場時|戦闘中に並列実行|マップを選択…|隊列をリセット|初期位置|基準位置|補間|滑らか|移動|表示|装備中の武器|スキル／アイテム|アイコンを選択|サイズ（ピクセル）|回転（度）|{axis} 回転（度）|{axis}（タイル）|距離|視野角|選択|長さ（フレーム）|変更済み|詠唱|回避",
+  "es": "Cámara|Ajustes de cámara|Cámara libre|Vista cenital|Configurar sala|Usar cámara del mapa|Personalizar para esta tropa|Solo al llamar|Al entrar en la sala|En paralelo durante la batalla|Elegir mapa…|Restablecer formación|Posición inicial|Relativo a|Interpolación|Suave|Mover|Visualización|Arma equipada|Habilidad / Objeto|Elegir icono|Tamaño (píxeles)|Rotación (grados)|Rotación {axis} (grados)|{axis} (casillas)|Distancia|Campo de visión|Selección|Duración (fotogramas)|Modificado|Conjurar|Esquivar",
+  "pt": "Câmera|Configurações da câmera|Câmera livre|Vista de cima|Configurar sala|Usar câmera do mapa|Personalizar para esta tropa|Somente ao chamar|Ao entrar na sala|Em paralelo durante a batalha|Escolher mapa…|Redefinir formação|Posição inicial|Relativo a|Interpolação|Suave|Mover|Exibição|Arma equipada|Habilidade / Item|Escolher ícone|Tamanho (pixels)|Rotação (graus)|Rotação {axis} (graus)|{axis} (blocos)|Distância|Campo de visão|Seleção|Duração (quadros)|Modificado|Conjurar|Esquivar",
+  "fr": "Caméra|Réglages de caméra|Caméra libre|Vue de dessus|Configurer la salle|Utiliser la caméra de la carte|Personnaliser pour ce groupe|Sur appel uniquement|À l’entrée dans la salle|En parallèle pendant le combat|Choisir une carte…|Réinitialiser la formation|Position initiale|Par rapport à|Interpolation|Fluide|Déplacer|Affichage|Arme équipée|Compétence / Objet|Choisir une icône|Taille (pixels)|Rotation (degrés)|Rotation {axis} (degrés)|{axis} (cases)|Distance|Champ de vision|Sélection|Durée (images)|Modifié|Incantation|Esquive",
+  "it": "Telecamera|Impostazioni telecamera|Telecamera libera|Vista dall’alto|Configura stanza|Usa telecamera della mappa|Personalizza per questa truppa|Solo su chiamata|All’ingresso nella stanza|In parallelo durante la battaglia|Scegli mappa…|Ripristina formazione|Posizione iniziale|Relativo a|Interpolazione|Fluida|Sposta|Visualizzazione|Arma equipaggiata|Abilità / Oggetto|Scegli icona|Dimensione (pixel)|Rotazione (gradi)|Rotazione {axis} (gradi)|{axis} (caselle)|Distanza|Campo visivo|Selezione|Durata (fotogrammi)|Modificato|Incantesimo|Schivata",
+  "ru": "Камера|Настройки камеры|Свободная камера|Вид сверху|Настроить комнату|Использовать камеру карты|Переопределить для этого отряда|Только по вызову|При входе в комнату|Параллельно во время боя|Выбрать карту…|Сбросить построение|Исходная позиция|Относительно|Интерполяция|Плавно|Переместить|Отображение|Экипированное оружие|Умение / Предмет|Выбрать значок|Размер (пиксели)|Поворот (градусы)|Поворот {axis} (градусы)|{axis} (клетки)|Расстояние|Поле зрения|Выбор|Длительность (кадры)|Изменено|Колдовство|Уклонение",
+  "pl": "Kamera|Ustawienia kamery|Swobodna kamera|Widok z góry|Ustaw salę|Użyj kamery mapy|Nadpisz dla tego oddziału|Tylko na wywołanie|Przy wejściu do sali|Równolegle podczas walki|Wybierz mapę…|Resetuj szyk|Pozycja wyjściowa|Względem|Interpolacja|Płynna|Przesuń|Wyświetlanie|Wyposażona broń|Umiejętność / Przedmiot|Wybierz ikonę|Rozmiar (piksele)|Obrót (stopnie)|Obrót {axis} (stopnie)|{axis} (kafle)|Odległość|Pole widzenia|Wybór|Czas (klatki)|Zmieniono|Rzucanie czaru|Unik",
+  "el": "Κάμερα|Ρυθμίσεις κάμερας|Ελεύθερη κάμερα|Κάτοψη|Ρύθμιση αίθουσας|Χρήση κάμερας χάρτη|Παράκαμψη για αυτή την ομάδα εχθρών|Μόνο με κλήση|Κατά την είσοδο στην αίθουσα|Παράλληλα κατά τη μάχη|Επιλογή χάρτη…|Επαναφορά σχηματισμού|Αρχική θέση|Σε σχέση με|Παρεμβολή|Ομαλή|Μετακίνηση|Εμφάνιση|Εξοπλισμένο όπλο|Ικανότητα / Αντικείμενο|Επιλογή εικονιδίου|Μέγεθος (πίξελ)|Περιστροφή (μοίρες)|Περιστροφή {axis} (μοίρες)|{axis} (πλακίδια)|Απόσταση|Οπτικό πεδίο|Επιλογή|Διάρκεια (καρέ)|Τροποποιήθηκε|Ξόρκι|Αποφυγή",
+  "ar": "الكاميرا|إعدادات الكاميرا|كاميرا حرة|منظور علوي|إعداد الغرفة|استخدام كاميرا الخريطة|تخصيص لهذه الفرقة|عند الاستدعاء فقط|عند دخول الغرفة|بالتوازي أثناء المعركة|اختيار خريطة…|إعادة ضبط التشكيل|الموضع الأصلي|بالنسبة إلى|الاستيفاء|سلس|تحريك|العرض|السلاح المجهز|مهارة / عنصر|اختيار أيقونة|الحجم (بكسل)|الدوران (درجات)|دوران {axis} (درجات)|{axis} (بلاطات)|المسافة|مجال الرؤية|التحديد|المدة (إطارات)|تم التعديل|إلقاء تعويذة|مراوغة",
+  "tr": "Kamera|Kamera ayarları|Serbest kamera|Üstten görünüm|Odayı ayarla|Harita kamerasını kullan|Bu birlik için özelleştir|Yalnızca çağrıldığında|Odaya girişte|Savaş sırasında paralel|Harita seç…|Dizilimi sıfırla|Başlangıç konumu|Referans|Geçiş|Yumuşak|Taşı|Görünüm|Kuşanılmış silah|Beceri / Eşya|Simge seç|Boyut (piksel)|Dönüş (derece)|{axis} dönüşü (derece)|{axis} (kare)|Mesafe|Görüş alanı|Seçim|Süre (kare)|Değiştirildi|Büyü yap|Kaçın",
+  "id": "Kamera|Pengaturan kamera|Kamera bebas|Tampak atas|Atur ruang|Gunakan kamera peta|Sesuaikan untuk pasukan ini|Hanya saat dipanggil|Saat memasuki ruang|Paralel selama pertempuran|Pilih peta…|Atur ulang formasi|Posisi awal|Relatif terhadap|Interpolasi|Halus|Pindahkan|Tampilan|Senjata terpasang|Keahlian / Item|Pilih ikon|Ukuran (piksel)|Rotasi (derajat)|Rotasi {axis} (derajat)|{axis} (ubin)|Jarak|Bidang pandang|Pilihan|Durasi (bingkai)|Diubah|Merapal|Menghindar",
+  "vi": "Máy quay|Thiết lập máy quay|Máy quay tự do|Nhìn từ trên xuống|Thiết lập phòng|Dùng máy quay bản đồ|Tùy chỉnh cho nhóm địch này|Chỉ khi được gọi|Khi vào phòng|Chạy song song trong trận|Chọn bản đồ…|Đặt lại đội hình|Vị trí ban đầu|Tương đối với|Nội suy|Mượt|Di chuyển|Hiển thị|Vũ khí đang trang bị|Kỹ năng / Vật phẩm|Chọn biểu tượng|Kích thước (pixel)|Xoay (độ)|Xoay {axis} (độ)|{axis} (ô)|Khoảng cách|Góc nhìn|Lựa chọn|Thời lượng (khung hình)|Đã thay đổi|Niệm phép|Né tránh",
+  "ko": "카메라|카메라 설정|자유 카메라|위에서 보기|방 설정|맵 카메라 사용|이 적 그룹에 맞게 설정|호출할 때만|방에 입장할 때|전투 중 병렬 실행|맵 선택…|대형 초기화|원래 위치|기준 위치|보간|부드럽게|이동|표시|장착한 무기|스킬 / 아이템|아이콘 선택|크기 (픽셀)|회전 (도)|{axis} 회전 (도)|{axis} (타일)|거리|시야각|선택|길이 (프레임)|수정됨|시전|회피",
+  "zh-Hant": "攝影機|攝影機設定|自由攝影機|俯視|設定房間|使用地圖攝影機|為此敵群覆寫|僅在呼叫時|進入房間時|戰鬥中平行執行|選擇地圖…|重設隊形|初始位置|相對於|補間|平滑|移動|顯示|已裝備武器|技能／道具|選擇圖示|大小（像素）|旋轉（度）|{axis} 旋轉（度）|{axis}（圖塊）|距離|視野角|選取|持續時間（影格）|已修改|施法|閃避",
+  "zh-Hans": "摄像机|摄像机设置|自由摄像机|俯视|设置房间|使用地图摄像机|为此敌群覆盖|仅在调用时|进入房间时|战斗中并行执行|选择地图…|重置队形|初始位置|相对于|插值|平滑|移动|显示|已装备武器|技能／道具|选择图标|大小（像素）|旋转（度）|{axis} 旋转（度）|{axis}（图块）|距离|视野角|选择|持续时间（帧）|已修改|施法|闪避",
+  "th": "กล้อง|การตั้งค่ากล้อง|กล้องอิสระ|มุมมองจากด้านบน|ตั้งค่าห้อง|ใช้กล้องของแผนที่|ปรับเฉพาะกลุ่มศัตรูนี้|เมื่อเรียกใช้เท่านั้น|เมื่อเข้าห้อง|ทำงานคู่ขนานระหว่างต่อสู้|เลือกแผนที่…|รีเซ็ตรูปขบวน|ตำแหน่งเริ่มต้น|อ้างอิงจาก|การแทรกค่า|นุ่มนวล|ย้าย|การแสดงผล|อาวุธที่สวมใส่|ทักษะ / ไอเทม|เลือกไอคอน|ขนาด (พิกเซล)|การหมุน (องศา)|การหมุน {axis} (องศา)|{axis} (ช่อง)|ระยะห่าง|มุมมอง|การเลือก|ระยะเวลา (เฟรม)|แก้ไขแล้ว|ร่ายเวท|หลบหลีก"
+};
+ for(const [locale,row] of Object.entries(rows)){const values=row.split('|');keys.forEach((key,i)=>globalThis.RR_REVIEWED_TRANSLATIONS.text[locale][key]=values[i]);}
+}
+{
+ const keys=["Actor: {name}", "Enemy: {name}", "Party Slot {n}", "Enemy {n}", "Missing Sequence #{id}", "Room Event: {name}", "Add Call to Troop Page: {name}", "Used by: {records}", "Preview could not load: {error}", "{frame} / {duration} frames · {seconds}s", "A sequence can contain at most 256 steps."];
+ const rows={
+  "de": "Akteur: {name}|Gegner: {name}|Gruppenplatz {n}|Gegner {n}|Fehlende Sequenz #{id}|Raumereignis: {name}|Aufruf zur Truppenseite hinzufügen: {name}|Verwendet von: {records}|Vorschau konnte nicht geladen werden: {error}|{frame} / {duration} Frames · {seconds} s|Eine Sequenz darf höchstens 256 Schritte enthalten.",
+  "ja": "アクター：{name}|敵：{name}|パーティ枠 {n}|敵 {n}|存在しないシーケンス #{id}|ルームイベント：{name}|敵グループのページに呼び出しを追加：{name}|使用先：{records}|プレビューを読み込めませんでした：{error}|{frame} / {duration} フレーム · {seconds}秒|シーケンスには最大256ステップまで追加できます。",
+  "es": "Actor: {name}|Enemigo: {name}|Puesto del grupo {n}|Enemigo {n}|Secuencia no encontrada #{id}|Evento de sala: {name}|Añadir llamada a la página de tropa: {name}|Usado por: {records}|No se pudo cargar la vista previa: {error}|{frame} / {duration} fotogramas · {seconds} s|Una secuencia puede contener como máximo 256 pasos.",
+  "pt": "Ator: {name}|Inimigo: {name}|Posição do grupo {n}|Inimigo {n}|Sequência não encontrada #{id}|Evento da sala: {name}|Adicionar chamada à página da tropa: {name}|Usado por: {records}|Não foi possível carregar a prévia: {error}|{frame} / {duration} quadros · {seconds} s|Uma sequência pode conter no máximo 256 etapas.",
+  "fr": "Personnage : {name}|Ennemi : {name}|Emplacement d’équipe {n}|Ennemi {n}|Séquence introuvable #{id}|Événement de salle : {name}|Ajouter un appel à la page du groupe : {name}|Utilisé par : {records}|Impossible de charger l’aperçu : {error}|{frame} / {duration} images · {seconds} s|Une séquence peut contenir au maximum 256 étapes.",
+  "it": "Personaggio: {name}|Nemico: {name}|Posto del gruppo {n}|Nemico {n}|Sequenza mancante #{id}|Evento della stanza: {name}|Aggiungi chiamata alla pagina della truppa: {name}|Usato da: {records}|Impossibile caricare l’anteprima: {error}|{frame} / {duration} fotogrammi · {seconds} s|Una sequenza può contenere al massimo 256 passi.",
+  "ru": "Персонаж: {name}|Враг: {name}|Место в группе {n}|Враг {n}|Отсутствует последовательность #{id}|Событие комнаты: {name}|Добавить вызов на страницу отряда: {name}|Используется: {records}|Не удалось загрузить предпросмотр: {error}|{frame} / {duration} кадров · {seconds} с|Последовательность может содержать не более 256 шагов.",
+  "pl": "Postać: {name}|Wróg: {name}|Miejsce w drużynie {n}|Wróg {n}|Brak sekwencji #{id}|Zdarzenie sali: {name}|Dodaj wywołanie do strony oddziału: {name}|Używane przez: {records}|Nie udało się wczytać podglądu: {error}|{frame} / {duration} klatek · {seconds} s|Sekwencja może zawierać najwyżej 256 kroków.",
+  "el": "Ήρωας: {name}|Εχθρός: {name}|Θέση ομάδας {n}|Εχθρός {n}|Λείπει η ακολουθία #{id}|Συμβάν αίθουσας: {name}|Προσθήκη κλήσης στη σελίδα της ομάδας εχθρών: {name}|Χρησιμοποιείται από: {records}|Αποτυχία φόρτωσης προεπισκόπησης: {error}|{frame} / {duration} καρέ · {seconds} δ|Μια ακολουθία μπορεί να περιέχει έως 256 βήματα.",
+  "ar": "الشخصية: {name}|العدو: {name}|موضع الفريق {n}|العدو {n}|التسلسل مفقود #{id}|حدث الغرفة: {name}|إضافة استدعاء إلى صفحة الفرقة: {name}|مستخدم بواسطة: {records}|تعذر تحميل المعاينة: {error}|{frame} / {duration} إطار · {seconds} ث|يمكن أن يحتوي التسلسل على 256 خطوة كحد أقصى.",
+  "tr": "Karakter: {name}|Düşman: {name}|Parti yuvası {n}|Düşman {n}|Eksik dizi #{id}|Oda olayı: {name}|Birlik sayfasına çağrı ekle: {name}|Kullananlar: {records}|Önizleme yüklenemedi: {error}|{frame} / {duration} kare · {seconds} sn|Bir dizi en fazla 256 adım içerebilir.",
+  "id": "Karakter: {name}|Musuh: {name}|Slot kelompok {n}|Musuh {n}|Urutan tidak ditemukan #{id}|Peristiwa ruang: {name}|Tambah panggilan ke halaman pasukan: {name}|Digunakan oleh: {records}|Pratinjau gagal dimuat: {error}|{frame} / {duration} bingkai · {seconds} dtk|Urutan dapat memuat paling banyak 256 langkah.",
+  "vi": "Nhân vật: {name}|Kẻ địch: {name}|Vị trí đội {n}|Kẻ địch {n}|Thiếu chuỗi #{id}|Sự kiện phòng: {name}|Thêm lệnh gọi vào trang nhóm địch: {name}|Được dùng bởi: {records}|Không thể tải bản xem trước: {error}|{frame} / {duration} khung hình · {seconds} giây|Một chuỗi có thể chứa tối đa 256 bước.",
+  "ko": "캐릭터: {name}|적: {name}|파티 슬롯 {n}|적 {n}|시퀀스 없음 #{id}|방 이벤트: {name}|적 그룹 페이지에 호출 추가: {name}|사용처: {records}|미리보기를 불러올 수 없습니다: {error}|{frame} / {duration} 프레임 · {seconds}초|시퀀스에는 최대 256단계까지 추가할 수 있습니다.",
+  "zh-Hant": "角色：{name}|敵人：{name}|隊伍欄位 {n}|敵人 {n}|找不到序列 #{id}|房間事件：{name}|新增呼叫至敵群頁面：{name}|使用於：{records}|無法載入預覽：{error}|{frame} / {duration} 影格 · {seconds}秒|一個序列最多可包含 256 個步驟。",
+  "zh-Hans": "角色：{name}|敌人：{name}|队伍位置 {n}|敌人 {n}|找不到序列 #{id}|房间事件：{name}|添加调用到敌群页面：{name}|使用于：{records}|无法加载预览：{error}|{frame} / {duration} 帧 · {seconds}秒|一个序列最多可包含 256 个步骤。",
+  "th": "ตัวละคร: {name}|ศัตรู: {name}|ช่องปาร์ตี้ {n}|ศัตรู {n}|ไม่พบลำดับ #{id}|อีเวนต์ในห้อง: {name}|เพิ่มคำสั่งเรียกในหน้ากลุ่มศัตรู: {name}|ใช้โดย: {records}|โหลดตัวอย่างไม่ได้: {error}|{frame} / {duration} เฟรม · {seconds} วินาที|ลำดับหนึ่งมีได้ไม่เกิน 256 ขั้นตอน"
+};
+ for(const [locale,row] of Object.entries(rows)){const values=row.split('|');keys.forEach((key,i)=>globalThis.RR_REVIEWED_TRANSLATIONS.text[locale][key]=values[i]);}
+}
+{
+ const keys=["Assign this sequence from a skill, item, weapon, actor or enemy. Previewing never applies damage or changes game state.", "Ready to use. Apply Action Effect uses the skill’s existing targeting, damage and repeats.", "Troop events and the battle HUD remain part of this battle. Room positions are separate from battleback positions.", "Used for attacks with this weapon. A skill or item assignment takes priority.", "Used for unarmed attacks and actions without a skill, item or weapon override. Equip a weapon with its own sequence to change its attack.", "Used when this enemy’s skill or item has no sequence override.", "This skill or item takes priority over equipped weapons and the actor/enemy default. Inherit uses those defaults.", "Drag a marker to place it. Z sets height; camera controls change the view.", "Map camera: {mode}. Third/first person follows party slot 1.", "Use Map Camera · Choose Override for This Troop to navigate the camera", "Drag empty space to orbit · Ctrl-drag to orbit over markers · Shift or right-drag to pan · Scroll to zoom · WASD move · Q/E height"];
+ const rows={
+  "de": "Weise die Sequenz einer Fertigkeit, einem Gegenstand, einer Waffe, einem Akteur oder Gegner zu. Die Vorschau verändert weder Schaden noch Spielzustand.|Bereit. „Aktionseffekt anwenden“ verwendet Zielwahl, Schaden und Wiederholungen der Fertigkeit.|Truppenereignisse und Kampfanzeige bleiben aktiv. Raumpositionen sind unabhängig von Kampfhintergrundpositionen.|Für Angriffe mit dieser Waffe. Die Zuweisung einer Fertigkeit oder eines Gegenstands hat Vorrang.|Für unbewaffnete Angriffe und Aktionen ohne eigene Zuweisung an Fertigkeit, Gegenstand oder Waffe. Eine Waffe mit eigener Sequenz ändert den Angriff.|Gilt, wenn die Fertigkeit oder der Gegenstand dieses Gegners keine eigene Sequenz hat.|Diese Fertigkeit oder dieser Gegenstand hat Vorrang vor Waffen und Akteur-/Gegnerstandards. „Erben“ verwendet diese Standards.|Marker zum Platzieren ziehen. Z bestimmt die Höhe; Kameraregler ändern die Ansicht.|Kartenkamera: {mode}. Erste/Dritte Person folgt Gruppenplatz 1.|Kartenkamera aktiv · Zum Navigieren „Für diese Truppe überschreiben“ wählen|Freie Fläche ziehen: umkreisen · Strg-Ziehen: über Markern umkreisen · Umschalt- oder Rechtsziehen: schwenken · Scrollen: zoomen · WASD: bewegen · Q/E: Höhe",
+  "ja": "スキル、アイテム、武器、アクター、敵からこのシーケンスを割り当てます。プレビューはダメージやゲーム状態に影響しません。|使用できます。「アクション効果を適用」はスキルの対象、ダメージ、連続回数の設定を使用します。|敵グループのイベントと戦闘UIはそのまま動作します。ルームの配置は戦闘背景の配置とは別です。|この武器での攻撃に使用します。スキルやアイテムの割り当てが優先されます。|素手攻撃や、スキル・アイテム・武器に個別指定がない行動に使用します。専用シーケンスのある武器を装備すると攻撃が変わります。|この敵のスキルやアイテムに個別のシーケンス指定がない場合に使用します。|このスキルやアイテムは装備武器やアクター・敵の標準設定より優先されます。「継承」は標準設定を使います。|マーカーをドラッグして配置します。Zは高さ、カメラ操作は視点を変更します。|マップのカメラ：{mode}。一人称・三人称はパーティ枠1を追従します。|マップのカメラを使用中 · カメラを操作するには「この敵グループで上書き」を選択|空白をドラッグ：周回 · Ctrl＋ドラッグ：マーカー上で周回 · Shiftまたは右ドラッグ：平行移動 · スクロール：ズーム · WASD：移動 · Q/E：高さ",
+  "es": "Asigna esta secuencia desde una habilidad, objeto, arma, actor o enemigo. La vista previa no aplica daño ni cambia el estado del juego.|Listo. «Aplicar efecto de la acción» usa los objetivos, daño y repeticiones de la habilidad.|Los eventos de tropa y la interfaz de batalla siguen activos. Las posiciones de la sala son independientes de las del fondo de batalla.|Se usa al atacar con esta arma. Una asignación de habilidad u objeto tiene prioridad.|Se usa para ataques sin armas y acciones sin asignación propia de habilidad, objeto o arma. Equipa un arma con su propia secuencia para cambiar el ataque.|Se usa cuando la habilidad u objeto del enemigo no tiene una secuencia propia.|Esta habilidad u objeto tiene prioridad sobre las armas y los valores del actor/enemigo. Heredar usa esos valores.|Arrastra un marcador para colocarlo. Z ajusta la altura; los controles de cámara cambian la vista.|Cámara del mapa: {mode}. Primera/tercera persona sigue el puesto 1 del grupo.|Cámara del mapa activa · Elige «Personalizar para esta tropa» para mover la cámara|Arrastrar espacio vacío: orbitar · Ctrl-arrastrar: orbitar sobre marcadores · Mayús o botón derecho: desplazar · Rueda: zoom · WASD: mover · Q/E: altura",
+  "pt": "Atribua esta sequência a uma habilidade, item, arma, ator ou inimigo. A prévia não aplica dano nem altera o estado do jogo.|Pronto. “Aplicar efeito da ação” usa os alvos, dano e repetições da habilidade.|Os eventos da tropa e a interface de batalha continuam ativos. As posições da sala são independentes das posições no fundo de batalha.|Usado em ataques com esta arma. Uma atribuição de habilidade ou item tem prioridade.|Usado em ataques desarmados e ações sem atribuição própria de habilidade, item ou arma. Equipe uma arma com sua própria sequência para mudar o ataque.|Usado quando a habilidade ou item deste inimigo não tem uma sequência própria.|Esta habilidade ou item tem prioridade sobre armas e padrões do ator/inimigo. Herdar usa esses padrões.|Arraste um marcador para posicionar. Z define a altura; os controles da câmera mudam a vista.|Câmera do mapa: {mode}. Primeira/terceira pessoa segue a posição 1 do grupo.|Câmera do mapa ativa · Escolha “Personalizar para esta tropa” para mover a câmera|Arraste espaço vazio: orbitar · Ctrl-arrastar: orbitar sobre marcadores · Shift ou botão direito: deslocar · Roda: zoom · WASD: mover · Q/E: altura",
+  "fr": "Attribuez cette séquence à une compétence, un objet, une arme, un personnage ou un ennemi. L’aperçu ne cause aucun dégât et ne modifie pas la partie.|Prêt. « Appliquer l’effet de l’action » utilise les cibles, dégâts et répétitions de la compétence.|Les événements du groupe et l’interface de combat restent actifs. Les positions de la salle sont distinctes de celles du fond de combat.|Utilisé pour les attaques avec cette arme. Une attribution à une compétence ou un objet est prioritaire.|Pour les attaques à mains nues et les actions sans séquence propre à la compétence, l’objet ou l’arme. Équipez une arme avec sa propre séquence pour changer l’attaque.|Utilisé si la compétence ou l’objet de cet ennemi n’a pas de séquence propre.|Cette compétence ou cet objet prime sur les armes et les valeurs du personnage/ennemi. Hériter utilise ces valeurs.|Glissez un marqueur pour le placer. Z règle la hauteur ; les commandes de caméra changent la vue.|Caméra de carte : {mode}. La première/troisième personne suit l’emplacement d’équipe 1.|Caméra de carte active · Choisissez « Personnaliser pour ce groupe » pour déplacer la caméra|Glisser dans le vide : orbite · Ctrl-glisser : orbite sur les marqueurs · Maj ou bouton droit : translation · Molette : zoom · WASD : déplacement · Q/E : hauteur",
+  "it": "Assegna questa sequenza a un’abilità, oggetto, arma, personaggio o nemico. L’anteprima non infligge danni e non modifica lo stato del gioco.|Pronto. “Applica effetto dell’azione” usa bersagli, danni e ripetizioni dell’abilità.|Gli eventi della truppa e l’interfaccia di battaglia restano attivi. Le posizioni della stanza sono separate da quelle sullo sfondo di battaglia.|Usato per attacchi con quest’arma. Un’assegnazione dell’abilità o dell’oggetto ha la precedenza.|Per attacchi disarmati e azioni senza sequenza propria dell’abilità, oggetto o arma. Equipaggia un’arma con una sua sequenza per cambiare l’attacco.|Usato se l’abilità o l’oggetto di questo nemico non ha una sequenza propria.|Questa abilità o oggetto ha la precedenza su armi e impostazioni del personaggio/nemico. Eredita usa quelle impostazioni.|Trascina un indicatore per posizionarlo. Z regola l’altezza; i controlli della telecamera cambiano la vista.|Telecamera della mappa: {mode}. Prima/terza persona segue il posto 1 del gruppo.|Telecamera della mappa attiva · Scegli “Personalizza per questa truppa” per muovere la telecamera|Trascina nel vuoto: orbita · Ctrl-trascina: orbita sugli indicatori · Maiusc o tasto destro: trasla · Rotella: zoom · WASD: sposta · Q/E: altezza",
+  "ru": "Назначьте последовательность умению, предмету, оружию, персонажу или врагу. Предпросмотр не наносит урон и не меняет состояние игры.|Готово. «Применить эффект действия» использует цели, урон и повторы умения.|События отряда и боевой интерфейс остаются активными. Позиции в комнате не зависят от позиций на фоне боя.|Для атак этим оружием. Назначение умения или предмета имеет приоритет.|Для безоружных атак и действий без отдельной последовательности умения, предмета или оружия. Оружие со своей последовательностью изменит атаку.|Используется, если умение или предмет этого врага не имеет своей последовательности.|Это умение или предмет имеет приоритет над оружием и настройками персонажа/врага. Наследование использует эти настройки.|Перетащите маркер для размещения. Z задаёт высоту; управление камерой меняет вид.|Камера карты: {mode}. Вид от первого/третьего лица следует за местом 1 в группе.|Используется камера карты · Выберите «Переопределить для этого отряда» для управления камерой|Тянуть пустое место: вращать · Ctrl-перетаскивание: вращать над маркерами · Shift или правая кнопка: сдвигать · Колесо: масштаб · WASD: движение · Q/E: высота",
+  "pl": "Przypisz sekwencję do umiejętności, przedmiotu, broni, postaci lub wroga. Podgląd nie zadaje obrażeń ani nie zmienia stanu gry.|Gotowe. „Zastosuj efekt akcji” używa celów, obrażeń i powtórzeń umiejętności.|Zdarzenia oddziału i interfejs walki pozostają aktywne. Pozycje w sali są niezależne od pozycji na tle walki.|Używane do ataków tą bronią. Przypisanie umiejętności lub przedmiotu ma pierwszeństwo.|Do ataków bez broni i akcji bez własnej sekwencji umiejętności, przedmiotu lub broni. Wyposaż broń z własną sekwencją, aby zmienić atak.|Używane, gdy umiejętność lub przedmiot tego wroga nie ma własnej sekwencji.|Ta umiejętność lub przedmiot ma pierwszeństwo przed bronią i ustawieniami postaci/wroga. Dziedziczenie używa tych ustawień.|Przeciągnij znacznik, aby go umieścić. Z ustawia wysokość; sterowanie kamerą zmienia widok.|Kamera mapy: {mode}. Pierwsza/trzecia osoba śledzi miejsce 1 w drużynie.|Kamera mapy aktywna · Wybierz „Nadpisz dla tego oddziału”, aby sterować kamerą|Przeciąganie pustego miejsca: obrót · Ctrl-przeciąganie: obrót nad znacznikami · Shift lub prawy przycisk: przesuwanie · Kółko: przybliżanie · WASD: ruch · Q/E: wysokość",
+  "el": "Αντιστοιχίστε την ακολουθία σε ικανότητα, αντικείμενο, όπλο, ήρωα ή εχθρό. Η προεπισκόπηση δεν προκαλεί ζημιά ούτε αλλάζει την κατάσταση του παιχνιδιού.|Έτοιμο. Η «Εφαρμογή αποτελέσματος ενέργειας» χρησιμοποιεί τους στόχους, τη ζημιά και τις επαναλήψεις της ικανότητας.|Τα συμβάντα της ομάδας εχθρών και η διεπαφή μάχης παραμένουν ενεργά. Οι θέσεις αίθουσας είναι ανεξάρτητες από τις θέσεις φόντου μάχης.|Για επιθέσεις με αυτό το όπλο. Η αντιστοίχιση ικανότητας ή αντικειμένου έχει προτεραιότητα.|Για άοπλες επιθέσεις και ενέργειες χωρίς δική τους αντιστοίχιση ικανότητας, αντικειμένου ή όπλου. Εξοπλίστε όπλο με δική του ακολουθία για να αλλάξετε την επίθεση.|Χρησιμοποιείται όταν η ικανότητα ή το αντικείμενο αυτού του εχθρού δεν έχει δική του ακολουθία.|Αυτή η ικανότητα ή το αντικείμενο προηγείται των όπλων και των προεπιλογών ήρωα/εχθρού. Η κληρονόμηση χρησιμοποιεί αυτές τις προεπιλογές.|Σύρετε έναν δείκτη για τοποθέτηση. Το Z ορίζει ύψος· η κάμερα αλλάζει την προβολή.|Κάμερα χάρτη: {mode}. Πρώτο/τρίτο πρόσωπο ακολουθεί τη θέση ομάδας 1.|Κάμερα χάρτη ενεργή · Επιλέξτε «Παράκαμψη για αυτή την ομάδα εχθρών» για πλοήγηση κάμερας|Σύρσιμο κενού: περιστροφή · Ctrl-σύρσιμο: περιστροφή πάνω από δείκτες · Shift ή δεξί σύρσιμο: μετατόπιση · Κύλιση: ζουμ · WASD: κίνηση · Q/E: ύψος",
+  "ar": "عيّن هذا التسلسل لمهارة أو عنصر أو سلاح أو شخصية أو عدو. المعاينة لا تسبب ضررًا ولا تغير حالة اللعبة.|جاهز. يستخدم «تطبيق تأثير الإجراء» أهداف المهارة وضررها وتكراراتها الحالية.|تظل أحداث الفرقة وواجهة المعركة نشطة. مواضع الغرفة مستقلة عن مواضع خلفية المعركة.|يُستخدم للهجوم بهذا السلاح. تعيين المهارة أو العنصر له الأولوية.|للهجمات دون سلاح والإجراءات دون تسلسل خاص بالمهارة أو العنصر أو السلاح. جهّز سلاحًا له تسلسل خاص لتغيير هجومه.|يُستخدم عندما لا يكون لمهارة هذا العدو أو عنصره تسلسل خاص.|لهذه المهارة أو العنصر أولوية على الأسلحة وإعدادات الشخصية أو العدو. يستخدم التوريث تلك الإعدادات.|اسحب العلامة لوضعها. يحدد Z الارتفاع؛ وتغير أدوات الكاميرا زاوية العرض.|كاميرا الخريطة: {mode}. يتبع منظور الشخص الأول أو الثالث موضع الفريق 1.|كاميرا الخريطة نشطة · اختر «تخصيص لهذه الفرقة» لتحريك الكاميرا|سحب الفراغ: دوران · Ctrl مع السحب: دوران فوق العلامات · Shift أو سحب يمين: إزاحة · تمرير: تقريب · WASD: حركة · Q/E: ارتفاع",
+  "tr": "Bu diziyi bir beceri, eşya, silah, karakter veya düşmana atayın. Önizleme hasar vermez ve oyun durumunu değiştirmez.|Hazır. “Eylem etkisini uygula” becerinin mevcut hedeflerini, hasarını ve tekrarlarını kullanır.|Birlik olayları ve savaş arayüzü etkin kalır. Oda konumları savaş arka planı konumlarından bağımsızdır.|Bu silahla yapılan saldırılarda kullanılır. Beceri veya eşya ataması önceliklidir.|Silahsız saldırılar ve beceri, eşya ya da silaha özel dizisi olmayan eylemler içindir. Saldırıyı değiştirmek için kendi dizisi olan bir silah kuşanın.|Bu düşmanın becerisi veya eşyasının özel bir dizisi yoksa kullanılır.|Bu beceri veya eşya, silah ve karakter/düşman varsayılanlarından önceliklidir. Devral bunları kullanır.|Yerleştirmek için işaretçiyi sürükleyin. Z yüksekliği ayarlar; kamera kontrolleri görünümü değiştirir.|Harita kamerası: {mode}. Birinci/üçüncü şahıs parti yuvası 1’i takip eder.|Harita kamerası etkin · Kamerayı hareket ettirmek için “Bu birlik için özelleştir” seçin|Boş alanı sürükle: yörünge · Ctrl-sürükle: işaretçiler üzerinde yörünge · Shift veya sağ sürükle: kaydır · Tekerlek: yakınlaştır · WASD: hareket · Q/E: yükseklik",
+  "id": "Tetapkan urutan ini pada keahlian, item, senjata, karakter, atau musuh. Pratinjau tidak memberi kerusakan atau mengubah keadaan permainan.|Siap. “Terapkan efek aksi” menggunakan sasaran, kerusakan, dan pengulangan keahlian yang ada.|Peristiwa pasukan dan antarmuka pertempuran tetap aktif. Posisi ruang terpisah dari posisi latar pertempuran.|Untuk serangan dengan senjata ini. Penetapan keahlian atau item lebih diutamakan.|Untuk serangan tanpa senjata dan aksi tanpa urutan khusus keahlian, item, atau senjata. Pasang senjata dengan urutannya sendiri untuk mengubah serangan.|Digunakan jika keahlian atau item musuh ini tidak memiliki urutan khusus.|Keahlian atau item ini diutamakan daripada senjata dan bawaan karakter/musuh. Warisi memakai bawaan tersebut.|Seret penanda untuk menempatkan. Z mengatur tinggi; kontrol kamera mengubah tampilan.|Kamera peta: {mode}. Orang pertama/ketiga mengikuti slot kelompok 1.|Kamera peta aktif · Pilih “Sesuaikan untuk pasukan ini” untuk menggerakkan kamera|Seret ruang kosong: mengorbit · Ctrl-seret: mengorbit di atas penanda · Shift atau seret kanan: geser · Gulir: zum · WASD: bergerak · Q/E: tinggi",
+  "vi": "Gán chuỗi này cho kỹ năng, vật phẩm, vũ khí, nhân vật hoặc kẻ địch. Xem trước không gây sát thương hay đổi trạng thái trò chơi.|Sẵn sàng. “Áp dụng hiệu ứng hành động” dùng mục tiêu, sát thương và số lần lặp của kỹ năng.|Sự kiện nhóm địch và giao diện chiến đấu vẫn hoạt động. Vị trí trong phòng tách biệt với vị trí trên phông nền chiến đấu.|Dùng khi tấn công bằng vũ khí này. Chuỗi gán cho kỹ năng hoặc vật phẩm được ưu tiên.|Dành cho đòn tay không và hành động không có chuỗi riêng ở kỹ năng, vật phẩm hoặc vũ khí. Trang bị vũ khí có chuỗi riêng để đổi đòn đánh.|Dùng khi kỹ năng hoặc vật phẩm của kẻ địch này không có chuỗi riêng.|Kỹ năng hoặc vật phẩm này được ưu tiên hơn vũ khí và mặc định nhân vật/kẻ địch. Kế thừa dùng các mặc định đó.|Kéo dấu mốc để đặt. Z chỉnh độ cao; điều khiển máy quay đổi góc nhìn.|Máy quay bản đồ: {mode}. Góc nhìn thứ nhất/thứ ba theo vị trí đội 1.|Đang dùng máy quay bản đồ · Chọn “Tùy chỉnh cho nhóm địch này” để di chuyển máy quay|Kéo vùng trống: xoay quanh · Ctrl-kéo: xoay quanh trên dấu mốc · Shift hoặc kéo chuột phải: dịch chuyển · Cuộn: thu phóng · WASD: di chuyển · Q/E: độ cao",
+  "ko": "스킬, 아이템, 무기, 캐릭터 또는 적에 이 시퀀스를 지정하세요. 미리보기는 피해를 주거나 게임 상태를 바꾸지 않습니다.|준비되었습니다. “행동 효과 적용”은 스킬의 기존 대상, 피해, 반복 횟수를 사용합니다.|적 그룹 이벤트와 전투 UI는 계속 작동합니다. 방 위치는 전투 배경 위치와 별개입니다.|이 무기로 공격할 때 사용합니다. 스킬이나 아이템에 지정한 시퀀스가 우선합니다.|맨손 공격과 스킬, 아이템, 무기에 별도 지정이 없는 행동에 사용합니다. 자체 시퀀스가 있는 무기를 장착하면 공격이 바뀝니다.|이 적의 스킬이나 아이템에 별도 시퀀스가 없을 때 사용합니다.|이 스킬이나 아이템은 장착 무기와 캐릭터/적의 기본값보다 우선합니다. 상속은 해당 기본값을 사용합니다.|마커를 드래그하여 배치하세요. Z는 높이를, 카메라 조작은 시점을 바꿉니다.|맵 카메라: {mode}. 1인칭/3인칭은 파티 슬롯 1을 따라갑니다.|맵 카메라 사용 중 · 카메라를 움직이려면 “이 적 그룹에 맞게 설정”을 선택하세요|빈 공간 드래그: 궤도 회전 · Ctrl-드래그: 마커 위에서 회전 · Shift 또는 오른쪽 드래그: 평행 이동 · 스크롤: 확대/축소 · WASD: 이동 · Q/E: 높이",
+  "zh-Hant": "從技能、道具、武器、角色或敵人指定此序列。預覽不會造成傷害或改變遊戲狀態。|可以使用。「套用行動效果」會使用技能原有的目標、傷害和重複次數。|敵群事件和戰鬥介面仍會運作。房間位置與戰鬥背景位置分開儲存。|用於使用此武器的攻擊。技能或道具的指定優先。|用於徒手攻擊，以及技能、道具或武器未另行指定的行動。裝備具有專用序列的武器即可改變攻擊。|當此敵人的技能或道具沒有專用序列時使用。|此技能或道具優先於裝備武器和角色／敵人的預設值。「繼承」會使用那些預設值。|拖曳標記以放置。Z 設定高度；攝影機控制項改變視角。|地圖攝影機：{mode}。第一／第三人稱跟隨隊伍欄位 1。|正在使用地圖攝影機 · 選擇「為此敵群覆寫」即可操作攝影機|拖曳空白處：環繞 · Ctrl 拖曳：在標記上環繞 · Shift 或右鍵拖曳：平移 · 捲動：縮放 · WASD：移動 · Q/E：高度",
+  "zh-Hans": "从技能、道具、武器、角色或敌人指定此序列。预览不会造成伤害或改变游戏状态。|可以使用。“应用行动效果”会使用技能原有的目标、伤害和重复次数。|敌群事件和战斗界面仍会运行。房间位置与战斗背景位置分开保存。|用于使用此武器的攻击。技能或道具的指定优先。|用于徒手攻击，以及技能、道具或武器未另行指定的行动。装备具有专用序列的武器即可改变攻击。|当此敌人的技能或道具没有专用序列时使用。|此技能或道具优先于装备武器和角色／敌人的默认值。“继承”会使用那些默认值。|拖动标记以放置。Z 设置高度；摄像机控件改变视角。|地图摄像机：{mode}。第一／第三人称跟随队伍位置 1。|正在使用地图摄像机 · 选择“为此敌群覆盖”即可操作摄像机|拖动空白处：环绕 · Ctrl 拖动：在标记上环绕 · Shift 或右键拖动：平移 · 滚动：缩放 · WASD：移动 · Q/E：高度",
+  "th": "กำหนดลำดับนี้ให้ทักษะ ไอเทม อาวุธ ตัวละคร หรือศัตรู ตัวอย่างไม่สร้างความเสียหายหรือเปลี่ยนสถานะเกม|พร้อมใช้งาน “ใช้ผลของแอ็กชัน” ใช้เป้าหมาย ความเสียหาย และจำนวนครั้งซ้ำของทักษะเดิม|อีเวนต์กลุ่มศัตรูและหน้าจอต่อสู้ยังทำงาน ตำแหน่งในห้องแยกจากตำแหน่งบนฉากหลังต่อสู้|ใช้โจมตีด้วยอาวุธนี้ ลำดับที่กำหนดให้ทักษะหรือไอเทมมีความสำคัญก่อน|ใช้กับการโจมตีมือเปล่าและแอ็กชันที่ไม่มีลำดับเฉพาะของทักษะ ไอเทม หรืออาวุธ สวมอาวุธที่มีลำดับของตนเองเพื่อเปลี่ยนการโจมตี|ใช้เมื่อทักษะหรือไอเทมของศัตรูนี้ไม่มีลำดับเฉพาะ|ทักษะหรือไอเทมนี้มีความสำคัญก่อนอาวุธและค่าเริ่มต้นของตัวละคร/ศัตรู การสืบทอดใช้ค่าเริ่มต้นเหล่านั้น|ลากเครื่องหมายเพื่อวาง Z กำหนดความสูง การควบคุมกล้องเปลี่ยนมุมมอง|กล้องแผนที่: {mode} มุมมองบุคคลที่หนึ่ง/สามติดตามช่องปาร์ตี้ 1|กำลังใช้กล้องแผนที่ · เลือก “ปรับเฉพาะกลุ่มศัตรูนี้” เพื่อขยับกล้อง|ลากพื้นที่ว่าง: หมุนรอบ · Ctrl-ลาก: หมุนเหนือเครื่องหมาย · Shift หรือลากปุ่มขวา: เลื่อน · ล้อเลื่อน: ซูม · WASD: เคลื่อนที่ · Q/E: ความสูง"
+};
+ for(const [locale,row] of Object.entries(rows)){const values=row.split('|');keys.forEach((key,i)=>globalThis.RR_REVIEWED_TRANSLATIONS.text[locale][key]=values[i]);}
+}
+for(const [locale,values] of Object.entries({
+  "de": {
+    "Facing": "Blickrichtung",
+    "First Person": "Erste Person",
+    "Third Person": "Dritte Person",
+    "Isometric": "Isometrisch",
+    "Mode": "Modus",
+    "Rotation": "Drehung",
+    "Target {n}": "Ziel {n}",
+    "Loading…": "Lädt…",
+    "Duration (frames)": "Dauer (Frames)",
+    "Choose Icon…": "Symbol wählen…",
+    "Rotation (degrees):": "Drehung (Grad):",
+    "Redo": "Wiederholen"
+  },
+  "ja": {
+    "Facing": "向き",
+    "First Person": "一人称",
+    "Third Person": "三人称",
+    "Isometric": "アイソメトリック",
+    "Mode": "モード",
+    "Rotation": "回転",
+    "Target {n}": "対象 {n}",
+    "Loading…": "読み込み中…",
+    "Duration (frames)": "長さ（フレーム）",
+    "Choose Icon…": "アイコンを選択…",
+    "Rotation (degrees):": "回転（度）:"
+  },
+  "es": {
+    "Facing": "Orientación",
+    "First Person": "Primera persona",
+    "Third Person": "Tercera persona",
+    "Isometric": "Isométrica",
+    "Mode": "Modo",
+    "Rotation": "Rotación",
+    "Target {n}": "Objetivo {n}",
+    "Loading…": "Cargando…",
+    "Duration (frames)": "Duración (fotogramas)",
+    "Choose Icon…": "Elegir icono…",
+    "Rotation (degrees):": "Rotación (grados):"
+  },
+  "pt": {
+    "Facing": "Direção",
+    "First Person": "Primeira pessoa",
+    "Third Person": "Terceira pessoa",
+    "Isometric": "Isométrica",
+    "Mode": "Modo",
+    "Rotation": "Rotação",
+    "Target {n}": "Alvo {n}",
+    "Loading…": "Carregando…",
+    "Duration (frames)": "Duração (quadros)",
+    "Choose Icon…": "Escolher ícone…",
+    "Rotation (degrees):": "Rotação (graus):"
+  },
+  "fr": {
+    "Facing": "Orientation",
+    "First Person": "Première personne",
+    "Third Person": "Troisième personne",
+    "Isometric": "Isométrique",
+    "Mode": "Mode",
+    "Rotation": "Rotation",
+    "Target {n}": "Cible {n}",
+    "Loading…": "Chargement…",
+    "Duration (frames)": "Durée (images)",
+    "Choose Icon…": "Choisir une icône…",
+    "Rotation (degrees):": "Rotation (degrés):"
+  },
+  "it": {
+    "Facing": "Orientamento",
+    "First Person": "Prima persona",
+    "Third Person": "Terza persona",
+    "Isometric": "Isometrica",
+    "Mode": "Modalità",
+    "Rotation": "Rotazione",
+    "Target {n}": "Bersaglio {n}",
+    "Loading…": "Caricamento…",
+    "Duration (frames)": "Durata (fotogrammi)",
+    "Choose Icon…": "Scegli icona…",
+    "Rotation (degrees):": "Rotazione (gradi):"
+  },
+  "ru": {
+    "Facing": "Направление",
+    "First Person": "От первого лица",
+    "Third Person": "От третьего лица",
+    "Isometric": "Изометрия",
+    "Mode": "Режим",
+    "Rotation": "Поворот",
+    "Target {n}": "Цель {n}",
+    "Loading…": "Загрузка…",
+    "Duration (frames)": "Длительность (кадры)",
+    "Choose Icon…": "Выбрать значок…",
+    "Rotation (degrees):": "Поворот (градусы):"
+  },
+  "pl": {
+    "Facing": "Kierunek",
+    "First Person": "Pierwsza osoba",
+    "Third Person": "Trzecia osoba",
+    "Isometric": "Izometryczna",
+    "Mode": "Tryb",
+    "Rotation": "Obrót",
+    "Target {n}": "Cel {n}",
+    "Loading…": "Ładowanie…",
+    "Duration (frames)": "Czas (klatki)",
+    "Choose Icon…": "Wybierz ikonę…",
+    "Rotation (degrees):": "Obrót (stopnie):"
+  },
+  "el": {
+    "Facing": "Κατεύθυνση",
+    "First Person": "Πρώτο πρόσωπο",
+    "Third Person": "Τρίτο πρόσωπο",
+    "Isometric": "Ισομετρική",
+    "Mode": "Λειτουργία",
+    "Rotation": "Περιστροφή",
+    "Target {n}": "Στόχος {n}",
+    "Loading…": "Φόρτωση…",
+    "Duration (frames)": "Διάρκεια (καρέ)",
+    "Choose Icon…": "Επιλογή εικονιδίου…",
+    "Rotation (degrees):": "Περιστροφή (μοίρες):"
+  },
+  "ar": {
+    "Facing": "الاتجاه",
+    "First Person": "منظور الشخص الأول",
+    "Third Person": "منظور الشخص الثالث",
+    "Isometric": "إيزومتري",
+    "Mode": "الوضع",
+    "Rotation": "الدوران",
+    "Target {n}": "الهدف {n}",
+    "Loading…": "جار التحميل…",
+    "Duration (frames)": "المدة (إطارات)",
+    "Choose Icon…": "اختيار أيقونة…",
+    "Rotation (degrees):": "الدوران (درجات):"
+  },
+  "tr": {
+    "Facing": "Yön",
+    "First Person": "Birinci şahıs",
+    "Third Person": "Üçüncü şahıs",
+    "Isometric": "İzometrik",
+    "Mode": "Mod",
+    "Rotation": "Döndürme",
+    "Target {n}": "Hedef {n}",
+    "Loading…": "Yükleniyor…",
+    "Duration (frames)": "Süre (kare)",
+    "Choose Icon…": "Simge seç…",
+    "Rotation (degrees):": "Dönüş (derece):"
+  },
+  "id": {
+    "Facing": "Arah hadap",
+    "First Person": "Orang pertama",
+    "Third Person": "Orang ketiga",
+    "Isometric": "Isometrik",
+    "Mode": "Mode",
+    "Rotation": "Rotasi",
+    "Target {n}": "Target {n}",
+    "Loading…": "Memuat…",
+    "Duration (frames)": "Durasi (bingkai)",
+    "Choose Icon…": "Pilih ikon…",
+    "Rotation (degrees):": "Rotasi (derajat):"
+  },
+  "vi": {
+    "Facing": "Hướng",
+    "First Person": "Góc nhìn thứ nhất",
+    "Third Person": "Góc nhìn thứ ba",
+    "Isometric": "Isometric",
+    "Mode": "Chế độ",
+    "Rotation": "Xoay",
+    "Target {n}": "Mục tiêu {n}",
+    "Loading…": "Đang tải…",
+    "Duration (frames)": "Thời lượng (khung hình)",
+    "Choose Icon…": "Chọn biểu tượng…",
+    "Rotation (degrees):": "Xoay (độ):"
+  },
+  "ko": {
+    "Facing": "방향",
+    "First Person": "1인칭",
+    "Third Person": "3인칭",
+    "Isometric": "아이소메트릭",
+    "Mode": "모드",
+    "Rotation": "회전",
+    "Target {n}": "대상 {n}",
+    "Loading…": "로딩 중…",
+    "Duration (frames)": "길이 (프레임)",
+    "Choose Icon…": "아이콘 선택…",
+    "Rotation (degrees):": "회전 (도):"
+  },
+  "zh-Hant": {
+    "Facing": "朝向",
+    "First Person": "第一人稱",
+    "Third Person": "第三人稱",
+    "Isometric": "等距",
+    "Mode": "模式",
+    "Rotation": "旋轉",
+    "Target {n}": "目標 {n}",
+    "Loading…": "載入中……",
+    "Duration (frames)": "持續時間（影格）",
+    "Choose Icon…": "選擇圖示…",
+    "Rotation (degrees):": "旋轉（度）:"
+  },
+  "zh-Hans": {
+    "Facing": "朝向",
+    "First Person": "第一人称",
+    "Third Person": "第三人称",
+    "Isometric": "等距",
+    "Mode": "模式",
+    "Rotation": "旋转",
+    "Target {n}": "目标 {n}",
+    "Loading…": "加载中……",
+    "Duration (frames)": "持续时间（帧）",
+    "Choose Icon…": "选择图标…",
+    "Rotation (degrees):": "旋转（度）:"
+  },
+  "th": {
+    "Facing": "ทิศหันหน้า",
+    "First Person": "มุมมองบุคคลที่หนึ่ง",
+    "Third Person": "มุมมองบุคคลที่สาม",
+    "Isometric": "ไอโซเมตริก",
+    "Mode": "โหมด",
+    "Rotation": "การหมุน",
+    "Target {n}": "เป้าหมาย {n}",
+    "Loading…": "กำลังโหลด…",
+    "Duration (frames)": "ระยะเวลา (เฟรม)",
+    "Choose Icon…": "เลือกไอคอน…",
+    "Rotation (degrees):": "การหมุน (องศา):"
+  }
+}))Object.assign(globalThis.RR_REVIEWED_TRANSLATIONS.text[locale],values);
+
+// Sequence validation messages shown by the editor.
+{
+ const keys=["Unsupported action sequence format.", "Unknown step type.", "Every step needs a unique ID.", "Step duration must be 0–3600 frames.", "Choose a valid animation.", "Wait for completion must be enabled or disabled.", "Choose finite animation offsets and a scale between 0.01 and 100.", "Sound requires volume 0–100, pitch 50–150 and pan −100–100.", "Choose a projectile color and size between 1 and 512.", "Unknown battler role.", "Unknown position anchor.", "Unknown easing.", "Choose finite rotations and a scale between 0.01 and 100.", "Positions must be finite and within 1000 units.", "Include exactly one Apply Action Effect step; skill repeats determine the number of hits.", "A sequence can last at most five minutes."];
+ const rows={
+  "de": "Nicht unterstütztes Aktionssequenzformat.|Unbekannter Schritttyp.|Jeder Schritt braucht eine eindeutige ID.|Die Schrittdauer muss 0–3600 Frames betragen.|Wähle eine gültige Animation.|Warten auf Abschluss muss aktiviert oder deaktiviert sein.|Wähle endliche Animationsversätze und eine Skalierung von 0.01 bis 100.|Ton benötigt Lautstärke 0–100, Tonhöhe 50–150 und Panorama −100–100.|Wähle eine Geschossfarbe und eine Größe von 1 bis 512.|Unbekannte Kämpferrolle.|Unbekannter Positionsbezug.|Unbekannter Übergang.|Wähle endliche Drehungen und eine Skalierung von 0.01 bis 100.|Positionen müssen endlich sein und innerhalb von 1000 Einheiten liegen.|Füge genau einen Schritt „Aktionseffekt anwenden“ ein. Die Fertigkeitswiederholungen bestimmen die Trefferzahl.|Eine Sequenz darf höchstens fünf Minuten dauern.",
+  "ja": "未対応のアクションシーケンス形式です。|不明なステップの種類です。|各ステップには一意のIDが必要です。|ステップの長さは0～3600フレームにしてください。|有効なアニメーションを選択してください。|完了待ちは有効または無効にしてください。|アニメーションの位置には有限値、倍率には0.01～100を指定してください。|音量は0～100、ピッチは50～150、位相は−100～100で指定してください。|飛び道具の色と1～512のサイズを選択してください。|不明なバトラーの役割です。|不明な基準位置です。|不明な補間方法です。|回転には有限値、倍率には0.01～100を指定してください。|位置は有限値かつ1000単位以内にしてください。|「アクション効果を適用」を1ステップだけ含めてください。攻撃回数はスキルの連続回数で決まります。|シーケンスの長さは最大5分です。",
+  "es": "Formato de secuencia de acción no compatible.|Tipo de paso desconocido.|Cada paso necesita un ID único.|El paso debe durar entre 0 y 3600 fotogramas.|Elige una animación válida.|La espera de finalización debe estar activada o desactivada.|Usa desplazamientos finitos y una escala entre 0.01 y 100 para la animación.|El sonido requiere volumen 0–100, tono 50–150 y panorámica −100–100.|Elige un color de proyectil y un tamaño entre 1 y 512.|Rol de combatiente desconocido.|Referencia de posición desconocida.|Interpolación desconocida.|Usa rotaciones finitas y una escala entre 0.01 y 100.|Las posiciones deben ser finitas y estar dentro de 1000 unidades.|Incluye exactamente un paso Aplicar efecto de la acción; las repeticiones de la habilidad determinan los golpes.|La secuencia puede durar como máximo cinco minutos.",
+  "pt": "Formato de sequência de ação não suportado.|Tipo de etapa desconhecido.|Cada etapa precisa de um ID único.|A etapa deve durar de 0 a 3600 quadros.|Escolha uma animação válida.|A espera pela conclusão deve estar ativada ou desativada.|Use deslocamentos finitos e escala entre 0.01 e 100 na animação.|O som requer volume 0–100, tom 50–150 e panorâmica −100–100.|Escolha uma cor de projétil e tamanho entre 1 e 512.|Papel de combatente desconhecido.|Referência de posição desconhecida.|Interpolação desconhecida.|Use rotações finitas e escala entre 0.01 e 100.|As posições devem ser finitas e estar dentro de 1000 unidades.|Inclua exatamente uma etapa Aplicar efeito da ação; as repetições da habilidade determinam os acertos.|A sequência pode durar no máximo cinco minutos.",
+  "fr": "Format de séquence d’action non pris en charge.|Type d’étape inconnu.|Chaque étape doit avoir un ID unique.|La durée d’une étape doit être de 0 à 3600 images.|Choisissez une animation valide.|L’attente de fin doit être activée ou désactivée.|Utilisez des décalages finis et une échelle entre 0.01 et 100 pour l’animation.|Le son exige un volume de 0–100, une hauteur de 50–150 et un panoramique de −100–100.|Choisissez une couleur de projectile et une taille entre 1 et 512.|Rôle de combattant inconnu.|Référence de position inconnue.|Interpolation inconnue.|Utilisez des rotations finies et une échelle entre 0.01 et 100.|Les positions doivent être finies et à moins de 1000 unités.|Incluez exactement une étape Appliquer l’effet de l’action ; les répétitions de la compétence déterminent le nombre de coups.|Une séquence peut durer cinq minutes au maximum.",
+  "it": "Formato di sequenza d’azione non supportato.|Tipo di passo sconosciuto.|Ogni passo richiede un ID univoco.|La durata del passo deve essere di 0–3600 fotogrammi.|Scegli un’animazione valida.|L’attesa del completamento deve essere attiva o disattiva.|Usa spostamenti finiti e una scala tra 0.01 e 100 per l’animazione.|Il suono richiede volume 0–100, tono 50–150 e panoramica −100–100.|Scegli un colore del proiettile e una dimensione tra 1 e 512.|Ruolo del combattente sconosciuto.|Riferimento di posizione sconosciuto.|Interpolazione sconosciuta.|Usa rotazioni finite e una scala tra 0.01 e 100.|Le posizioni devono essere finite ed entro 1000 unità.|Inserisci esattamente un passo Applica effetto dell’azione; le ripetizioni dell’abilità determinano il numero di colpi.|Una sequenza può durare al massimo cinque minuti.",
+  "ru": "Неподдерживаемый формат последовательности.|Неизвестный тип шага.|Каждому шагу нужен уникальный ID.|Длительность шага должна быть 0–3600 кадров.|Выберите допустимую анимацию.|Ожидание завершения должно быть включено или выключено.|Смещения анимации должны быть конечными, масштаб — от 0.01 до 100.|Для звука: громкость 0–100, высота 50–150, панорама −100–100.|Выберите цвет снаряда и размер от 1 до 512.|Неизвестная роль бойца.|Неизвестная опорная позиция.|Неизвестная интерполяция.|Повороты должны быть конечными, масштаб — от 0.01 до 100.|Позиции должны быть конечными и в пределах 1000 единиц.|Добавьте ровно один шаг «Применить эффект действия»; повторы умения определяют число попаданий.|Последовательность может длиться не более пяти минут.",
+  "pl": "Nieobsługiwany format sekwencji akcji.|Nieznany typ kroku.|Każdy krok potrzebuje unikalnego ID.|Czas kroku musi wynosić 0–3600 klatek.|Wybierz prawidłową animację.|Czekanie na zakończenie musi być włączone lub wyłączone.|Użyj skończonych przesunięć animacji i skali od 0.01 do 100.|Dźwięk wymaga głośności 0–100, wysokości 50–150 i panoramy −100–100.|Wybierz kolor pocisku i rozmiar od 1 do 512.|Nieznana rola walczącego.|Nieznany punkt odniesienia.|Nieznana interpolacja.|Użyj skończonych obrotów i skali od 0.01 do 100.|Pozycje muszą być skończone i mieścić się w 1000 jednostek.|Dodaj dokładnie jeden krok Zastosuj efekt akcji; powtórzenia umiejętności określają liczbę trafień.|Sekwencja może trwać najwyżej pięć minut.",
+  "el": "Μη υποστηριζόμενη μορφή ακολουθίας ενεργειών.|Άγνωστος τύπος βήματος.|Κάθε βήμα χρειάζεται μοναδικό ID.|Η διάρκεια βήματος πρέπει να είναι 0–3600 καρέ.|Επιλέξτε έγκυρο κινούμενο εφέ.|Η αναμονή ολοκλήρωσης πρέπει να είναι ενεργή ή ανενεργή.|Χρησιμοποιήστε πεπερασμένες μετατοπίσεις εφέ και κλίμακα από 0.01 έως 100.|Ο ήχος απαιτεί ένταση 0–100, τόνο 50–150 και πανοραμική θέση −100–100.|Επιλέξτε χρώμα βλήματος και μέγεθος από 1 έως 512.|Άγνωστος ρόλος μαχητή.|Άγνωστη αναφορά θέσης.|Άγνωστη παρεμβολή.|Χρησιμοποιήστε πεπερασμένες περιστροφές και κλίμακα από 0.01 έως 100.|Οι θέσεις πρέπει να είναι πεπερασμένες και εντός 1000 μονάδων.|Συμπεριλάβετε ακριβώς ένα βήμα Εφαρμογής αποτελέσματος ενέργειας· οι επαναλήψεις της ικανότητας ορίζουν τα χτυπήματα.|Η ακολουθία μπορεί να διαρκέσει έως πέντε λεπτά.",
+  "ar": "تنسيق تسلسل الإجراءات غير مدعوم.|نوع الخطوة غير معروف.|تحتاج كل خطوة إلى معرّف فريد.|يجب أن تكون مدة الخطوة 0–3600 إطار.|اختر مؤثرًا متحركًا صالحًا.|يجب تفعيل انتظار الاكتمال أو تعطيله.|استخدم إزاحات محدودة للمؤثر ومقياسًا بين 0.01 و100.|يتطلب الصوت مستوى 0–100 وطبقة 50–150 وتوازنًا −100–100.|اختر لون المقذوف وحجمًا بين 1 و512.|دور المقاتل غير معروف.|مرجع الموضع غير معروف.|الاستيفاء غير معروف.|استخدم زوايا دوران محدودة ومقياسًا بين 0.01 و100.|يجب أن تكون المواضع محدودة وضمن 1000 وحدة.|أضف خطوة واحدة فقط لتطبيق تأثير الإجراء؛ تحدد تكرارات المهارة عدد الضربات.|يمكن أن يستمر التسلسل خمس دقائق كحد أقصى.",
+  "tr": "Desteklenmeyen eylem dizisi biçimi.|Bilinmeyen adım türü.|Her adımın benzersiz bir kimliği olmalı.|Adım süresi 0–3600 kare olmalı.|Geçerli bir animasyon seçin.|Tamamlanmayı bekleme açık veya kapalı olmalı.|Sonlu animasyon ofsetleri ve 0.01 ile 100 arasında ölçek kullanın.|Ses için ses düzeyi 0–100, perde 50–150 ve denge −100–100 olmalı.|Mermi rengi ve 1 ile 512 arasında boyut seçin.|Bilinmeyen savaşçı rolü.|Bilinmeyen konum referansı.|Bilinmeyen geçiş.|Sonlu dönüşler ve 0.01 ile 100 arasında ölçek kullanın.|Konumlar sonlu ve 1000 birim içinde olmalı.|Tam olarak bir Eylem etkisini uygula adımı ekleyin; beceri tekrarları vuruş sayısını belirler.|Bir dizi en fazla beş dakika sürebilir.",
+  "id": "Format urutan aksi tidak didukung.|Jenis langkah tidak dikenal.|Setiap langkah memerlukan ID unik.|Durasi langkah harus 0–3600 bingkai.|Pilih animasi yang valid.|Tunggu hingga selesai harus aktif atau nonaktif.|Gunakan offset animasi terhingga dan skala antara 0.01 dan 100.|Suara memerlukan volume 0–100, nada 50–150, dan pan −100–100.|Pilih warna proyektil dan ukuran antara 1 dan 512.|Peran petarung tidak dikenal.|Acuan posisi tidak dikenal.|Interpolasi tidak dikenal.|Gunakan rotasi terhingga dan skala antara 0.01 dan 100.|Posisi harus terhingga dan dalam 1000 unit.|Sertakan tepat satu langkah Terapkan efek aksi; pengulangan keahlian menentukan jumlah pukulan.|Urutan dapat berlangsung paling lama lima menit.",
+  "vi": "Định dạng chuỗi hành động không được hỗ trợ.|Loại bước không xác định.|Mỗi bước cần một ID riêng.|Bước phải dài từ 0–3600 khung hình.|Chọn hiệu ứng hoạt hình hợp lệ.|Chờ hoàn tất phải được bật hoặc tắt.|Dùng độ lệch hữu hạn và tỷ lệ từ 0.01 đến 100 cho hiệu ứng.|Âm thanh cần âm lượng 0–100, cao độ 50–150 và cân bằng −100–100.|Chọn màu đạn và kích thước từ 1 đến 512.|Vai trò đấu sĩ không xác định.|Mốc vị trí không xác định.|Nội suy không xác định.|Dùng góc xoay hữu hạn và tỷ lệ từ 0.01 đến 100.|Vị trí phải hữu hạn và trong phạm vi 1000 đơn vị.|Thêm đúng một bước Áp dụng hiệu ứng hành động; số lần lặp kỹ năng quyết định số đòn trúng.|Một chuỗi có thể dài tối đa năm phút.",
+  "ko": "지원하지 않는 행동 시퀀스 형식입니다.|알 수 없는 단계 유형입니다.|각 단계에는 고유 ID가 필요합니다.|단계 길이는 0–3600프레임이어야 합니다.|유효한 애니메이션을 선택하세요.|완료 대기는 켜거나 꺼야 합니다.|유한한 애니메이션 오프셋과 0.01–100 사이의 배율을 사용하세요.|소리는 볼륨 0–100, 피치 50–150, 팬 −100–100이 필요합니다.|투사체 색상과 1–512 사이의 크기를 선택하세요.|알 수 없는 전투원 역할입니다.|알 수 없는 기준 위치입니다.|알 수 없는 보간입니다.|유한한 회전값과 0.01–100 사이의 배율을 사용하세요.|위치는 유한하며 1000단위 이내여야 합니다.|행동 효과 적용 단계를 정확히 하나 넣으세요. 스킬 반복 횟수가 타격 수를 결정합니다.|시퀀스는 최대 5분까지 가능합니다.",
+  "zh-Hant": "不支援的動作序列格式。|未知的步驟類型。|每個步驟都需要唯一的 ID。|步驟長度必須為 0–3600 影格。|請選擇有效的動畫。|等待完成必須啟用或停用。|動畫偏移須為有限值，倍率須在 0.01 至 100 之間。|音效需要音量 0–100、音高 50–150、左右平衡 −100–100。|請選擇投射物顏色與 1 至 512 之間的大小。|未知的戰鬥者角色。|未知的基準位置。|未知的補間方式。|旋轉須為有限值，倍率須在 0.01 至 100 之間。|位置須為有限值且在 1000 單位以內。|必須剛好有一個「套用行動效果」步驟；技能的重複次數決定命中次數。|序列最長為五分鐘。",
+  "zh-Hans": "不支持的动作序列格式。|未知的步骤类型。|每个步骤都需要唯一的 ID。|步骤长度必须为 0–3600 帧。|请选择有效的动画。|等待完成必须启用或禁用。|动画偏移须为有限值，倍率须在 0.01 至 100 之间。|音效需要音量 0–100、音高 50–150、左右平衡 −100–100。|请选择投射物颜色与 1 至 512 之间的大小。|未知的战斗者角色。|未知的基准位置。|未知的插值方式。|旋转须为有限值，倍率须在 0.01 至 100 之间。|位置须为有限值且在 1000 单位以内。|必须恰好有一个“应用行动效果”步骤；技能的重复次数决定命中次数。|序列最长为五分钟。",
+  "th": "ไม่รองรับรูปแบบลำดับแอ็กชันนี้|ไม่รู้จักชนิดขั้นตอน|แต่ละขั้นตอนต้องมี ID ไม่ซ้ำกัน|ขั้นตอนต้องยาว 0–3600 เฟรม|เลือกแอนิเมชันที่ใช้ได้|ต้องเปิดหรือปิดการรอจนจบ|ใช้ค่าเยื้องแอนิเมชันที่จำกัดและสเกลระหว่าง 0.01 ถึง 100|เสียงต้องมีระดับเสียง 0–100 ระดับสูงต่ำ 50–150 และแพน −100–100|เลือกสีวัตถุพุ่งและขนาดระหว่าง 1 ถึง 512|ไม่รู้จักบทบาทผู้ต่อสู้|ไม่รู้จักจุดอ้างอิงตำแหน่ง|ไม่รู้จักการแทรกค่า|ใช้ค่าการหมุนที่จำกัดและสเกลระหว่าง 0.01 ถึง 100|ตำแหน่งต้องเป็นค่าจำกัดและอยู่ภายใน 1000 หน่วย|ต้องมีขั้นตอนใช้ผลของแอ็กชันหนึ่งขั้นตอนเท่านั้น จำนวนซ้ำของทักษะกำหนดจำนวนครั้งที่โดน|ลำดับหนึ่งยาวได้ไม่เกินห้านาที"
+};
+ for(const [locale,row] of Object.entries(rows)){const values=row.split('|');keys.forEach((key,i)=>globalThis.RR_REVIEWED_TRANSLATIONS.text[locale][key]=values[i]);}
+}
+Object.assign(globalThis.RR_REVIEWED_TRANSLATIONS.text.ar, {Motion:'الحركة', Redo:'إعادة التنفيذ'});
+Object.assign(globalThis.RR_REVIEWED_TRANSLATIONS.text.ja, {Motion:'モーション'});

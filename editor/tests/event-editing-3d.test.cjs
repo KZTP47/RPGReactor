@@ -59,15 +59,14 @@ test('clicking a previewed model selects its event and breaks nothing', () => {
     assert.match(map3d, /if \(!mesh\.material\) return;/, 'and cannot crash on anything else either');
 });
 
-test('editing one event rebuilds one event, and Delete means the prop', () => {
+test('editing one event rebuilds one event', () => {
     const map3d = read('MapEditor3D.js');
     assert.match(map3d, /this\._onEventsChanged = \(\) => this\.refreshEvents\(\);/, 'event edits never rebuild the world');
     assert.match(map3d, /_buildOneEvent\(event, sheets, mapData, request\)/, 'one event builds alone');
     assert.match(map3d, /if \(!affected\.size && !added\.length\) \{ this\.refreshPassage\(\); return; \}/, 'an untouched view is left alone entirely');
     assert.match(map3d, /this\.animatedEvents = \(this\.animatedEvents \|\| \[\]\)\.filter\(entry => !affected\.has\(entry\.eventId\)\);/, 'sheet animations follow their event out');
-    const ui = fs.readFileSync(path.join(editorRoot, 'src', 'UIManager.js'), 'utf8');
-    assert.match(ui, /propsManager\?\.active && propsManager\.selectedId/, 'a selected prop owns the Delete key');
-    assert.match(ui, /propsManager\.remove\(propsManager\.selectedId\);/, 'and goes through the undoable removal');
+    // Delete/Backspace ownership is exercised through the actual shortcut
+    // handler in event-map-workflow-shortcuts-20260812.test.cjs.
 });
 
 test('a selected map model drags along axis arrows, height included', () => {

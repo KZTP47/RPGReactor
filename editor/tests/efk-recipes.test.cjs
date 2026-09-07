@@ -40,6 +40,81 @@ function loadRecipes() {
 
 const g = loadRecipes();
 
+function forgeGenerator() {
+    const globals = { ...g, RR_EfkModel, RR_EfkSymbols, RR_EfkLayers };
+    const source = fs.readFileSync(path.join(repoRoot, 'src/forge/EffekseerGenerator/EffekseerGenerator.js'), 'utf8');
+    const Generator = new Function(...Object.keys(globals), source + '; return EffekseerGenerator;')(...Object.values(globals));
+    return new Generator();
+}
+
+test('loop exports close geometric spin, texture and morph periods at custom durations', () => {
+    const generator = forgeGenerator();
+    for (const id of ['geo-cube', 'geo-dodecahedron', 'geo-helix', 'geo-hypercube']) {
+        generator._stack = [{ recipeId: id, values: { spinX: -27, spinY: 36, spinZ: 0 }, start: 0, end: 0 }];
+        generator._effectDuration = 137;
+        generator._loopPreview = true;
+        const bytes = generator._buildBytes();
+        const effect = RR_EfkFormat.parseEfkefc(bytes);
+        assert.equal(effect.root.children[0].commonValues.life.min, 137, `${id}: finite export`);
+        let rotations = 0;
+        const integral = value => assert.ok(Math.abs(value - Math.round(value)) < 0.00001, `${id}: incomplete period ${value}`);
+        (function walk(node) {
+            if (node.rotation?.type === 1) {
+                rotations++;
+                for (const axis of ['x', 'y', 'z']) integral(node.rotation.velocity.max[axis] * 137 / (2 * Math.PI));
+            }
+            if (node.rendererCommon?.uv.type === 3) {
+                for (const axis of ['x', 'y']) integral(node.rendererCommon.uv.speed.max[axis] * 137);
+            }
+            for (const child of node.children || []) walk(child);
+        })(effect.root);
+        assert.ok(rotations > 0, `${id}: rotation remains animated`);
+        for (const model of generator._lastComposed.models) {
+            const mesh = RR_EfkModel.parseEfkmodel(model.bytes);
+            if (mesh.frames?.length > 1) assert.equal(137 % mesh.frames.length, 0, `${id}: incomplete morph`);
+        }
+        generator._loopPreview = false;
+        const single = generator._buildBytes();
+        assert.notDeepEqual(single, bytes, `${id}: loop mode must affect the exported motion`);
+        assert.equal(RR_EfkFormat.parseEfkefc(single).root.children[0].commonValues.life.min, 137);
+    }
+});
+
+test('closing a loop preserves spin direction and closes keyframed poses', () => {
+    const generator = forgeGenerator();
+    const node = RR_EfkBuilder.makeNode(RR_EfkFormat.NODE_TYPE.NONE, {
+        commonValues: { life: RR_EfkBuilder.rf(500) },
+        rotation: { type: 1, velocity: RR_EfkBuilder.rv3({ x: -0.01, y: 0.01, z: 0 }), acceleration: RR_EfkBuilder.rv3(0) },
+        scaling: { type: 5, fcurve: { timeline: 0, x: { keys: [1, 2, 3, 4, 5] } } }
+    });
+    generator._closeLoop([node], 120);
+    assert.ok(node.rotation.velocity.max.x < 0);
+    assert.ok(node.rotation.velocity.max.y > 0);
+    assert.equal(node.rotation.velocity.max.z, 0);
+    assert.equal(node.scaling.fcurve.x.keys.at(-1), 1);
+    assert.equal(node.scaling.fcurve.x.keys[2], 3, 'keep the authored middle pose');
+});
+
+test('interface and model categories preserve their authored upright orientation in exports', () => {
+    const generator = forgeGenerator();
+    generator._loopPreview = false;
+    const categories = ['Interface', 'Geometric', 'Object', 'Symbolic'];
+    for (const recipe of g.RR_EFK_RECIPE_REGISTRY.filter(r => categories.includes(r.category))) {
+        generator._stack = [{ recipeId: recipe.id, values: {}, start: 0, end: 0 }];
+        const authored = recipe.build(g.RR_EfkRecipeUtil.resolveParams(recipe));
+        generator._buildBytes();
+        const exported = generator._lastComposed.nodes[0].children; // finite master wrapper
+        assert.equal(exported.length, authored.length, `${recipe.id}: unexpected category wrapper`);
+        for (let i = 0; i < authored.length; i++) {
+            assert.deepEqual(exported[i].rotation, authored[i].rotation, `${recipe.id}: default orientation was changed`);
+        }
+    }
+    generator._stack = [{ recipeId: 'ui-bootscreen', values: { __tiltX: 30 }, start: 0, end: 0 }];
+    generator._buildBytes();
+    const tilted = generator._lastComposed.nodes[0].children[0];
+    assert.ok(Math.abs(tilted.rotation.rotation.x - Math.PI / 6) < 1e-9, 'preserve user-authored tilt');
+});
+
 // Texture lists are either static name arrays (mapped to Texture/rr_*.png)
 // or functions of params returning full paths.
 function resolveTextures(r, params) {

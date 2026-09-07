@@ -143,8 +143,11 @@ class SetEventLocationEditor {
             <option value="-1">${window.I18n ? window.I18n.tText('Player') : 'Player'}</option>
             <option value="0">${window.I18n ? window.I18n.tText('This Event') : 'This Event'}</option>
         `;
-        // Add event IDs 1-20 (can be extended)
-        for (let i = 1; i <= 20; i++) {
+        const room=this.projectController?.battleRoomMap;
+        if(room){
+            charSelect.querySelector('option[value="-1"]').remove();
+            for(const event of room.events.filter(Boolean)){const option=document.createElement('option');option.value=event.id;option.textContent=tt('Event')+' '+event.id+': '+event.name;charSelect.append(option);}
+        }else for (let i = 1; i <= 20; i++) {
             charSelect.innerHTML += `<option value="${i}">${tt('Event')} ${i.toString().padStart(3, '0')}</option>`;
         }
         charSelect.value = this.characterId.toString();
@@ -180,9 +183,9 @@ class SetEventLocationEditor {
             btn.style.cssText = `
                 flex: 1;
                 padding: 8px;
-                background-color: ${this.type === value ? 'var(--color-link)' : 'var(--color-bg-input)'};
-                color: var(--color-text-strong);
-                border: 1px solid ${this.type === value ? 'var(--color-link)' : 'var(--color-border-input)'};
+                background-color: ${this.type === value ? 'var(--color-accent)' : 'var(--color-bg-input)'};
+                color: ${this.type === value ? 'var(--color-accent-on)' : 'var(--color-text-strong)'};
+                border: 1px solid ${this.type === value ? 'var(--color-accent)' : 'var(--color-border-input)'};
                 border-radius: 3px;
                 cursor: pointer;
                 font-size: 12px;

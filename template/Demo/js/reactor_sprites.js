@@ -1475,7 +1475,8 @@ Sprite_Animation.prototype.setup = function(
     this._mirror = mirror;
     this._delay = delay;
     this._previous = previous;
-    this._effect = EffectManager.load(animation.effectName);
+    this._effectContext = typeof Reactor3D !== "undefined" ? Reactor3D._spawningEffectContext || null : null;
+    this._effect = this._effectContext ? Reactor3D.GpuEffects.load(this._effectContext, animation.effectName) : EffectManager.load(animation.effectName);
     this._playing = true;
     const timings = animation.soundTimings.concat(animation.flashTimings);
     for (const timing of timings) {
@@ -1493,7 +1494,10 @@ Sprite_Animation.prototype.update = function() {
         if (!this._started && this.canStart()) {
             if (this._effect) {
                 if (this._effect.isLoaded) {
-                    this._handle = Graphics.effekseer.play(this._effect);
+                    const context = this._effectContext?.context || Graphics.effekseer;
+                    context._makeContextCurrent?.();
+                    this._handle = context.play(this._effect);
+                    Graphics.effekseer._makeContextCurrent?.();
                     this._started = true;
                 } else {
                     EffectManager.checkErrors();
@@ -1669,6 +1673,7 @@ Sprite_Animation._pendingRenders = [];
 Sprite_Animation._effekseerDrawWarned = false;
 
 Sprite_Animation.renderActive = function(renderer) {
+    Graphics.effekseer?._makeContextCurrent?.();
     // Clear the Effekseer overlay canvas EVERY frame, regardless of whether
     // animations are queued. If we only clear when there's an animation, the
     // last-frame pixels of a finished animation stay on the overlay and block
@@ -1683,6 +1688,11 @@ Sprite_Animation.renderActive = function(renderer) {
         efxGL.clear(efxGL.COLOR_BUFFER_BIT | efxGL.DEPTH_BUFFER_BIT);
     }
     const list = Sprite_Animation._pendingRenders;
+    // Ownership can change after a v8 onRender callback queued this sprite.
+    // Drop scene-owned effects before deciding whether to copy the full scene.
+    let kept = 0;
+    for (const inst of list) if (!inst._reactorInScene) list[kept++] = inst;
+    list.length = kept;
     if (list.length === 0) return;
     // While effects play, the overlay carries a copy of the whole rendered
     // scene and the effects draw ON that copy — the same shared-framebuffer
@@ -1710,6 +1720,9 @@ Sprite_Animation.renderActive = function(renderer) {
 };
 
 Sprite_Animation.prototype._render = function(renderer) {
+    // v8 onRender callbacks can run for hidden sprites. This handle already
+    // renders at its world anchor; the screen overlay would draw it twice.
+    if (this._reactorInScene) return;
     if (this._targets.length > 0 && this._handle && this._handle.exists) {
         if (PIXI.TextureSource) {
             // v8: defer to post-render flush; just queue self. Actual Effekseer
@@ -1741,6 +1754,7 @@ Sprite_Animation.prototype._render = function(renderer) {
 // WebGL1 context, and that Effekseer actually writes pixels to it. Reset via
 
 Sprite_Animation.prototype._doEffekseerDraw = function(renderer, composited) {
+    if (this._reactorInScene) return;
     // Draws to the Effekseer overlay canvas's WebGL1 context (Graphics._effekseerGL).
     // The overlay canvas sits absolutely positioned over the game canvas with
     // pointer-events:none, so the browser compositor layers our effects on top
@@ -3586,6 +3600,12 @@ Sprite_Destination.prototype.destroy = function(options) {
 
 Sprite_Destination.prototype.update = function() {
     Sprite.prototype.update.call(this);
+    const mapScene = SceneManager._scene;
+    if (mapScene && mapScene._spriteset && mapScene._spriteset._reactor3d) {
+        this.visible = false;
+        this._frameCount = 0;
+        return;
+    }
     if ($gameTemp.isDestinationValid()) {
         this.updatePosition();
         this.updateAnimation();
@@ -3682,6 +3702,7 @@ Spriteset_Base.prototype.createBaseSprite = function() {
 
 Spriteset_Base.prototype.createBaseFilters = function() {
     this._baseColorFilter = new ColorFilter();
+    this._baseColorFilter.allowNeutralSceneSkip?.(this);
     // v8: assign the full array in one go (the setter stores a frozen copy
     // so .push on it afterwards fails).
     this._baseSprite.filters = [this._baseColorFilter];
@@ -3708,6 +3729,7 @@ Spriteset_Base.prototype.createTimer = function() {
 
 Spriteset_Base.prototype.createOverallFilters = function() {
     this._overallColorFilter = new ColorFilter();
+    this._overallColorFilter.allowNeutralSceneSkip?.(this);
     // v8: assign the full array in one go (the setter stores a frozen copy
     // so .push on it afterwards fails).
     this.filters = [this._overallColorFilter];
@@ -4591,6 +4613,7 @@ Spriteset_Map.prototype.updateReactor3D = function() {
     // stepping a whole tile at a time.
     this.updateReactor3DCamera();
     this.updateReactor3DLights(state);
+    state.scene.updateDestination($gameTemp, $dataMap, Graphics.frameCount);
     // Warm any template that landed after the scene started (the pass
     // marks each template once, so steady-state this is a no-op scan).
     if (Reactor3D.warmLoadedTemplates) Reactor3D.warmLoadedTemplates();

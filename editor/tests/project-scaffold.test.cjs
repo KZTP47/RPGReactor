@@ -62,6 +62,11 @@ describe('generated fallback project scaffold', () => {
         fs.rmSync(tempRoot, { recursive: true, force: true });
     });
 
+    test('the starter map stores Day as its own ambient default', () => {
+        const sidecar = readJson(path.join(projectPath, 'data', 'Map001.r3d.json'));
+        assert.deepEqual(sidecar.lighting, { ambient: 1, ambientColour: '#ffffff' });
+    });
+
     test('contains all runtime and database files needed at startup', () => {
         const mainPath = path.join(projectPath, 'js', 'reactor_main.js');
         for (const reference of parseRuntimeReferences(mainPath)) {

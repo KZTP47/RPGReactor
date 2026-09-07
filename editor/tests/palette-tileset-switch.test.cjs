@@ -31,6 +31,7 @@ function makeViewer() {
     const info = { innerHTML: '', style: {} };
     const elements = { 'selection-info': info };
     const sandbox = {
+        RRJson: require('../src/utils/JsonFiles.js'),
         console,
         window: {},
         document: {

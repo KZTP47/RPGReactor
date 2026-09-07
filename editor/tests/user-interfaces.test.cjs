@@ -764,6 +764,7 @@ test('List selection publishes its named context immediately and on reselection'
     sandbox.$gameParty.members = () => members;
     const node = sandbox.ReactorUI.normalizeNode({ type: 'list', dataSource: 'party', contextName: 'hero' });
     const refreshing = Object.create(sandbox.Window_ReactorUIList.prototype);
+    refreshing.deactivate = function() {};
     refreshing._uiScene = scene;
     refreshing._uiNode = node;
     refreshing._uiRows = sandbox.ReactorUI.listRows(node, scene);
@@ -1182,4 +1183,201 @@ test('Options, Save, and Load routing requires matching roles and falls back saf
     sandbox.SceneManager.push(sandbox.Scene_Save);
     sandbox.SceneManager.push(sandbox.Scene_Load);
     assert.deepEqual(sandbox.__sceneCalls.map(call => call[1]), [sandbox.Scene_Options, sandbox.Scene_Save, sandbox.Scene_Load]);
+});
+
+test('script conditions accept stock expressions and explicit return bodies without changing action scripts', () => {
+    const sandbox = loadRuntimeUI(), ui = sandbox.ReactorUI;
+    sandbox.$gameParty.exists = () => true;
+    sandbox.DataManager.isEventTest = () => false;
+    sandbox.$gameSystem.isSaveEnabled = () => true;
+    const evaluate = script => ui.evaluateCondition({type:'script',script}, {});
+    assert.equal(evaluate('$gameParty.exists()'), true);
+    assert.equal(evaluate('!DataManager.isEventTest() && $gameSystem.isSaveEnabled();'), true);
+    assert.equal(evaluate('return $gameParty.exists();'), true);
+    assert.equal(evaluate('const allowed = $gameParty.exists(); return allowed;'), true);
+    sandbox.$gameParty.exists = () => false;
+    assert.equal(evaluate('$gameParty.exists()'), false, 'cached conditions read current state');
+    assert.equal(ui.compileScript('$gameSystem.changed = true;')(), undefined, 'action scripts keep their statement semantics');
+    assert.equal(sandbox.$gameSystem.changed, true);
+});
+
+test('personal commands pick an actor, constrain focus, cancel locally and restore their source before opening a scene', () => {
+    const sandbox = loadRuntimeUI(), ui = sandbox.ReactorUI;
+    const data = JSON.parse(read('template/Demo/data/Actors.json'));
+    const actors = [1,2].map(id => ({actorId:()=>id, name:()=>data[id].name, level:data[id].initialLevel}));
+    sandbox.$gameParty.members = () => actors;
+    sandbox.$gameParty.menuActor = () => actors[0];
+    sandbox.SoundManager = {playBuzzer(){ throw Error('Unexpected buzzer'); },playOk(){},playCancel(){}};
+    const scene = new sandbox.Scene_ReactorUI();
+    const action = ui.normalizeAction({type:'personalEquip',contextName:'hero'});
+    scene._interface = {nodes:[{id:1,type:'button',action}]};
+    scene.prepareActorContexts();
+    assert.equal(ui.actorFromContext(scene,'hero'),actors[0], 'a missing list still provides an initial valid actor');
+    const source = {node:()=>({id:1,type:'button',action}),visible:true,isFocusable:()=>true,isEnabled:()=>true,setFocused(){}};
+    const other = {...source,node:()=>({id:3,type:'button'})};
+    const picker = {node:()=>({id:2,type:'list',dataSource:'party',contextName:'hero'}),visible:true,
+        isFocusable:()=>true,isEnabled:()=>true,maxItems:()=>2,setFocused(){},
+        _uiRows:ui.listRows(ui.normalizeNode({type:'list',dataSource:'party'}),scene),
+        selectedRow(){return scene.context('hero');},
+        select(index){scene.setContext('hero',this._uiRows[index]);}};
+    sandbox.$gameParty.setMenuActor = () => {};
+    scene._nodeWindows=[source,picker,other]; scene._focusIndex=0;
+    scene.activateWindow(source);
+    assert.equal(scene.focusedWindow(),picker);
+    assert.equal(scene.canFocus(other),false);
+    picker.select(1);
+    scene.cancelInterface();
+    assert.equal(scene._closing,false);
+    assert.equal(scene.focusedWindow(),source);
+    assert.equal(ui.actorFromContext(scene,'hero'),actors[0]);
+    scene.beginActorSelection(action); picker.select(1);
+    let dispatched;
+    scene.runAction = value => { dispatched=value; assert.equal(scene.focusedWindow(),source); };
+    scene.endActorSelection(true);
+    assert.equal(dispatched,action);
+    assert.equal(ui.actorFromContext(scene,'hero'),actors[1]);
+    assert.equal(scene.canFocus(other),true);
+    action.chooseActor=false;
+    scene.activateWindow(source);
+    assert.equal(scene._actorSelection,null,'explicit opt-out executes immediately');
+});
+
+test('legacy Main Menu upgrades its Party section to one editable actor panel in editor and runtime', () => {
+    const Editor = require('../src/database/DatabaseUserInterfaceEditor.js');
+    const sandbox=loadRuntimeUI();
+    const old={stock:'menu',nodes:[
+        {id:1,type:'box',name:'Party',x:240,y:8,width:800,height:600},
+        {id:2,type:'image',name:'Selected face',parent:1},
+        {id:3,type:'list',name:'Party members',parent:1},
+        {id:4,type:'text',name:'Custom heading',parent:1},
+        {id:5,type:'button',name:'Equip',action:{type:'personalEquip',contextName:'selectedActor'}}
+    ]};
+    const before=JSON.stringify(old);
+    const editor=Editor.upgradeMenuActorPanel(old),runtime=sandbox.ReactorUI.upgradeMenuActorPanel(old);
+    assert.equal(JSON.stringify(editor),JSON.stringify(runtime));
+    assert.equal(JSON.stringify(old),before,'source data is not mutated during upgrade');
+    assert.deepEqual(editor.map(node=>node.id),[1,4,5]);
+    assert.deepEqual([editor[0].x,editor[0].y,editor[0].width,editor[0].height],[240,8,800,600]);
+    assert.equal(editor[0].rowLayout,'actorPanel');
+    assert.equal(Editor.upgradeMenuActorPanel({...old,nodes:editor}),editor,'upgrade is idempotent');
+    assert.equal(Editor.upgradeMenuActorPanel({...old,stock:''}),old.nodes,'custom records are not rewritten');
+});
+
+test('Actor Panel element layout stays inside rows and keeps labels, values and bars separate', () => {
+    const { ReactorUI: ui } = loadRuntimeUI();
+    const Editor = require('../src/database/DatabaseUserInterfaceEditor.js');
+    for (const height of [192,240,400]) {
+        const node=ui.normalizeNode({type:'list',rowLayout:'actorPanel',rowHeight:height});
+        const layout=ui.actorPanelLayout(node,600,height,28);
+        assert.deepEqual(JSON.parse(JSON.stringify(layout)),Editor.actorPanelLayout(node,600,height,28));
+        for(const key of ['hp','mp','exp']) {
+            assert.ok(layout[key+'Label'].y+layout[key+'Label'].height < layout[key].y);
+            assert.ok(layout[key+'Value'].x>=layout[key+'Label'].x+layout[key+'Label'].width);
+            assert.ok(layout[key].y+layout[key].height<=height-node.actorPadding);
+        }
+    }
+    const overrides={hp:{x:20,y:120,width:170,height:12,shape:'chamfer',color:'#123456'},hpValue:{x:30,y:90,fontSize:18},unknown:{x:42}};
+    const clean=ui.normalizeActorElements(overrides);
+    assert.deepEqual(JSON.parse(JSON.stringify(clean)),Editor.normalizeActorElements(overrides));
+    assert.equal(clean.unknown,undefined);
+    const node=ui.normalizeNode({type:'list',rowLayout:'actorPanel',actorElements:overrides});
+    const layout=ui.actorPanelLayout(node,600,240,28);
+    assert.equal(layout.hp.height,12);assert.equal(layout.hp.shape,'chamfer');assert.equal(layout.hpValue.fontSize,18);
+});
+
+test('Formation upgrade is one-time, respects disabled System commands, and preserves authored nodes', () => {
+    const {ReactorUI:ui}=loadRuntimeUI(), Editor=require('../src/database/DatabaseUserInterfaceEditor.js');
+    const entry={stock:'menu',nodes:[{id:1,type:'box',name:'Commands'},
+        {id:2,type:'button',parent:1,x:12,y:120,height:36,action:{type:'personalStatus'}},
+        {id:3,type:'button',parent:1,y:156,height:36,action:{type:'scene',scene:'options'}},
+        {id:4,type:'image',x:24,y:70}]};
+    const nodes=ui.upgradeMenuFormation(entry,true,'Formation');
+    assert.deepEqual(JSON.parse(JSON.stringify(nodes)),Editor.upgradeMenuFormation(entry,true,'Formation'));
+    assert.equal(nodes.find(n=>n.action?.type==='formation').y,156);
+    assert.equal(nodes.find(n=>n.id===3).y,192);assert.equal(entry.nodes[2].y,156);
+    assert.deepEqual(JSON.parse(JSON.stringify(nodes.find(n=>n.id===4))),entry.nodes[3]);
+    assert.equal(ui.upgradeMenuFormation(entry,false,'Formation'),entry.nodes);
+    assert.equal(ui.upgradeMenuFormation({...entry,menuCommandVersion:2},true,'Formation'),entry.nodes);
+});
+
+test('Custom actor commands opt in to actor selection and prepare plugin scenes with the selected actor', () => {
+    const sandbox=loadRuntimeUI(),ui=sandbox.ReactorUI;
+    assert.equal(ui.isPersonalAction(ui.normalizeAction({type:'script'})),false);
+    assert.equal(ui.isPersonalAction(ui.normalizeAction({type:'pluginCommand',actorFirst:true})),true);
+    const actor={actorId:()=>2}, scene=Object.create(sandbox.Scene_ReactorUI.prototype);
+    scene._contexts=new Map([['selectedActor',{kind:'actor',id:2,data:actor}]]);
+    scene.focusedWindow=()=>null;
+    sandbox.Scene_TestPlugin=function(){};
+    let pushed;
+    scene.pushScene=(cls,args)=>{pushed={cls,args};};
+    scene.runAction(ui.normalizeAction({type:'pluginScene',sceneClass:'Scene_TestPlugin',argsExpression:'[actor.actorId()]',contextName:'selectedActor'}));
+    assert.equal(pushed.cls,sandbox.Scene_TestPlugin);assert.equal(pushed.args[0],2);
+    scene.runAction(ui.normalizeAction({type:'script',script:'scene.chosen = actor.actorId();',contextName:'selectedActor'}));
+    assert.equal(scene.chosen,2);
+});
+
+test('Formation disables confirmation for locked actors and when the game disables formation', () => {
+    const sandbox=loadRuntimeUI();let locked=true,enabled=true;
+    sandbox.$gameSystem={isFormationEnabled:()=>enabled};
+    const row={enabled:true,data:{isFormationChangeOk:()=>!locked}};
+    const list=Object.create(sandbox.Window_ReactorUIList.prototype);
+    list._uiEnabled=true;list.selectedRow=()=>row;
+    list._uiScene={_actorSelection:{action:{type:'formation'}}};
+    assert.equal(list.isCurrentItemEnabled(),false);
+    locked=false;assert.equal(list.isCurrentItemEnabled(),true);
+    enabled=false;assert.equal(list.isCurrentItemEnabled(),false);
+    list._uiScene._actorSelection=null;assert.equal(list.isCurrentItemEnabled(),true);
+});
+
+test('custom scripts and plugin commands that push scenes retain menu state without closing twice', () => {
+    const sandbox=loadRuntimeUI(),ui=sandbox.ReactorUI;
+    const actor={actorId:()=>2,name:()=> 'Carol Everson'};
+    const scene=Object.create(sandbox.Scene_ReactorUI.prototype);
+    scene._contexts=new Map([['hero',{kind:'actor',id:2,data:actor}]]);
+    scene.focusedWindow=()=>null;scene._closing=false;
+    let remembered=0,closed=0,args;
+    scene.rememberForPush=()=>remembered++;scene.close=()=>closed++;
+    sandbox.SceneManager.push=()=>sandbox.SceneManager._stack.push(sandbox.Scene_ReactorUI);
+    scene.runAction(ui.normalizeAction({type:'script',contextName:'hero',script:'SceneManager.push(Scene_Status);',andClose:true}));
+    assert.equal(remembered,1);assert.equal(closed,0);assert.equal(scene._closing,true);
+    scene._closing=false;sandbox.$gameMap._interpreter={};
+    sandbox.PluginManager.callCommand=(_interpreter,_plugin,_command,values)=>{args=values;sandbox.SceneManager.push();};
+    scene.runAction(ui.normalizeAction({type:'pluginCommand',contextName:'hero',args:{actorId:'{actor.id}',name:'{actor.name}'},andClose:true}));
+    assert.deepEqual(JSON.parse(JSON.stringify(args)),{actorId:'2',name:'Carol Everson'});
+    assert.equal(remembered,2);assert.equal(closed,0);assert.equal(scene._closing,true);
+});
+
+test('custom Actor Panel parts and States survive editor/runtime normalization',()=>{
+    const Editor=require('../src/database/DatabaseUserInterfaceEditor.js');
+    const ui=loadRuntimeUI().ReactorUI;
+    const raw={states:{x:8,y:160,width:128,height:24,iconSize:20,iconGap:3},custom_1:{kind:'gauge',name:'Energy',gauge:'variable',variableId:4,maxVariableId:5,max:80,shape:'circular',thickness:6,x:32,y:40,width:80,height:80},custom_2:{kind:'label',text:'Energy: \\V[4]'},custom_3:{kind:'value',gauge:'atk',valueFormat:'current'},custom_4:{kind:'box',color:'#123456'}};
+    assert.deepEqual(JSON.parse(JSON.stringify(ui.normalizeActorElements(raw))),Editor.normalizeActorElements(raw));
+    const node=ui.normalizeNode({type:'list',source:'party',rowLayout:'actorPanel',actorLayoutVersion:2,actorFields:['name'],actorElements:raw});
+    assert.ok(node.actorFields.includes('states'),'existing panels gain States');
+    assert.equal(ui.normalizeNode({...node,actorFields:['name']}).actorFields.includes('states'),false,'explicitly disabled States remain off after save');
+    const layout=ui.actorPanelLayout(node,600,256,24);
+    assert.equal(layout.custom_1.shape,'circular');assert.equal(layout.custom_2.text,'Energy: \\V[4]');assert.equal(layout.states.iconSize,20);
+    assert.deepEqual(JSON.parse(JSON.stringify(layout)),Editor.actorPanelLayout(node,600,256,24));
+});
+
+test('variable gauges resolve live values and status/variable changes invalidate Actor Panel display',()=>{
+    const sandbox=loadRuntimeUI(),ui=sandbox.ReactorUI;
+    sandbox.ColorManager={textColor:()=> '#ffffff'};
+    sandbox.$gameVariables.setValue(4,30);sandbox.$gameVariables.setValue(5,120);
+    const element={kind:'gauge',gauge:'variable',variableId:4,maxVariableId:5};
+    let data=ui.actorGaugeData({},'variable',element);assert.equal(data.value,30);assert.equal(data.max,120);assert.equal(data.rate,.25);
+    const actor={hp:100,mp:20,allIcons:()=>[12]},node={actorElements:{custom_1:element}},rows=[{data:actor}];
+    const before=ui.actorPanelRevision(node,rows);sandbox.$gameVariables.setValue(4,60);
+    assert.notEqual(ui.actorPanelRevision(node,rows),before);
+    const after=ui.actorPanelRevision(node,rows);actor.allIcons=()=>[12,14];assert.notEqual(ui.actorPanelRevision(node,rows),after);
+    sandbox.$gameVariables.setValue(5,0);data=ui.actorGaugeData({},'variable',element);assert.equal(data.rate,0,'zero maximum does not produce NaN or infinity');
+});
+
+test('circular gauge draws a bounded progress ring and reserves layout height',()=>{
+    const ui=loadRuntimeUI().ReactorUI,arcs=[];
+    const ctx={save(){},restore(){},createLinearGradient(){return{addColorStop(){}};},beginPath(){},arc(...args){arcs.push(args);},stroke(){}};
+    ui.drawActorGauge(ctx,{x:0,y:0,width:80,height:80},{shape:'circular',thickness:8},.25,['#fff','#fff','#000']);
+    assert.deepEqual(arcs[0],[40,40,36,0,Math.PI*2]);assert.deepEqual(arcs[1],[40,40,36,-Math.PI/2,0]);assert.equal(ctx.lineWidth,8);
+    const node={actorFields:['hp','mp'],actorElements:{hp:{shape:'circular',width:80,height:80}}};
+    const layout=ui.actorPanelLayout(node,500,300,24);assert.ok(layout.mpLabel.y>=layout.hp.y+80,'next gauge label follows the taller circle');
 });

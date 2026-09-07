@@ -185,7 +185,7 @@ DataManager._checkStalledDataFiles = function() {
 
 DataManager.onXhrLoad = function(xhr, name, src, url) {
     if (xhr.status < 400) {
-        window[name] = JSON.parse(xhr.responseText);
+        window[name] = RRJson.parse(xhr.responseText);
         this.onLoad(window[name]);
     } else {
         this.onXhrError(name, src, url);
@@ -253,7 +253,7 @@ DataManager.loadMapSidecar = function(mapData) {
     xhr.onload = () => {
         if (xhr.status < 400) {
             try {
-                mapData.reactor3d = JSON.parse(xhr.responseText);
+                mapData.reactor3d = RRJson.parse(xhr.responseText);
                 // Props become model-bound events before the map counts as loaded.
                 if (Reactor3D.installProps) Reactor3D.installProps(mapData);
             } catch (e) {
@@ -1618,6 +1618,7 @@ AudioManager.resolveSeVariant = function(se) {
 AudioManager.playSe = function(se) {
     se = this.resolveSeVariant(se);
     if (se.name) {
+        if (this.isMissingLocalSe(se.name)) return;
         // [Note] Do not play the same sound in the same frame.
         const latestBuffers = this._seBuffers.filter(
             buffer => buffer.frameCount === Graphics.frameCount
@@ -1630,6 +1631,30 @@ AudioManager.playSe = function(se) {
         buffer.play(false);
         this._seBuffers.push(buffer);
         this.cleanupSe();
+    }
+};
+
+// A missing one-shot sound must not stop the battle or start a new failed
+// request for every hit. Web/remote audio retains the normal loading path.
+AudioManager.isMissingLocalSe = function(name) {
+    if (typeof Utils === "undefined" || !Utils.isNwjs?.()) return false;
+    try {
+        const fs = require("fs"), path = require("path");
+        const suffix = Utils.hasEncryptedAudio() ? "_" : "";
+        const url = this._path + "se/" + Utils.encodeURI(name) + this.audioFileExt();
+        const resolved = Utils.resolveFileCase(Utils.resolveAudioExtension(url, suffix), suffix);
+        const local = decodeURIComponent(resolved.split("?")[0]) + suffix;
+        if (/^([a-z][a-z0-9+.-]*:|\/)/i.test(local) || local.split("/").includes("..")) return false;
+        const missing = !fs.existsSync(path.join(path.dirname(process.mainModule.filename), local));
+        this._missingSeWarnings ||= new Set();
+        if (missing && !this._missingSeWarnings.has(url)) {
+            this._missingSeWarnings.add(url);
+            console.warn("AudioManager: missing sound effect " + url + "; skipping playback. Check the animation or sound setting that references it.");
+        }
+        if (!missing) this._missingSeWarnings.delete(url);
+        return missing;
+    } catch (error) {
+        return false;
     }
 };
 
@@ -2823,7 +2848,9 @@ SceneManager.updateInputData = function() {
 
 SceneManager.updateEffekseer = function() {
     if (Graphics.effekseer && this.isGameActive()) {
+        Graphics.effekseer._makeContextCurrent?.();
         Graphics.effekseer.update();
+        if (typeof Reactor3D !== "undefined") Reactor3D.GpuEffects?.update();
     }
 };
 

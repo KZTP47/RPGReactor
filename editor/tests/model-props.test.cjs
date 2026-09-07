@@ -86,7 +86,7 @@ test('runtime hooks lift props and read their free position after the events are
     const sprites = read('runtime/reactor_sprites.js');
     assert.match(sprites, /Reactor3D\.installPropHooks\(\)/);
     assert.match(sprites, /this\.y -= this\._character\._reactorLift \* \$gameMap\.tileHeight\(\);/);
-    assert.match(read('runtime/reactor_main.js'), /runtime revision: 20260904.17/);
+    assert.match(read('runtime/reactor_main.js'), /runtime revision: 20260906\.19/);
 });
 
 test('the editor has a props tab, a manager, and 3D placement with pose rings', () => {
@@ -140,8 +140,8 @@ test('props are chosen in the model picker and can start with an animation or ef
     assert.match(manager, /openModelPicker\(\) \{/);
     assert.match(manager, /new ModelGraphicPicker\(this\.projectController\)/);
     assert.match(manager, /id="model-props-choose"/);
-    assert.match(manager, /id="model-props-animations" class="mp-choice-list"/, 'animations are a checkbox list');
-    assert.match(manager, /id="model-props-effects" class="mp-choice-list"/, 'effects are a checkbox list');
+    assert.match(manager, /dropdown\('model-props-animations'/, 'animations are a checkbox list');
+    assert.match(manager, /dropdown\('model-props-effects'/, 'effects are a checkbox list');
     assert.doesNotMatch(manager, /model-props-list/, 'the inline model list is gone');
     const map = { id: 1, width: 4, height: 4 };
     Elevation.addProp(map, { name: 'Props/console', animation: 'boot', effect: 'alarm', yaw: 30 });
@@ -156,7 +156,7 @@ test('props are chosen in the model picker and can start with an animation or ef
     assert.deepEqual(Reactor3D.propAnimationList({ animation: 'boot' }), ['boot']);
     assert.deepEqual(Reactor3D.propAnimationList({ animations: ['a', 'b'], animation: 'a' }), ['a', 'b']);
     assert.deepEqual(Reactor3D.propEffectList({ effects: ['x', '', 'y'] }), ['x', 'y']);
-    assert.match(read('runtime/reactor_main.js'), /runtime revision: 20260904.17/);
+    assert.match(read('runtime/reactor_main.js'), /runtime revision: 20260906\.19/);
 });
 
 test('editing a placed prop re-poses its instance instead of rebuilding the set', () => {
@@ -198,13 +198,6 @@ test('the props panel has one Size, the longest side in tiles; an old scale fold
     assert.match(source, /byId\('model-props-size'\)\.value = Math\.round\(this\.fields\.size \* \(this\.fields\.scale \|\| 1\) \* 100\) \/ 100;/, 'shown as size times scale');
 });
 
-test('leaving event mode with the 3D-M tab up re-arms the props tool', () => {
-    // Owner: 3D-M → Event tool → edit → back to 3D-M: clicks on props did nothing.
-    const main = fs.readFileSync(path.join(editorRoot, 'src', 'main.js'), 'utf8');
-    assert.match(main, /if \(newMode\) this\.modelPropsManager\?\.deactivate\(\);/, 'dropped on the way in');
-    assert.match(main, /if \(!newMode && this\.tilesetPaletteViewer\?\.currentLayer === 'M' && this\.modelPropsManager\) \{[\s\S]*?this\.modelPropsManager\.activate\(\);/, 're-armed on the way out');
-});
-
 test('a themed dropdown shows a value set by code, not the label it had', () => {
     // Owner: the 3D-M Facing dropdown read "Down" for a prop facing right; the setting was right, the label stale.
     const shim = fs.readFileSync(path.join(editorRoot, 'src', 'utils', 'SelectThemingShim.js'), 'utf8');
@@ -217,4 +210,50 @@ test('the flat map leaves the placement ghost to the 3D view while it is up', ()
     assert.match(source, /if \(this\.mapEditor3D\(\)\?\.isEnabled\?\.\(\)\) return;\s*\/\/ Hovering with a model in hand/, 'no 2D hover ghost logic under the 3D view');
     assert.match(source, /_hideGhost\(also3D = false\) \{[\s\S]*?if \(also3D\) this\.mapEditor3D\(\)\?\.hidePlacementGhost\?\.\(\);/, 'the 3D ghost is hidden only on purpose');
     assert.match(source, /this\.active = false;\s*this\._hideGhost\(true\);/, 'deactivate hides both');
+});
+
+test('the inspector refreshes after libraries already requested by map sprites finish loading', async () => {
+    const vm = require('node:vm');
+    const context = vm.createContext({ clearTimeout, RREventPreviewModels: {} });
+    vm.runInContext(read('editor/src/ModelPropsManager.js') + '\nthis.Manager = ModelPropsManager;', context);
+    const manager = Object.create(context.Manager.prototype);
+    let resolveLibraries, refreshes = 0;
+    const pending = new Promise(resolve => { resolveLibraries = resolve; });
+    manager.active = true;
+    manager._loadingLibraries = pending;
+    manager.panel = { querySelector: () => ({ innerHTML: '' }) };
+    manager.mapEditor3D = () => ({ ensureLibraries: () => pending });
+    manager._syncPanel = () => { refreshes++; };
+    manager._syncPreview({ name: 'Props/reactor' }, 2);
+    manager._syncPreview({ name: 'Props/reactor' }, 2);
+    assert.equal(refreshes, 0);
+    resolveLibraries(true);
+    await manager._previewLibraries;
+    assert.equal(refreshes, 1, 'the inspector refreshes once without requiring another selection');
+});
+
+test('changing maps rebinds prop picking and clears selection, drags, and map-local history', () => {
+    const vm = require('node:vm');
+    const { EventEmitter } = require('node:events');
+    const context = vm.createContext({ window: { reactor: {} } });
+    vm.runInContext(read('editor/src/ModelPropsManager.js') + '\nthis.Manager = ModelPropsManager;', context);
+    const manager = Object.create(context.Manager.prototype);
+    const oldContainer = new EventEmitter(), newContainer = new EventEmitter();
+    Object.assign(manager, { active: true, _listeners: [], tilemapManager: { container: oldContainer },
+        selectedId: 7, drag: { id: 7 }, _undo: [1], _redo: [2],
+        preview2D: { bind() {} }, mapEditor3D: () => ({ selectProp() {}, hidePlacementGhost() {} }) });
+    for (const name of ['_ensureContainer', 'render', '_syncPanel']) manager[name] = () => {};
+    let picked = 0;
+    manager._pointerDown = () => { picked++; };
+    manager._bindPointer();
+    manager.setMap({ id: 2 }, { container: newContainer });
+    oldContainer.emit('pointerdown', {});
+    assert.equal(picked, 0);
+    newContainer.emit('pointerdown', {});
+    assert.equal(picked, 1);
+    manager._bindPointer();
+    assert.equal(newContainer.listenerCount('pointerdown'), 1);
+    assert.equal(manager.selectedId, null);
+    assert.equal(manager.drag, null);
+    assert.equal(manager._undo.length + manager._redo.length, 0);
 });

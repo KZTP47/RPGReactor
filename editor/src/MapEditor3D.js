@@ -124,8 +124,9 @@ class MapEditor3D {
 
     async ensureLibraries() {
         if (this.librariesLoaded) return true;
-        if (typeof window !== 'undefined' && window.pako && window.THREE && window.Reactor3D) {
+        if (typeof window !== 'undefined' && window.pako && window.THREE && window.Reactor3D?.Speech) {
             this.librariesLoaded = true;
+            this.configureWorkers();
             return true;
         }
 
@@ -144,6 +145,7 @@ class MapEditor3D {
             if (!window.pako) files.push(`${root}/js/libs/pako.min.js`);
             if (!window.THREE) files.push(`${root}/js/libs/three.js`);
             if (!window.Reactor3D) files.push(`${root}/js/reactor_3d.js`);
+            if (!window.Reactor3D?.Speech) files.push(`${root}/js/reactor_speech_3d.js`);
             try {
                 for (const file of files) {
                     await this.injectScriptUrl(host.assetUrl(file), file);
@@ -165,6 +167,7 @@ class MapEditor3D {
         if (typeof window === 'undefined' || !window.pako) files.push(this.path.join(runtimePath, 'libs', 'pako.min.js'));
         if (typeof window === 'undefined' || !window.THREE) files.push(this.path.join(runtimePath, 'libs', 'three.js'));
         if (typeof window === 'undefined' || !window.Reactor3D) files.push(this.path.join(runtimePath, 'reactor_3d.js'));
+        if (typeof window === 'undefined' || !window.Reactor3D?.Speech) files.push(this.path.join(runtimePath, 'reactor_speech_3d.js'));
         for (const file of files) {
             if (!this.fs.existsSync(file)) {
                 this.lastError = `Missing ${file}`;
@@ -187,7 +190,32 @@ class MapEditor3D {
     finishLibraryLoad() {
         this.librariesLoaded = !!(window.pako && window.THREE && window.Reactor3D);
         if (!this.librariesLoaded) this.lastError = 'A 3D runtime dependency did not load.';
+        if (this.librariesLoaded) this.configureWorkers();
         return this.librariesLoaded;
+    }
+
+    /** Workers need same-origin URLs too; the runtime is loaded from Blob scripts. */
+    configureWorkers() {
+        const runtime = window.Reactor3D;
+        if (!runtime) return;
+        runtime.renderScene ||= (renderer, scene, camera) => renderer.render(scene, camera);
+        if (runtime.resolveWorkerUrl || !this.fs || !this.path) return;
+        const host = window.RPGReactorWebHost;
+        const runtimePath = host?.mode === 'web' && host.projectRoot
+            ? this.path.join(host.projectRoot, 'js') : this.projectController?.projectManager?.getRuntimePath?.();
+        if (!runtimePath || !this.fs || !this.path) return;
+        const urls = new Map();
+        const sourceUrl = name => {
+            if (urls.has(name)) return urls.get(name);
+            if (!['reactor_geometry_worker.js', 'reactor_effect_measure_worker.js', 'meshopt_simplifier.js'].includes(name)) throw new Error('Unknown renderer worker');
+            let source = this.fs.readFileSync(this.path.join(runtimePath, 'libs', name), 'utf8');
+            if (name === 'reactor_geometry_worker.js') source = source.replace("'./meshopt_simplifier.js'", JSON.stringify(sourceUrl('meshopt_simplifier.js')));
+            const url = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }));
+            urls.set(name, url);
+            return url;
+        };
+        // One small module URL per app lifetime, shared across project switches.
+        runtime.resolveWorkerUrl = sourceUrl;
     }
 
     injectScript(source, label) {
@@ -477,7 +505,7 @@ class MapEditor3D {
         try { app?.render?.(); } catch (_) {}
         this._pixiWasRunning = false;
         window.reactor?.updateMapZoom?.();
-        this.projectController?.videoSurfacePreviewManager?.refreshBackend?.();
+        this.projectController?.mediaSurfacePreviewManager?.refreshBackend?.();
     }
 
     /**
@@ -642,6 +670,8 @@ class MapEditor3D {
         this.hint = document.createElement('div');
         this.hint.className = 'map-3d-hint';
         this.hint.textContent = tt('Drag to paint or orbit · Shift or right-drag to pan · Scroll to zoom · Double-click empty space to re-frame');
+        this.hint.appendChild(document.createElement('br'));
+        this.hint.appendChild(document.createTextNode(tt('Ctrl + right-drag: look around. WASD: move. Q/E: down/up.')));
         container.appendChild(this.hint);
         // Two frames, so the transition has a start state to animate from.
         requestAnimationFrame(() => requestAnimationFrame(() => {
@@ -742,7 +772,7 @@ class MapEditor3D {
         this.buildProps(mapData, request);
         this.drawPassage();
         if (!this.rebuildIsCurrent(request, renderer)) return false;
-        this.projectController?.videoSurfacePreviewManager?.attachThree?.(this);
+        this.projectController?.mediaSurfacePreviewManager?.attachThree?.(this);
         // Frame the map when it is a different map, not on every rebuild.
         // A rebuild happens on every edit, and re-framing threw away wherever
         // the author had orbited and zoomed to — so the view jumped back and
@@ -826,7 +856,7 @@ class MapEditor3D {
         const filePath = this.path.join(projectPath, 'data', file);
         if (!this.fs.existsSync(filePath)) return;
         try {
-            mapData.reactor3d = JSON.parse(this.fs.readFileSync(filePath, 'utf8'));
+            mapData.reactor3d = RRJson.parse(this.fs.readFileSync(filePath));
         } catch (error) {
             console.error(`${file} is not valid JSON.`, error);
         }
@@ -889,7 +919,7 @@ class MapEditor3D {
             return;
         }
         try {
-            Reactor3D.setClassification(JSON.parse(this.fs.readFileSync(filePath, 'utf8')));
+            Reactor3D.setClassification(RRJson.parse(this.fs.readFileSync(filePath)));
         } catch (error) {
             console.error(`${Reactor3D.CLASSIFICATION_FILE} is not valid JSON.`, error);
             Reactor3D.setClassification(null);
@@ -1582,6 +1612,7 @@ class MapEditor3D {
     }
 
     canEditProps() {
+        if (this.projectController?.mediaSurfacePreviewManager?.authoring) return false;
         return !!this.propsManager()?.active;
     }
 
@@ -1706,7 +1737,7 @@ class MapEditor3D {
                 play.quad.material.uniforms.flip.value = 1;
                 play.quad.mesh.userData.__reactorOverlay = true;
                 this.mapScene.scene().add(play.quad.mesh);
-                layer.setWorld({ projection: this.camera.projectionMatrix.elements, view: this.camera.matrixWorldInverse.elements, position: [0, 0, 0], scale: [1, 1, 1], rotation: [0, 0, 0] });
+                layer.setWorld({ renderer: this.renderer, projection: this.camera.projectionMatrix.elements, view: this.camera.matrixWorldInverse.elements, position: [0, 0, 0], scale: [1, 1, 1], rotation: [0, 0, 0] });
             }
             layer.play(record, project?.path || '', { loop: true, transform: { rotate: effect.rotate, scale: effect.scale } });
             (this.effectPlays || (this.effectPlays = [])).push(play);
@@ -1840,7 +1871,7 @@ class MapEditor3D {
         const area = size.x * size.y;
         const scale = area > MapEditor3D.EFFECT_PIXELS ? Math.sqrt(MapEditor3D.EFFECT_PIXELS / area) : 1;
         const rect = { x: 0, y: 0, w: size.x, h: size.y, scale };
-        play.layer.setWorld({
+        play.layer.setWorld({ renderer: this.renderer,
             projection: camera.projectionMatrix.elements,
             view: camera.matrixWorldInverse.elements,
             position: [world.x, world.y, world.z],
@@ -1858,6 +1889,7 @@ class MapEditor3D {
         // the bigger canvas failed and the quad kept the last frame,
         // stretched over the screen. Let go of the GL texture when the
         // canvas changes size so the next upload allocates it afresh.
+        if (play.layer.fx.gpu) { mesh.visible = play.layer.drawGpuQuad(play.quad); return; }
         const source = play.layer.fxCanvas;
         if (play.texWidth !== source.width || play.texHeight !== source.height) {
             play.texWidth = source.width;
@@ -2712,7 +2744,7 @@ class MapEditor3D {
     }
 
     clearScene() {
-        this.projectController?.videoSurfacePreviewManager?.detachThree?.();
+        this.projectController?.mediaSurfacePreviewManager?.detachThree?.();
         this.animatedModels = [];
         this.disposeEffectPlays();
         this.disposeProps();
@@ -2789,6 +2821,7 @@ class MapEditor3D {
                 startX: event.clientX,
                 startY: event.clientY,
                 pan: event.button !== 0 || event.shiftKey,
+                look: (event.button === 0 && event.altKey) || (event.button === 2 && event.ctrlKey),
                 paint: false
             };
             input.setPointerCapture?.(event.pointerId);
@@ -2800,7 +2833,7 @@ class MapEditor3D {
             // as it does on the 2D canvas, and orbits when it does not. Holding
             // Ctrl orbits regardless, for turning the view without clearing the
             // palette first.
-            if (event.button === 0 && !event.shiftKey && !event.ctrlKey && this.canPaint()) {
+            if (event.button === 0 && !event.shiftKey && !event.ctrlKey && !event.altKey && this.canPaint()) {
                 const tile = this.tileAt(event.clientX, event.clientY);
                 if (tile) {
                     this.pointer.paint = true;
@@ -2812,7 +2845,7 @@ class MapEditor3D {
             // With the props tab up: a ring turns the selected prop, a prop
             // is picked up and carried freely, and the bare ground takes a
             // new prop. Ctrl still orbits.
-            if (event.button === 0 && !event.shiftKey && !event.ctrlKey
+            if (event.button === 0 && !event.shiftKey && !event.ctrlKey && !event.altKey
                 && !this.pointer.paint && this.canEditProps()) {
                 const manager = this.propsManager();
                 const arrow = this.selectedPropId && this.propArrows && typeof RRAxisArrows3D !== 'undefined' && this.canvas
@@ -2857,7 +2890,7 @@ class MapEditor3D {
             // With the event tool up and no brush in hand, a left drag that
             // starts on an event carries it, exactly as it does on the 2D
             // canvas. Starting anywhere else still orbits.
-            if (event.button === 0 && !event.shiftKey && !event.ctrlKey
+            if (event.button === 0 && !event.shiftKey && !event.ctrlKey && !event.altKey
                 && !this.pointer.paint && !this.pointer.propHold && this.canDragEvents()) {
                 const grab = this.selected && this.eventArrows && typeof RRAxisArrows3D !== 'undefined' && this.canvas
                     ? RRAxisArrows3D.pick(THREE, this.eventArrows, this.camera, this.canvas.getBoundingClientRect(), event.clientX, event.clientY)
@@ -2924,6 +2957,8 @@ class MapEditor3D {
                     this.dragEventTo(this.pointer.drag, tile);
                     this.updateHoverCell(tile);
                 }
+            } else if (this.pointer.look) {
+                this.look(dx, dy);
             } else if (this.pointer.pan) {
                 this.pan(dx, dy);
             } else {
@@ -2943,7 +2978,7 @@ class MapEditor3D {
                 this.endPaint();
                 return;
             }
-            if (!drag || drag.pan) return;
+            if (!drag || drag.pan || drag.look) return;
             if (drag.propHold) {
                 this.finishPropDrag();
                 return;
@@ -2963,22 +2998,7 @@ class MapEditor3D {
             if (travel > 4) return;
             this.handleClick(event.clientX, event.clientY);
         };
-        this._onDoubleClick = event => {
-            const cube = this.canSelectEvents() && this.eventAt(event.clientX, event.clientY);
-            if (!cube) {
-                // Nothing under the cursor: put the whole map back in view.
-                // Getting lost in an orbit camera is easy and there is
-                // otherwise no way home.
-                const mapData = this.currentMap();
-                if (mapData) this.frameMap(mapData);
-                return;
-            }
-            event.preventDefault();
-            const picked = this.select(cube);
-            if (picked && typeof this.onEventActivated === 'function') {
-                this.onEventActivated(picked);
-            }
-        };
+        this._onDoubleClick = event => this.handleDoubleClick(event);
         this._onWheel = event => {
             this._lastActiveAt = performance.now();
             event.preventDefault();
@@ -2994,6 +3014,7 @@ class MapEditor3D {
             // right-click otherwise gets the same menu the 2D map gives it,
             // judged by the same four-pixel test as a left-click.
             event.preventDefault();
+            if (event.ctrlKey || event.altKey) return;
             const drag = this.pointer;
             if (drag && Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) > 4) return;
             if (!this.canSelectEvents()) return;
@@ -3089,6 +3110,7 @@ class MapEditor3D {
 
     /** Whether a left drag should paint rather than orbit. */
     canPaint() {
+        if (this.projectController?.mediaSurfacePreviewManager?.authoring) return false;
         const editor = this.mapEditor();
         if (!editor || !this.currentMap()) return false;
         const palette = editor.tilesetPaletteViewer;
@@ -3153,6 +3175,7 @@ class MapEditor3D {
      * event instead.
      */
     canSelectEvents() {
+        if (this.projectController?.mediaSurfacePreviewManager?.authoring) return false;
         return !!this.eventManager()?.eventMode;
     }
 
@@ -3237,11 +3260,33 @@ class MapEditor3D {
         if (moved) this.eventManager()?.renderEvents?.();
     }
 
-    /** Select the event under the pointer, or clear the selection. */
+    /** Select the event under the pointer, or an empty tile for event creation. */
     handleClick(clientX, clientY) {
         if (!this.canSelectEvents()) return;
         const picked = this.select(this.eventAt(clientX, clientY));
         if (typeof this.onEventSelected === 'function') this.onEventSelected(picked);
+        if (!picked) {
+            const tile = this.tileAt(clientX, clientY);
+            if (tile) this.eventManager()?.selectTile(tile.x, tile.y);
+        }
+    }
+
+    handleDoubleClick(event) {
+        if (this.projectController?.mediaSurfacePreviewManager?.authoring) return;
+        if (!this.canSelectEvents()) {
+            const map = this.currentMap();
+            if (map) this.frameMap(map);
+            return;
+        }
+        event.preventDefault();
+        const cube = this.eventAt(event.clientX, event.clientY);
+        if (cube) {
+            const picked = this.select(cube);
+            if (picked && typeof this.onEventActivated === 'function') this.onEventActivated(picked);
+        } else {
+            const tile = this.tileAt(event.clientX, event.clientY);
+            if (tile) this.eventManager()?.activateEventAt(tile.x, tile.y);
+        }
     }
 
     /**
@@ -3319,11 +3364,19 @@ class MapEditor3D {
 
     orbit(dx, dy) {
         this.view.yaw -= dx * 0.4;
-        // Clamped short of overhead and of the horizon. Standing art has
-        // nothing to show a camera looking straight down at it — the same
-        // reason an HD-2D game does not offer the angle — and below ~5 the
-        // camera slides under the ground.
-        this.view.pitch = Math.min(72, Math.max(5, this.view.pitch - dy * 0.3));
+        // Inspect ceilings and undersides; stay short of the pole singularities.
+        this.view.pitch = Math.min(89, Math.max(-89, this.view.pitch - dy * 0.3));
+        this.applyCamera();
+    }
+
+    /** Ctrl-right-drag turns the eye in place, useful inside rooms and below ceilings. */
+    look(dx, dy) {
+        if (!this.camera) return;
+        const eye = this.camera.position.clone();
+        this.orbit(dx, dy);
+        this.view.target.x += eye.x - this.camera.position.x;
+        this.view.target.y += eye.y - this.camera.position.y;
+        this.view.target.z += eye.z - this.camera.position.z;
         this.applyCamera();
     }
 
@@ -3382,9 +3435,11 @@ class MapEditor3D {
     acceptsFlyKey(event) {
         if (!this.isEnabled() || event.ctrlKey || event.altKey || event.metaKey) return false;
         const target = event.target;
-        if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA'
+        if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT'
             || target.isContentEditable)) return false;
-        return !document.querySelector('.modal-overlay, .rr-modal-overlay, #database-modal');
+        return ![...document.querySelectorAll('.modal-overlay, .rr-modal-overlay, #database-modal')]
+            .some(modal => modal.getClientRects().length > 0
+                && (!modal.classList.contains('video-surface-editor-modal') || !this.projectController?.mediaSurfacePreviewManager?.authoring));
     }
 
     installFlyKeys() {
@@ -3544,7 +3599,7 @@ class MapEditor3D {
 
     /** The camera moved, the hover moved, a key or pointer was used in the last second, or a flight is on. */
     previewActive(now) {
-        if (this.projectController?.videoSurfacePreviewManager?.previewActive?.()) return true;
+        if (this.projectController?.mediaSurfacePreviewManager?.previewActive?.()) return true;
         if (this.flying()) return true;
         // A playing effect is a moving picture: the quad takes a new frame
         // of it only when this view renders, so the idle rate would show it
@@ -3575,7 +3630,7 @@ class MapEditor3D {
         this.animateAutotiles(now);
         this.animateEventPreviews(now);
         this.pickPropLods();
-        this.projectController?.videoSurfacePreviewManager?.updateThree?.();
+        this.projectController?.mediaSurfacePreviewManager?.updateThree?.();
         // Lights are map content: feed the compositor on every drawn frame,
         // whether or not the Lighting panel is open.
         window.reactor?.lightingManager?.feed3D?.();
@@ -3603,13 +3658,13 @@ class MapEditor3D {
             if (modelsInWorld) {
                 this.mapScene.setPass('world');
                 this.renderer.autoClear = true;
-                this.renderer.render(scene, this.camera);
+                Reactor3D.renderScene(this.renderer, scene, this.camera);
                 this.renderLightsPass(scene);
                 return;
             }
             this.mapScene.setPass('below');
             this.renderer.autoClear = true;
-            this.renderer.render(scene, this.camera);
+            Reactor3D.renderScene(this.renderer, scene, this.camera);
 
             // The above-characters overlay (layer >= 5 video surfaces) is the
             // game's third slot: composited over star tiles and world alike,
@@ -3628,7 +3683,7 @@ class MapEditor3D {
                 this.renderer.clearDepth();
                 this.mapScene.setPass('above');
                 if (overlay) overlay.visible = false;
-                this.renderer.render(scene, this.camera);
+                Reactor3D.renderScene(this.renderer, scene, this.camera);
             }
             if (overlay && overlay.children.length) {
                 hideEditorLayers();
@@ -3637,7 +3692,7 @@ class MapEditor3D {
                 this.renderer.clearDepth();
                 this.mapScene.setPass('overlay');
                 overlay.visible = true;
-                this.renderer.render(scene, this.camera);
+                Reactor3D.renderScene(this.renderer, scene, this.camera);
             }
             if (overlay && overlayVisible !== null) overlay.visible = overlayVisible;
             this.renderLightsPass(scene);
@@ -3708,7 +3763,7 @@ class MapEditor3D {
             this.renderer.autoClear = false;
             this.renderer.clearDepth();
             mapScene.setPass('lights');
-            this.renderer.render(scene, this.camera);
+            Reactor3D.renderScene(this.renderer, scene, this.camera);
         } finally {
             scene.background = background;
             this.renderer.autoClear = autoClear;

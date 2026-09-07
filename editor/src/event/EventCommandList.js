@@ -120,8 +120,8 @@ class EventCommandList {
         this.waitForModel3DEditor = typeof WaitForModel3DEditor !== 'undefined' ? new WaitForModel3DEditor() : null;
         this.playModelEffectEditor = typeof PlayModelEffectEditor !== 'undefined' ? new PlayModelEffectEditor() : null;
         this.speakModel3DEditor = typeof SpeakModel3DEditor !== 'undefined' ? new SpeakModel3DEditor() : null;
-        this.videoSurfaceEditor = typeof VideoSurfaceEditor !== 'undefined'
-            ? new VideoSurfaceEditor(eventEditor.databaseManager, eventEditor.projectController) : null;
+        this.videoSurfaceEditor = typeof MediaSurfaceEditor !== 'undefined'
+            ? new MediaSurfaceEditor(eventEditor.databaseManager, eventEditor.projectController) : null;
         this.selectedIndices = [];
         this.clipboard = null;
         this.currentPage = null;
@@ -474,9 +474,9 @@ class EventCommandList {
 
     /** The dialog for a Reactor plugin command, by its command name. */
     _reactorCommandEditor(name) {
-        if (typeof VideoSurfaceEditor !== 'undefined'
-            && typeof VideoSurfaceEditor.supports === 'function'
-            && VideoSurfaceEditor.supports(name)) {
+        if (typeof MediaSurfaceEditor !== 'undefined'
+            && typeof MediaSurfaceEditor.supports === 'function'
+            && MediaSurfaceEditor.supports(name)) {
             return this.videoSurfaceEditor;
         }
         if (name === 'PlayModelAnimation' || name === 'SetModelAnimationSpeed') return this.playModelAnimationEditor;
@@ -2040,8 +2040,8 @@ class EventCommandList {
                     // the CURRENT display name, so a command saved before a
                     // rename (Video Surface → Media Surface) reads like one
                     // inserted today.
-                    const canonical = typeof VideoSurfaceEditor !== 'undefined' && params[1]
-                        ? VideoSurfaceEditor.OPERATIONS?.[params[1]] : null;
+                    const canonical = typeof MediaSurfaceEditor !== 'undefined' && params[1]
+                        ? MediaSurfaceEditor.OPERATIONS?.[params[1]] : null;
                     info.name = this._commandName(canonical || commandName);
                     description = '';
                     // The lighting commands say what they do in one line

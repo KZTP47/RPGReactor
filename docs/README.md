@@ -1,10 +1,16 @@
 # RPG Reactor Documentation
 
+- [0.98.5 release notes](posts/release-notes-0.98.5.md): consolidated features, fixes, compatibility boundaries and validation.
+- [0.98.5 itch.io devlog](posts/itch-devlog-0.98.5.md): announcement text, with a [plain-text copy](posts/itch-devlog-0.98.5-plain.txt).
+
 This folder contains release notes, audit history, and maintainer workflows that are not required for normal RPG Reactor editor use.
 
-- [September 5 PR integration](PR-INTEGRATION-2026-09-05.md): PRs #44 and #45, combined-tree validation, and two reproduced Project Tools follow-ups.
+- [Media surfaces](MEDIA-SURFACES.md): image/video authoring, current implementation names and preserved project/API compatibility.
+- [Battle Rooms and Action Sequences](BATTLE-PRESENTATION.md): authoring rooms, map cameras, visual sequences, equipment/unarmed assignments, compatibility and current limitations. See also the [design and remaining roadmap](DESIGN-BATTLE-ROOMS-AND-ACTION-SEQUENCES.md).
+- [September 5 PR integration](PR-INTEGRATION-2026-09-05.md): PRs #44 and #45, combined-tree validation, and the Project Tools save/containment fixes and regression checks.
 - [September 4 session closeout](SESSION-2026-09-04.md): the day's rendering, speech, database, language/theme, recovery and Demo changes, with validation and remaining work.
 - [Model face points and speech](3D-FACE-AND-SPEECH.md): eye placement, mouth/lip authoring, spoken dialogue and per-prop animation speed.
+- [UX and localization audit](UX-LOCALIZATION-AUDIT-2026-09-06.md): theme consistency, new-system translations, live language switching, layout and repeatable checks.
 - [Editor audit](EDITOR_AUDIT.md): command/database authoring, nested dialogs, translation coverage and themes.
 - [Database state audit](DATABASE_STATE_AUDIT.md): operation-order regressions, asynchronous ownership, save/cancel behavior and repeatable sequence checks.
 - [Current status](STATUS.md): verified development version, runtime defaults, test results, open work, and the limits of recorded validation. Read this before the historical handoff.

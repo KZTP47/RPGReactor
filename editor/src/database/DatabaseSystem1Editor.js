@@ -101,6 +101,27 @@ class DatabaseSystem1Editor {
 
         // Add event listeners
         setTimeout(() => {
+            const partyLimit = container.querySelector('#system-max-battle-members');
+            const partyLimitHint = container.querySelector('#system-party-limit-hint');
+            const refreshLimit = () => {
+                if (!partyLimit) return;
+                partyLimit.value = this.databaseManager.getMaxBattleMembers?.() ?? 4;
+                partyLimitHint.textContent = tt(system.maxBattleMembers === undefined
+                    ? 'Using the existing party limit. Edit to set the database limit.'
+                    : 'Maximum actors in battle. Additional party members are reserves.');
+            };
+            partyLimit?.addEventListener('change', () => {
+                if (!Number.isInteger(partyLimit.valueAsNumber) || partyLimit.valueAsNumber < 1 || partyLimit.valueAsNumber > 99) { refreshLimit(); return; }
+                system.maxBattleMembers = partyLimit.valueAsNumber;
+                this.databaseManager.mutationGeneration++;
+                refreshLimit();
+            });
+            container.querySelector('#system-party-limit-reset')?.addEventListener('click', () => {
+                delete system.maxBattleMembers;
+                this.databaseManager.mutationGeneration++;
+                refreshLimit();
+            });
+            refreshLimit();
             // Title image picker buttons -- one per title screen layer.
             container.querySelectorAll('.title-image-picker-btn').forEach(button => {
                 button.addEventListener('click', () => {
@@ -341,6 +362,12 @@ class DatabaseSystem1Editor {
             <button id="system-party-add-btn" style="padding: 4px 10px; background: var(--color-bg-menubar); color: var(--color-text); border: 1px solid var(--color-border-input); border-radius: 3px; cursor: pointer; font-size: 11px;">${tt('Add')}</button>
         </div>`;
 
+        partyListHTML += `<div class="rr-battle-toolbar">
+            <label class="rr-battle-field">${tt('Max Battle Members')}
+                <input id="system-max-battle-members" type="number" min="1" max="99" step="1" class="database-field-value" style="width:96px" value="${this.databaseManager.getMaxBattleMembers?.() ?? 4}">
+            </label>
+            <button id="system-party-limit-reset" type="button" class="rr-btn-secondary">${tt('Use Existing Limit')}</button>
+        </div><p id="system-party-limit-hint" class="rr-battle-help"></p>`;
         const startingPartySection = this.createSection(tt('Starting Party'), partyListHTML);
         column.appendChild(startingPartySection);
 

@@ -6,6 +6,7 @@
     "use strict";
 
     const PLUGIN_NAME = "RPGReactor";
+    // Persisted names and command IDs are retained for existing projects/saves.
     const STORE_KEY = "_reactorVideoSurfaces";
     const WAIT_MODE = "reactorVideoSurface";
     const MAX_ID = 999999;
@@ -270,6 +271,10 @@
         if (layer === null) return null;
         const corners = parseCorners(args, width.value, height.value);
         if (!corners) return null;
+        const worldInput = field(args, ["worldCorners"]);
+        const worldCorners = worldInput.present && worldInput.value != null
+            ? parseCorners({corners:worldInput.value}, 1, 1) : null;
+        if (worldInput.present && worldInput.value != null && !worldCorners) return null;
         const customField = booleanArgument(args, ["customCorners"], hasCornerInput(args));
         if (!customField.ok) return null;
 
@@ -307,6 +312,7 @@
             width: width.value, height: height.value,
             corners: corners.map(item => ({ x: item.x, y: item.y })),
             customCorners: customField.value,
+            ...(worldCorners ? {worldCorners} : {}),
             rotationX: rx.value, rotationY: ry.value, rotationZ: rz.value,
             scaleX: scaleX.value, scaleY: scaleY.value,
             opacity: opacity, loop: loop.value, muted: muted.value,
@@ -320,7 +326,8 @@
 
     function copyDescriptor(value) {
         return Object.assign({}, value, {
-            corners: value.corners.map(item => ({ x: item.x, y: item.y }))
+            corners: value.corners.map(item => ({ x: item.x, y: item.y })),
+            ...(value.worldCorners ? {worldCorners:value.worldCorners.map(p=>({...p}))} : {})
         });
     }
 
@@ -347,7 +354,7 @@
             ["playbackRate", ["playbackRate", "rate"]], ["layer", ["layer", "zIndex"]],
             ["depth", ["depth"]],
             ["cullDistance", ["cullDistance", "cullingDistance", "bufferDistance"]],
-            ["scanlines", ["scanlines"]]
+            ["scanlines", ["scanlines"]], ["worldCorners", ["worldCorners"]]
         ];
         for (const mapping of mappings) {
             const found = field(args, mapping[1]);
@@ -442,7 +449,19 @@
         if (object && typeof object.dispose === "function") object.dispose();
     }
 
-    class VideoSurfaceOwner {
+    // PlaneGeometry orders its vertices TL, TR, BL, BR; saved quads use
+    // TL, TR, BR, BL. Keep UVs attached to their corner as the plane deforms.
+    function applyWorldCorners(geometry, corners, width, height) {
+        if (!corners) return geometry;
+        const position = geometry.getAttribute('position');
+        [0,1,3,2].forEach((corner,index) => position.setXYZ(index,
+            corners[corner].x * width, -corners[corner].y * height, 0));
+        position.needsUpdate = true;
+        geometry.computeVertexNormals();geometry.computeBoundingBox();geometry.computeBoundingSphere();
+        return geometry;
+    }
+
+    class MediaSurfaceOwner {
         constructor(manager, descriptor, spriteset) {
             this.manager = manager;
             this.id = descriptor.id;
@@ -706,7 +725,7 @@
             this.syncPixiScanlines();
             const screen = this.descriptor.target === "screen";
             const parent = screen ? (spriteset._baseSprite || spriteset) : spriteset._tilemap;
-            if (!parent || !parent.addChild) throw new Error("Video surface has no PIXI map container");
+            if (!parent || !parent.addChild) throw new Error("Media surface has no PIXI map container");
             if (screen && own(parent, "sortableChildren")) parent.sortableChildren = true;
             parent.addChild(this.pixiContainer);
             this.applyDescriptor(this.descriptor, true);
@@ -762,7 +781,7 @@
             });
             this.threeMesh = new THREE.Mesh(this.threeGeometry, this.threeMaterial);
             const group = this.threeGroup(state, this.descriptor);
-            if (!group) throw new Error("Video surface has no Reactor3D world group");
+            if (!group) throw new Error("Media surface has no Reactor3D world group");
             group.add(this.threeMesh);
             this.threeState = state;
             this.backend = "three";
@@ -807,7 +826,7 @@
 
         makeThreeGeometry() {
             const size = this.worldSize();
-            return new THREE.PlaneGeometry(size.width, size.height);
+            return applyWorldCorners(new THREE.PlaneGeometry(size.width, size.height), this.descriptor.worldCorners, size.width, size.height);
         }
 
         createThreeScanline(group) {
@@ -892,7 +911,7 @@
             } catch (error) {
                 try { if (source) source.disconnect(); } catch (disconnectError) { /* partial route */ }
                 try { if (gain) gain.disconnect(); } catch (disconnectError) { /* partial route */ }
-                console.warn("RPGReactor video surface audio could not be routed.", error);
+                console.warn("RPGReactor media surface audio could not be routed.", error);
             }
         }
 
@@ -956,7 +975,8 @@
                     this.destroyThreeScanline();
                 }
                 const resized = forceGeometry || !old || old.width !== descriptor.width
-                    || old.height !== descriptor.height;
+                    || old.height !== descriptor.height
+                    || JSON.stringify(old.worldCorners) !== JSON.stringify(descriptor.worldCorners);
                 if (resized) {
                     const geometry = this.makeThreeGeometry();
                     dispose(this.threeGeometry);
@@ -1034,20 +1054,22 @@
             if (holder && holder.object && Reactor3D.effectAnchorWorld) {
                 // On the model: the anchor's world point, turned with the
                 // model, sized by the surface's own scale.
-                const world = Reactor3D.effectAnchorWorld(holder.object, { anchor: descriptor.anchor }, new THREE.Vector3());
+                const frame = Reactor3D.effectAnchorTransform
+                    ? (this._anchorFrame = Reactor3D.effectAnchorTransform(holder.object, descriptor, this._anchorFrame)) : null;
+                const world = frame ? frame.world : Reactor3D.effectAnchorWorld(holder.object, descriptor, new THREE.Vector3());
                 const meshes = [this.threeMesh, this.threeScanMesh].filter(Boolean);
-                const turn = new THREE.Quaternion().setFromEuler(new THREE.Euler(
-                    descriptor.rotationX * DEG, descriptor.rotationY * DEG, descriptor.rotationZ * DEG, "YXZ"));
-                const modelTurn = holder.object.getWorldQuaternion(new THREE.Quaternion());
+                const turn = (this._anchorTurn || (this._anchorTurn = new THREE.Quaternion())).setFromEuler(
+                    (this._anchorEuler || (this._anchorEuler = new THREE.Euler())).set(
+                        descriptor.rotationX * DEG, descriptor.rotationY * DEG, descriptor.rotationZ * DEG, "YXZ"));
+                const modelTurn = frame ? frame.turn : holder.object.getWorldQuaternion(new THREE.Quaternion());
                 // Anchored to a posed part, the plane turns with the part.
-                const poseTurn = Reactor3D.effectAnchorQuaternion
-                    ? Reactor3D.effectAnchorQuaternion(holder.object, { anchor: descriptor.anchor }, new THREE.Quaternion())
-                    : null;
+                const poseTurn = frame ? frame.pose : (Reactor3D.effectAnchorQuaternion
+                    ? Reactor3D.effectAnchorQuaternion(holder.object, descriptor, new THREE.Quaternion()) : null);
                 // Sized in the model's units: the plane's own geometry is in
                 // tiles, so it is scaled to (units × the model's world scale).
                 let sx = descriptor.scaleX, sy = descriptor.scaleY;
                 if (descriptor.anchor.size) {
-                    const worldScale = holder.object.getWorldScale(new THREE.Vector3());
+                    const worldScale = frame ? frame.scale : holder.object.getWorldScale(new THREE.Vector3());
                     const size = this.worldSize();
                     if (size.width > 0 && size.height > 0) {
                         sx = descriptor.anchor.size[0] * worldScale.x / size.width * descriptor.scaleX;
@@ -1185,7 +1207,7 @@
         }
     }
 
-    class VideoSurfaceManager {
+    class MediaSurfaceManager {
         constructor() {
             this._owners = new Map();
             this._waiters = new Map();
@@ -1279,11 +1301,21 @@
                 && !descriptor.waitReleased;
         }
 
+        seedMapSurfaces(mapData) {
+            const rows = mapData?.reactor3d?.mediaSurfaces;
+            if (!Array.isArray(rows)) return;
+            for (const args of rows) {
+                if (!args || typeof args !== "object") continue;
+                const raw = { ...args, target: "map", wait: false };
+                if (normalizeShowArgs(raw, null)) this.show(raw, null);
+            }
+        }
+
         show(raw, interpreter) {
             const descriptor = normalizeShowArgs(raw, interpreter);
             const map = currentMap();
             if (!descriptor || !map) {
-                console.warn("RPGReactor video surface command was ignored because its descriptor or target is invalid.");
+                console.warn("RPGReactor media surface command was ignored because its descriptor or target is invalid.");
                 return null;
             }
             const store = this.store(map, true);
@@ -1302,7 +1334,7 @@
             if (descriptor.wait && !this.armWait(interpreter, descriptor)) {
                 descriptor.wait = false;
                 descriptor.waitReleased = true;
-                console.warn("RPGReactor video surface wait was not armed without an active map spriteset.");
+                console.warn("RPGReactor media surface wait was not armed without an active map spriteset.");
             }
             return descriptor;
         }
@@ -1361,7 +1393,7 @@
             // pulled the element mid-start. That is lifecycle, not failure;
             // a web build spammed one red AbortError per surface per switch.
             if (!error || error.name !== "AbortError") {
-                console.error("RPGReactor video surface " + id + " failed.", error);
+                console.error("RPGReactor media surface " + id + " failed.", error);
             }
             this.stop(id);
         }
@@ -1370,7 +1402,7 @@
             if (!this._spriteset || descriptor.ended || typeof document === "undefined") return null;
             let owner;
             try {
-                owner = new VideoSurfaceOwner(this, descriptor, this._spriteset);
+                owner = new MediaSurfaceOwner(this, descriptor, this._spriteset);
                 this._owners.set(descriptor.id, owner);
                 return owner;
             } catch (error) {
@@ -1378,6 +1410,38 @@
                 this.failed(descriptor.id, descriptor.generation, error);
                 return null;
             }
+        }
+
+
+        // A stored descriptor has already passed the command parser. Keep its
+        // exact field snapshot so ordinary playback avoids rebuilding all of
+        // the alias lists, corners and anchor arrays. In-place edits still
+        // pass through the full parser, including malformed restored data.
+        storedDescriptor(raw) {
+            const cache = this._validatedDescriptors || (this._validatedDescriptors = new WeakMap());
+            const record = raw && typeof raw === "object" ? cache.get(raw) : null;
+            const matches = node => {
+                const value = node.value;
+                if (Object.keys(value).length !== node.keys.length) return false;
+                for (let i = 0; i < node.keys.length; i++) {
+                    const key = node.keys[i];
+                    if (node.time && key === "currentTime") {
+                        const time = value[key];
+                        if (typeof time !== "number" || !Number.isFinite(time) || time < 0 || time > Number.MAX_SAFE_INTEGER) return false;
+                    } else if (value[key] !== node.values[i]) return false;
+                }
+                for (const child of node.children) if (!matches(child)) return false;
+                return true;
+            };
+            if (record && matches(record)) return raw;
+            const descriptor = normalizeShowArgs(raw, null);
+            if (!descriptor) return null;
+            const snapshot = (value, time) => {
+                const keys = Object.keys(value), values = keys.map(key => value[key]);
+                return { value, keys, values, time, children: values.filter(v => v && typeof v === "object").map(v => snapshot(v, false)) };
+            };
+            cache.set(descriptor, snapshot(descriptor, true));
+            return descriptor;
         }
 
         updateSpriteset(spriteset) {
@@ -1388,7 +1452,7 @@
             if (!store) return;
             for (const key of Object.keys(store.surfaces)) {
                 const raw = store.surfaces[key];
-                const descriptor = normalizeShowArgs(raw, null);
+                const descriptor = this.storedDescriptor(raw);
                 if (!descriptor || descriptor.mapId !== store.mapId || descriptor.id !== Number(key)) {
                     delete store.surfaces[key];
                     continue;
@@ -1457,7 +1521,7 @@
         }
     }
 
-    const manager = new VideoSurfaceManager();
+    const manager = new MediaSurfaceManager();
 
     function registerCommands() {
         if (typeof PluginManager === "undefined" || !PluginManager.registerCommand
@@ -1490,7 +1554,9 @@
             const baseSetup = Game_Map.prototype.setup;
             Game_Map.prototype.setup = function() {
                 manager.removeForMapSetup(this);
-                return baseSetup.apply(this, arguments);
+                const result = baseSetup.apply(this, arguments);
+                manager.seedMapSurfaces(currentDataMap());
+                return result;
             };
             Game_Map.prototype.setup.__reactorVideoSurfaces = true;
         }
@@ -1557,14 +1623,19 @@
         normalizeShowArgs: normalizeShowArgs,
         normalizeTransformArgs: normalizeTransformArgs,
         normalizeStopArgs: normalizeStopArgs,
-        VideoSurfaceOwner: VideoSurfaceOwner,
-        VideoSurfaceManager: VideoSurfaceManager,
+        applyWorldCorners: applyWorldCorners,
+        MediaSurfaceOwner: MediaSurfaceOwner,
+        MediaSurfaceManager: MediaSurfaceManager,
+        // Legacy API names refer to the same classes and manager.
+        VideoSurfaceOwner: MediaSurfaceOwner,
+        VideoSurfaceManager: MediaSurfaceManager,
         manager: manager,
         registerCommands: registerCommands,
         installHooks: installHooks
     };
 
-    root.RPGReactorVideoSurfaces = api;
+    root.RPGReactorMediaSurfaces = api;
+    root.RPGReactorVideoSurfaces = api; // Legacy scripts and plugins.
     if (typeof module !== "undefined" && module.exports) module.exports = api;
     registerCommands();
     installHooks();

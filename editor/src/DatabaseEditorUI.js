@@ -47,6 +47,10 @@ class DatabaseEditorUI {
         this.troopEditor = new DatabaseTroopEditor(databaseManager, eventProjectManager, this.commonUI, this);
         this.tilesetEditor = new DatabaseTilesetEditor(databaseManager, { getCurrentProject: () => this.currentProject }, this.commonUI, this);
         this.reactor3dEditor = new Database3DEditor(databaseManager, { getCurrentProject: () => this.currentProject });
+        if (typeof BattlePresentationEditor !== 'undefined') {
+            this.battlePresentationEditor = new BattlePresentationEditor(this);
+            this.actionSequenceEditor = new DatabaseActionSequenceEditor(this);
+        }
         const system1ProjectManager = {
             getCurrentProject: () => this.currentProject,
             get tilemapManager() {
@@ -248,6 +252,9 @@ class DatabaseEditorUI {
     }
 
     cleanupDatabaseDetail() {
+        this.troopEditor?.disposePreviewLayout?.();
+        this.actionSequenceEditor?.dispose();
+        this.battlePresentationEditor?.dispose();
         this._detailGeneration = (this._detailGeneration || 0) + 1;
         this.closeDatabaseActionMenu();
         this._textCodeDetach?.();
@@ -557,6 +564,10 @@ class DatabaseEditorUI {
                 data = this.databaseManager.getUserInterfaces();
                 title = this._dbTitle(type, 'User Interfaces');
                 break;
+            case 'actionSequences':
+                data = (this.databaseManager.data.actionSequences || []).filter(Boolean);
+                title = this._dbTitle(type, 'Action Sequences');
+                break;
             case 'quests':
                 data = this.databaseManager.getQuests();
                 title = this._dbTitle(type, 'Quests');
@@ -861,7 +872,8 @@ class DatabaseEditorUI {
         const undoStack = [];
         const snapshotForUndo = () => undoStack.push({
             entries: JSON.parse(JSON.stringify(this.databaseManager.data[type])),
-            editorNames: JSON.parse(JSON.stringify(this.databaseManager.data.editorNames))
+            editorNames: JSON.parse(JSON.stringify(this.databaseManager.data.editorNames)),
+            battlePresentation: JSON.parse(JSON.stringify(this.databaseManager.data.battlePresentation||null))
         });
         const performUndo = () => {
             if (undoStack.length === 0) return;
@@ -869,6 +881,7 @@ class DatabaseEditorUI {
             const snapshot = undoStack.pop();
             this.databaseManager.data[type] = snapshot.entries;
             this.databaseManager.data.editorNames = snapshot.editorNames;
+            this.databaseManager.data.battlePresentation = snapshot.battlePresentation;
             this._markDatabaseMutation();
             refreshData();
             selectedIds.clear();
@@ -1431,7 +1444,8 @@ class DatabaseEditorUI {
             delete copied.id;
             return copied;
         });
-        this.listClipboard = { type, entries: copiedEntries, entry: copiedEntries[0] || null, editorNames };
+        const presentation=sourceEntries.map(entry=>this.databaseManager?.data?.battlePresentation?.[type]?.[entry.id]||null);
+        this.listClipboard = { type, entries: copiedEntries, entry: copiedEntries[0] || null, editorNames, presentation:JSON.parse(JSON.stringify(presentation)) };
         let writePromise = Promise.resolve(true);
         if (typeof ReactorClipboard !== 'undefined') {
             writePromise = Promise.resolve(ReactorClipboard.write('databaseEntry', {
@@ -1440,6 +1454,7 @@ class DatabaseEditorUI {
                 entries: copiedEntries,
                 entry: copiedEntries[0] || null,
                 editorNames,
+                presentation,
                 sourceProjectName: this.currentProject?.name || null,
                 sourceProjectPath: this.currentProject?.path || null
             }));
@@ -1461,7 +1476,8 @@ class DatabaseEditorUI {
             });
             const editorNames = entries.map((_, index) =>
                 typeof payload.editorNames?.[index] === 'string' ? payload.editorNames[index].trim() : '');
-            this.listClipboard = { type, entries, entry: entries[0], editorNames };
+            const presentation=payload.sourceProjectPath===this.currentProject?.path?payload.presentation:undefined;
+            this.listClipboard = { type, entries, entry: entries[0], editorNames, presentation };
             return this.listClipboard;
         }
 
@@ -1579,6 +1595,7 @@ class DatabaseEditorUI {
             const pasted = JSON.parse(JSON.stringify(sourceEntry));
             pasted.id = targetId + index;
             targetArray[pasted.id] = pasted;
+            const section=this.databaseManager.data.battlePresentation?.[type];if(section){const binding=clipboard.presentation?.[index];if(binding)section[pasted.id]=JSON.parse(JSON.stringify(binding));else delete section[pasted.id];}
             this.setEditorName(type, pasted.id, clipboard.editorNames?.[index] || '');
             return pasted;
         });
@@ -1639,6 +1656,7 @@ class DatabaseEditorUI {
             { name: '3D Models', type: 'reactor3d' },
             { name: 'Common Events', type: 'commonEvents' },
             { name: 'User Interfaces', type: 'userInterfaces' },
+            { name: 'Action Sequences', type: 'actionSequences' },
             { name: 'Quests', type: 'quests' },
             { name: 'System 1', type: 'system1' },
             { name: 'System 2', type: 'system2' },
@@ -1698,12 +1716,15 @@ class DatabaseEditorUI {
             this.commonEventEditor.showCommonEventDetail(detailEl, entry);
         } else if (type === 'userInterfaces') {
             this.userInterfaceEditor.showUserInterfaceDetail(detailEl, entry);
+        } else if (type === 'actionSequences' && this.actionSequenceEditor) {
+            this.actionSequenceEditor.show(detailEl, entry);
         } else if (type === 'quests' && this.questEditor) {
             this.questEditor.showQuestDetail(detailEl, entry);
         } else {
             // Generic display for other types
             this.showGenericDetail(detailEl, entry, type);
         }
+        if (['skills','items','weapons','actors','enemies'].includes(type)) this.battlePresentationEditor?.assignment(detailEl, type, entry);
         // Text-code menus and reference panels on the fields that carry
         // `data-rr-textcodes` (descriptions, skill and state messages).
         if (window.RRDatabaseTextCodes && detailEl.querySelector('[data-rr-textcodes]')) {
@@ -1727,6 +1748,9 @@ class DatabaseEditorUI {
      * IconSet cell for icon-bearing entries, face crop for actors.
      */
     applyListIcon(span, entry, type) {
+        const request = {};
+        span._listIconRequest = request;
+        const project = this.currentProject;
         span.style.backgroundImage = 'none';
         span.style.imageRendering = '';
         span.classList.remove('has-icon');
@@ -1771,6 +1795,18 @@ class DatabaseEditorUI {
             return;
         }
         if (type === 'enemies') {
+            const spec = window.RRDatabase3DBindings?.get(project.path, 'enemies', entry.id);
+            if (spec) {
+                Promise.resolve(window.RRDatabase3DBindings.modelThumbnail(this.reactor3dEditor, spec)).then(url => {
+                    if (!url || !span.isConnected || span._listIconRequest !== request || this.currentProject !== project) return;
+                    span.style.backgroundImage = `url("${url}")`;
+                    span.style.backgroundSize = 'contain';
+                    span.style.backgroundPosition = 'center';
+                    span.style.imageRendering = 'auto';
+                    span.classList.add('has-icon');
+                }).catch(error => console.warn('Enemy model list preview:', error));
+                return;
+            }
             if (!entry.battlerName) return;
             const fs = require('fs');
             let battlerDir = null;
@@ -1903,6 +1939,7 @@ class DatabaseEditorUI {
             // older record lacks, so this is the whole shape.
             userInterfaces: { name: 'New Interface', mode: 'scene', background: 'blur', visible: { type: 'always' }, cancel: { type: 'close' }, firstFocus: 0, coordinateSpace: 'screen', nodes: [], note: '' },
             // Reactor quests: reactor_quests.js reads this shape as it is.
+            actionSequences: typeof ReactorBattleData !== 'undefined' ? ReactorBattleData.template() : {version:1,name:'New Sequence',steps:[]},
             quests: { name: 'New Quest', key: '', category: '', iconIndex: 0, difficulty: '', from: '', location: '', description: '', objectives: [], rewards: [], subtext: '', quotes: '', activation: { type: 'command', switchId: 0, variableId: 0, operator: '>=', value: 0 }, completion: { type: 'command', switchId: 0 }, note: '' },
         };
     }
@@ -1914,7 +1951,7 @@ class DatabaseEditorUI {
             actors: 9999, classes: 9999, skills: 9999, items: 9999,
             weapons: 9999, armors: 9999, enemies: 9999, troops: 9999,
             states: 9999, animations: 5000, tilesets: 1000, commonEvents: 9999,
-            userInterfaces: 9999, quests: 9999, elements: 512, skillTypes: 128, weaponTypes: 256,
+            userInterfaces: 9999, quests: 9999, actionSequences: 9999, elements: 512, skillTypes: 128, weaponTypes: 256,
             armorTypes: 256, equipTypes: 128
         }[type] || 0;
     }
@@ -1933,7 +1970,11 @@ class DatabaseEditorUI {
         if (!entries || !Number.isInteger(id) || id <= 0 || id >= entries.length) return null;
         const blank = this.createBlankDatabaseEntry(type, id);
         if (!blank) return null;
-        entries[id] = blank;
+        if (type === 'actionSequences') {
+            const refs = typeof ReactorBattleData !== 'undefined' ? ReactorBattleData.references(this.databaseManager.data.battlePresentation, id) : [];
+            if (refs.length) { alert('This sequence is assigned to ' + refs.map(r => r.kind + ' #' + r.id).join(', ') + '. Change those assignments before deleting it.'); return null; }
+            entries[id] = null;
+        } else {entries[id] = blank;const section=this.databaseManager.data.battlePresentation?.[type];if(section)delete section[id];}
         this.setEditorName(type, id, '');
         this._markDatabaseMutation();
         return blank;
@@ -1946,6 +1987,7 @@ class DatabaseEditorUI {
     }
 
     restoreNullDatabaseEntries(type) {
+        if (type === 'actionSequences') return 0;
         const entries = this.databaseManager?.data?.[type];
         if (!entries) return 0;
         let restored = 0;
@@ -2038,6 +2080,16 @@ class DatabaseEditorUI {
             // Create container for character, face, and SV battler
             const graphicsContainer = document.createElement('div');
             graphicsContainer.className = 'graphics-grid';
+            const loadSlotImage = (container, image, url, slot) => {
+                let loaded = false;
+                container._load2d = () => {
+                    if (!loaded) { loaded = true; image.src = url; }
+                };
+                if (!window.RRDatabase3DBindings?.get(this.currentProject.path, 'actors', entry.id, slot)) {
+                    container._load2d();
+                }
+            };
+
 
             // Character sprite section
             const characterBox = document.createElement('div');
@@ -2161,7 +2213,7 @@ class DatabaseEditorUI {
                 errorMsg.textContent = tt('Image not found');
                 charCanvasContainer.appendChild(errorMsg);
             };
-            img.src = imgPath;
+            loadSlotImage(charCanvasContainer, img, imgPath, 'character');
             } else {
                 const noImageMsg = document.createElement('span');
                 noImageMsg.style.color = 'var(--color-text-muted)';
@@ -2229,7 +2281,7 @@ class DatabaseEditorUI {
                     errorMsg.textContent = tt('Image not found');
                     faceCanvasContainer.appendChild(errorMsg);
                 };
-                faceImg.src = faceImgPath;
+                loadSlotImage(faceCanvasContainer, faceImg, faceImgPath, 'face');
             } else {
                 const noFaceMsg = document.createElement('span');
                 noFaceMsg.style.color = 'var(--color-text-muted)';
@@ -2301,7 +2353,7 @@ class DatabaseEditorUI {
                     errorMsg.textContent = tt('Image not found');
                     svCanvasContainer.appendChild(errorMsg);
                 };
-                svImg.src = svImgPath;
+                loadSlotImage(svCanvasContainer, svImg, svImgPath, 'battler');
             } else {
                 const noSvMsg = document.createElement('span');
                 noSvMsg.style.color = 'var(--color-text-muted)';

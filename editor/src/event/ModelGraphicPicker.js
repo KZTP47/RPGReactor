@@ -1006,7 +1006,7 @@ class ModelGraphicPicker {
                         }
                         this._lastRenderAt = now;
                     }
-                    this._renderer.render(this._scene, this._camera);
+                    Reactor3D.renderScene(this._renderer, this._scene, this._camera);
                     this._raf = requestAnimationFrame(tick);
                 };
                 this._raf = requestAnimationFrame(tick);

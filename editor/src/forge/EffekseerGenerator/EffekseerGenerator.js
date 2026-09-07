@@ -42,18 +42,18 @@ class EffekseerGenerator {
             : (RR_EFK_RECIPE_REGISTRY[0] ? RR_EFK_RECIPE_REGISTRY[0].id : null);
         this._stack = [{ recipeId: firstId, values: {}, start: 0, end: 0 }];
         this._activeLayer = 0;
-        this._effectDuration = 120;   // total frames; 0 = untimed
+        this._effectDuration = 120;   // finite duration of one exported cycle
+        this._loopPreview = true;    // repeat playback; never extends the export
         this._efkContext = null;
         this._efkEffect = null;
         this._efkHandle = null;
         this._gl = null;
         this._rafId = null;
         this._rebuildTimer = null;
-        this._replayTimer = null;
         this._watchdogTimer = null;
         this._generation = 0;
         this._frame = 0;
-        this._loopFrames = 0;    // >0 = seamless: replay at exactly this frame
+        this._loopFrames = 0;    // duration of the currently loaded effect
         this._playing = false;
         // Orbit camera (defaults = AnimationPicker's game-accurate view).
         this._camYaw = 0;
@@ -78,6 +78,7 @@ class EffekseerGenerator {
 
     /** Step the simulation once (all update() calls go through here). */
     _ctxUpdate() {
+        this._efkContext._makeContextCurrent?.();
         this._efkContext.update();
         this._updateTick++;
     }
@@ -419,6 +420,12 @@ class EffekseerGenerator {
      */
     _recipeModels(recipe, params) {
         if (!recipe.buildModels) return [];
+        if (this._loopPreview && recipe.category === 'Geometric' && 'morph' in params && 'life' in params) {
+            // Model frames advance once per simulation frame. Match their
+            // period to the export, and close both 4D rotation planes (the
+            // second plane turns at half speed in buildGeometry).
+            params = { ...params, life: this._durationFrames(), morph: Math.round(params.morph || 1) * 2 };
+        }
         return recipe.buildModels(params, RR_EfkModel).map(({ path, mesh }) => {
             if (!this._modelCache.has(path)) {
                 const bytes = RR_EfkModel.writeEfkmodel(mesh);
@@ -433,6 +440,73 @@ class EffekseerGenerator {
             }
             return { path, ...this._modelCache.get(path) };
         });
+    }
+
+    /** Close the motion of persistent nodes over one finite exported cycle. */
+    _closeLoop(nodes, duration) {
+        const turn = Math.PI * 2;
+        const whole = (value, period) => value === 0 ? 0
+            : Math.sign(value) * Math.max(1, Math.round(Math.abs(value) / period)) * period;
+        const closeCurve = (channel, period = 0) => {
+            if (!channel?.keys?.length || channel.keys.length < 2) return;
+            const source = channel.keys;
+            const sourceFrequency = channel.freq || duration / (source.length - 1);
+            // Curves can extend beyond the master duration (or be rounded
+            // up to their sampling grid). Close at the actual cutoff.
+            let frequency = Math.max(1, Math.round(sourceFrequency));
+            while (duration % frequency !== 0) frequency--;
+            const keys = Array.from({ length: duration / frequency + 1 }, (_, i) => {
+                const frame = Math.min(source.length - 1, i * frequency / sourceFrequency);
+                const left = Math.floor(frame), right = Math.min(source.length - 1, left + 1);
+                return source[left] + (source[right] - source[left]) * (frame - left);
+            });
+            channel.freq = frequency;
+            channel.len = duration;
+            const delta = keys[keys.length - 1] - keys[0];
+            const correction = (period ? whole(delta, period) : 0) - delta;
+            channel.keys = keys.map((key, i) => {
+                const t = Math.max(0, (i / (keys.length - 1) - 0.5) * 2);
+                return key + correction * t * t * (3 - 2 * t);
+            });
+        };
+        const visit = (list, persistent = true) => {
+            for (const node of list) {
+                const common = node.commonValues;
+                const stable = persistent && (common.maxGeneration === 1 || common.generationTime.min >= duration) && common.life.min >= duration &&
+                    common.generationTimeOffset.max === 0;
+                if (stable) {
+                    const rotation = node.rotation;
+                    if (rotation?.type === 1) {
+                        for (const axis of ['x', 'y', 'z']) {
+                            const speed = (rotation.velocity.min[axis] + rotation.velocity.max[axis]) / 2;
+                            const acceleration = (rotation.acceleration.min[axis] + rotation.acceleration.max[axis]) / 2;
+                            const distance = speed * duration + acceleration * duration * duration / 2;
+                            const rate = whole(distance, turn) / duration;
+                            rotation.velocity.min[axis] = rotation.velocity.max[axis] = rate;
+                            rotation.acceleration.min[axis] = rotation.acceleration.max[axis] = 0;
+                        }
+                    }
+                    const uv = node.rendererCommon?.uv;
+                    if (uv?.type === 3 && node.rendererCommon.textureWrap === 0) {
+                        for (const axis of ['x', 'y']) {
+                            const speed = (uv.speed.min[axis] + uv.speed.max[axis]) / 2;
+                            uv.speed.min[axis] = uv.speed.max[axis] = whole(speed * duration, 1) / duration;
+                        }
+                    }
+                    // Keyframed persistent transforms/colors return to the
+                    // initial value; rotations may finish a whole turn.
+                    for (const key of ['rotation', 'translation', 'scaling']) {
+                        const curve = node[key]?.fcurve;
+                        if (curve?.timeline === 0) for (const axis of ['x', 'y', 'z']) closeCurve(curve[axis], key === 'rotation' ? turn : 0);
+                    }
+                    for (const value of Object.values(node.rendererParams || {})) {
+                        if (value?.fcurve?.timeline === 0) for (const channel of ['r', 'g', 'b', 'a']) closeCurve(value.fcurve[channel]);
+                    }
+                }
+                visit(node.children || [], stable);
+            }
+        };
+        visit(nodes);
     }
 
     /**
@@ -767,17 +841,18 @@ class EffekseerGenerator {
                 };
             }
 
-            // Recipes in the later categories (Energy onward, following
-            // the sidebar's alphabetical order) were authored Y-up and
-            // render upside-down in MZ's Y-down world — beams pointing
-            // down, objects inverted. Flip them upright with a π
-            // X-rotation wrapper applied INNERMOST — the tilt wrapper must
+            // Legacy particle families incorporate this axis conversion
+            // in their authored motion. Interface panels and geometric,
+            // object and symbolic models already use the Y-up coordinates
+            // of our Effekseer camera (in both editor and runtime); flipping
+            // them puts text, crowns and symbols upside down.
+            // Keep any required π X-rotation INNERMOST — the tilt wrapper must
             // wrap the flip (Tilt·Flip·tree) to match the live gizmo
             // convention (Handle·Flip·tree). With the flip OUTERMOST the
             // X-π conjugation negated the tilt's Y/Z components whenever a
             // param rebuild swapped baked bytes in ("the angle changes
             // when I change the fill level").
-            const FLIP_CATEGORIES = ['Energy', 'Fire', 'Geometric', 'Interface', 'Object', 'Physical', 'Symbolic'];
+            const FLIP_CATEGORIES = ['Energy', 'Fire', 'Physical'];
             if (FLIP_CATEGORIES.includes(recipe.category)) {
                 for (const n of layerNodes) {
                     // WhenCreating binds snapshot the parent transform at
@@ -864,8 +939,8 @@ class EffekseerGenerator {
         // continuous stacks too: an explicit frame count means the exported
         // effect must terminate (RPG Maker battle animations wait for the
         // effect handle to die — an endless export stalls the battle, and
-        // the database preview spins forever). Blank duration (0 = ∞) keeps
-        // a continuous stack endless for ambience use.
+        // the database preview spins forever). _buildBytes normalizes the
+        // duration before composing, regardless of the Loop checkbox.
         if ((this._effectDuration || 0) > 0 && nodes.length) {
             // The flag must reach EVERY descendant: Effekseer children
             // survive their parent's destruction unless the node opts in
@@ -893,7 +968,9 @@ class EffekseerGenerator {
      * export share the exact same rotation — no separate bake pass.
      */
     _buildBytes() {
+        this._effectDuration = this._durationFrames();
         const composed = this._composeStack();
+        if (this._loopPreview) this._closeLoop(composed.nodes, this._effectDuration);
         this._lastComposed = composed;   // redirect/export reuse the merge
         if (!composed.nodes.length) return null;
         const effect = RR_EfkBuilder.makeEffect({
@@ -902,6 +979,12 @@ class EffekseerGenerator {
             nodes: composed.nodes,
         });
         return RR_EfkFormat.writeEfkefc(effect);
+    }
+
+    _durationFrames(value = this._effectDuration) {
+        const frames = Number(value);
+        return Number.isFinite(frames) && frames > 0
+            ? Math.max(1, Math.min(3600, Math.round(frames))) : 120;
     }
 
     /** Live-drag feedback: rotate the playing effect by the offset between
@@ -1002,10 +1085,14 @@ class EffekseerGenerator {
                         <button class="rr-efk-replay rr-btn-chip" style="padding: 4px 12px;">↻ ${this._t('efk.replay')}</button>
                         <button class="rr-efk-resetview rr-btn-chip" style="padding: 4px 12px;">⌂ ${this._t('efk.resetView')}</button>
                         <label style="display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--color-text-muted);" title="${this._t('efk.effectDurationHint')}">${this._t('efk.framesLabel')}
-                            <input class="rr-efk-duration rr-input" type="number" min="0" max="3600" step="10" value="${this._effectDuration || ''}" placeholder="∞" style="width: 64px; font-size: 11px; padding: 3px 5px;">
+                            <input class="rr-efk-duration rr-input" type="number" min="1" max="3600" step="1" value="${this._durationFrames()}" style="width: 64px; font-size: 11px; padding: 3px 5px;">
+                        </label>
+                        <label style="display: inline-flex; align-items: center; gap: 5px; font-size: 11px;" title="${this._t('efk.loopHint')}">
+                            <input class="rr-efk-loop" type="checkbox" ${this._loopPreview ? 'checked' : ''}>
+                            ${this._t('efk.loopAnimation')}
                         </label>
                         <span class="rr-efk-frame" style="font-size: 11px; color: var(--color-text-muted); min-width: 76px;"></span>
-                        <span class="rr-efk-status" style="font-size: 11px; color: var(--color-text-muted); flex: 1; text-align: right;"></span>
+                        <span class="rr-efk-status" style="font-size: 11px; color: var(--color-text-muted); flex: 1 0 140px; text-align: right;"></span>
                         <input class="rr-efk-name rr-input" type="text" placeholder="${this._t('efk.effectName')}" style="width: 150px; font-size: 12px; padding: 5px 8px;">
                         <button class="rr-efk-export rr-btn-chip" style="padding: 5px 14px; font-size: 12px; font-weight: 700; color: var(--color-accent-bright); border-color: var(--color-accent-border-strong); white-space: nowrap;">${this._t('efk.export')}</button>
                     </div>
@@ -1061,7 +1148,14 @@ class EffekseerGenerator {
         });
         contentEl.querySelector('.rr-efk-export').addEventListener('click', () => this._export());
         contentEl.querySelector('.rr-efk-duration').addEventListener('input', (e) => {
-            this._effectDuration = Math.max(0, Number(e.target.value) || 0);
+            this._effectDuration = this._durationFrames(e.target.value);
+            this._scheduleRebuild();
+        });
+        contentEl.querySelector('.rr-efk-duration').addEventListener('change', (e) => {
+            e.target.value = this._effectDuration;
+        });
+        contentEl.querySelector('.rr-efk-loop').addEventListener('change', (e) => {
+            this._loopPreview = e.target.checked;
             this._scheduleRebuild();
         });
         contentEl.querySelector('.rr-efk-randomize').addEventListener('click', () => this._randomize());
@@ -2152,7 +2246,6 @@ class EffekseerGenerator {
         if (this._gizmo) { this._gizmo.dispose(); this._gizmo = null; }
         if (this._rafId) { cancelAnimationFrame(this._rafId); this._rafId = null; }
         clearTimeout(this._rebuildTimer);
-        clearTimeout(this._replayTimer);
         clearTimeout(this._watchdogTimer);
         if (this._efkHandle) {
             try { this._efkHandle.stop(); } catch (e) {}
@@ -2165,7 +2258,11 @@ class EffekseerGenerator {
             this._retireEffect(this._efkEffect);
             this._efkEffect = null;
             this._flushRetired(true);
-            try { this._efkContext.release(); } catch (e) {}
+            if (typeof RREffekseerStateGuard !== 'undefined') RREffekseerStateGuard.release(this._efkContext);
+            try {
+                this._efkContext._makeContextCurrent?.();
+                effekseer.releaseContext(this._efkContext);
+            } catch (e) {}
             this._efkContext = null;
         }
         this._retiredEffects = [];
@@ -2224,15 +2321,15 @@ class EffekseerGenerator {
      */
     _loadCurrentEffect() {
         if (!this._efkContext) return;
+        const context = this._efkContext;
         const recipe = this._recipe();
         if (!recipe) return;
 
         const gen = ++this._generation;
         clearTimeout(this._watchdogTimer);
 
-        let bytes, params;
+        let bytes;
         try {
-            params = this._params();
             bytes = this._buildBytes();
         } catch (e) {
             console.error('EffekseerGenerator: build failed:', e);
@@ -2253,24 +2350,11 @@ class EffekseerGenerator {
             return;
         }
 
-        // Stack-wide playback traits (continuous / prewarm) + seamless
-        // loop length (only meaningful for a single seamless layer).
+        // Preview and export use the same finite timeline. Prewarming
+        // would skip its initial frames and shorten the first cycle.
         this._stackFlags = this._stackMeta();
-        // Windowed / keyframed layers must start from frame 0 — prewarming
-        // fast-forwards into the middle of the first transition window, so
-        // the first cycle differs from every later one (reads as a skip).
-        const anyWindowed = this._stack.some(e =>
-            (e.end || 0) > (e.start || 0) || (e.keyframes && e.keyframes.length > 1));
-        if (anyWindowed) this._stackFlags.prewarm = 0;
-        if ((this._effectDuration || 0) > 0) {
-            // An explicit duration caps the exported effect (continuous
-            // stacks included), so the preview replays at the same frame —
-            // what the Forge shows is what the game gets.
-            this._loopFrames = this._effectDuration;
-            this._stackFlags.prewarm = 0;
-        } else {
-            this._loopFrames = (this._stack.length === 1 && recipe.seamless && params.life) ? params.life : 0;
-        }
+        this._loopFrames = this._durationFrames();
+        this._stackFlags.prewarm = 0;
 
         // Textures resolve in-memory: the .efkefc references
         // Texture/rr_<name>.png; redirect maps those onto data URLs.
@@ -2356,14 +2440,14 @@ class EffekseerGenerator {
         const finish = () => {
             if (gen !== this._generation) {
                 // A newer rebuild superseded this one.
-                try { this._efkContext && pending && this._efkContext.releaseEffect(pending); } catch (e) {}
+                try { if (context.nativeptr !== null && pending) context.releaseEffect(pending); } catch (e) {}
                 return;
             }
             clearTimeout(this._watchdogTimer);
             this._swapEffect(pending);
         };
         try {
-            pending = this._efkContext.loadEffect(
+            pending = context.loadEffect(
                 bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
                 1.0,
                 () => { if (pending) finish(); else syncLoaded = true; },
@@ -2377,6 +2461,16 @@ class EffekseerGenerator {
                 },
                 redirect
             );
+            // Texture callbacks enter _update before onLoad. A closed preview
+            // has already released its WASM/GL context by then; do not let a
+            // late decode touch it or the context of a replacement preview.
+            if (pending && typeof pending._update === 'function') {
+                const update = pending._update;
+                pending._update = function (...args) {
+                    if (context.nativeptr === null || this.nativeptr === null) return;
+                    return update.apply(this, args);
+                };
+            }
         } catch (e) {
             console.error('EffekseerGenerator: loadEffect threw:', e);
             clearTimeout(this._watchdogTimer);
@@ -2415,7 +2509,7 @@ class EffekseerGenerator {
     _togglePause() {
         if (this._playing) {
             this._playing = false;
-        } else if (this._efkHandle && this._efkHandle.exists) {
+        } else if (this._frame < this._loopFrames && this._efkHandle && this._efkHandle.exists) {
             this._playing = true;       // resume mid-effect
         } else {
             this._play();               // restart from frame 0
@@ -2428,12 +2522,12 @@ class EffekseerGenerator {
             this._overlay(this._t('efk.loading'));
             return;
         }
-        clearTimeout(this._replayTimer);
         this._overlay('');
         if (this._efkHandle) {
             try { this._efkHandle.stop(); } catch (e) {}
         }
         this._frame = 0;
+        this._efkContext._makeContextCurrent?.();
         this._efkHandle = this._efkContext.play(this._efkEffect);
         if (this._efkHandle) this._efkHandle.setLocation(0, 0, 0);
         this._applyOrientation();
@@ -2496,44 +2590,36 @@ class EffekseerGenerator {
         const steps = takeSteps();
         if (this._playing) {
             for (let i = 0; i < steps; i++) {
-                // Seamless recipes replay DETERMINISTICALLY at their loop
-                // length: pose `life` ≡ pose 0 by construction, while the
-                // dying container draws a few blank frames before
-                // removeWhenChildrenIsExtinct kicks in — waiting for
-                // !handle.exists showed those blanks as a loop flicker.
+                // Repeat at the authored duration, without a replay timer
+                // or waiting for Effekseer's deferred instance cleanup.
                 if (this._loopFrames > 0 && this._frame >= this._loopFrames) {
+                    if (!this._loopPreview) {
+                        this._playing = false;
+                        this._updatePlayButton();
+                        break;
+                    }
                     this._play();
                 }
                 this._ctxUpdate();
                 this._frame++;
+                if (!this._loopPreview && this._frame >= this._loopFrames) {
+                    this._playing = false;
+                    this._updatePlayButton();
+                    break;
+                }
             }
             if (frameLabel) {
-                const dur = this._effectDuration || 0;
-                frameLabel.textContent = dur > 0
-                    ? `${this._t('efk.frame')} ${this._frame % dur} / ${dur}`
-                    : `${(this._frame / 60).toFixed(1)}s`;
-            }
-
-            // Effect finished (burst stacks, or a continuous one that died
-            // early) → restart; bursts get a readable beat first.
-            if (this._frame > 1 && (!this._efkHandle || !this._efkHandle.exists)) {
-                const recipe = this._recipe();
-                const gen = this._generation;
-                if ((this._stackFlags && this._stackFlags.continuous) ||
-                    (recipe && (recipe.seamless || recipe.continuous))) {
-                    this._play();
-                } else {
-                    this._playing = false;
-                    clearTimeout(this._replayTimer);
-                    this._replayTimer = setTimeout(() => {
-                        if (this._efkContext && gen === this._generation) this._play();
-                    }, 350);
-                }
+                frameLabel.textContent = `${this._t('efk.frame')} ${this._frame} / ${this._loopFrames}`;
             }
         }
 
         this._flushRetired();
 
+        // Effekseer shares one current GL context across all previews. Its
+        // beginDraw/drawHandle API does not select the receiver's context.
+        // Map effects can change it between RAF ticks, including while this
+        // preview is paused (no update). Select ours for every draw.
+        this._efkContext._makeContextCurrent?.();
         const gl = this._gl;
         gl.viewport(0, 0, canvas.width, canvas.height);
         gl.clearColor(0, 0, 0, 1);

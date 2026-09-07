@@ -25,7 +25,7 @@ class DatabaseUserInterfaceEditor {
     static get ACTION_TYPES() {
         return ['none', 'close', 'closeAll', 'callInterface', 'commonEvent', 'scene', 'pluginCommand', 'switch', 'variable', 'script',
             'setMenuActor', 'personalSkill', 'personalEquip', 'personalStatus', 'titleNewGame', 'titleContinue', 'titleOptions',
-            'gameEndToTitle', 'previousMenuActor', 'nextMenuActor', 'optionChange', 'saveSlot', 'loadSlot'];
+            'gameEndToTitle', 'previousMenuActor', 'nextMenuActor', 'optionChange', 'saveSlot', 'loadSlot', 'formation', 'pluginScene'];
     }
     static get SCENES() { return ['menu', 'item', 'skill', 'equip', 'status', 'save', 'load', 'options', 'gameEnd', 'title']; }
     static get CONDITION_TYPES() { return ['always', 'never', 'saveExists', 'switch', 'variable', 'script']; }
@@ -49,6 +49,8 @@ class DatabaseUserInterfaceEditor {
         this.parentEditor = parentEditor;
         this.current = null;
         this.selectedId = 0;
+        this.selectedIds = new Set();
+        this.selectionAnchor = 0;
         this.undoStack = [];
         this.redoStack = [];
         this.snap = true;
@@ -79,6 +81,10 @@ class DatabaseUserInterfaceEditor {
     // ==========================================
 
     static defaultNode(type, id) {
+        if (type === 'actorPanel') return Object.assign(this.defaultNode('list', id), {
+            name: 'Actor Panel', dataSource: 'party', rowLayout: 'actorPanel', rowHeight: 256,
+            width: 600, height: 384, contextName: 'selectedActor'
+        });
         const base = {
             id, type, name: '', parent: 0, anchor: 'topLeft', x: 0, y: 0, width: 200, height: 100, index: 0,
             opacity: 255, visible: { type: 'always', id: 1, on: true, op: '==', value: 0, script: '' },
@@ -104,6 +110,7 @@ class DatabaseUserInterfaceEditor {
                     vertical: true, borderWidth: 0, borderColor: '#ffffff', radius: 0,
                     text: '', align: 'left', fontSize: 0, textColor: 0, fontFace: '', fontBold: false, fontItalic: false,
                     outline: true, outlineColor: '', outlineWidth: 3, letterSpacing: 0,
+                    rowLayout: 'text', portraitSize: 144, actorLayoutVersion: 3, actorPadding: 12, actorGap: 4, actorElements: {}, actorFields: ['portrait', 'name', 'class', 'level', 'hp', 'mp', 'exp', 'states'],
                     dataSource: 'literal', category: 'all', actorMode: 'party', actorId: 1, index: 0, skillTypeId: 0,
                     includeAutosave: false, rangeStart: 1, rangeEnd: 10,
                     items: [{ id: 1, value: 1, text: 'First item', enabled: true }], rowText: '', rowHeight: 36, contextName: 'selection',
@@ -130,8 +137,118 @@ class DatabaseUserInterfaceEditor {
         }
     }
 
+    static normalizeActorElements(raw) {
+        const result = {};
+        const keys = ['portrait','name','class','level','states', ...['hp','mp','tp','exp'].flatMap(k => [k,k+'Label',k+'Value'])];
+        keys.push(...Object.keys(raw || {}).filter(key => /^custom_[1-9]\d*$/.test(key)).slice(0,100));
+        for (const key of keys) {
+            const source = raw && raw[key];
+            if (!source || typeof source !== 'object') continue;
+            const value = {};
+            if (key.startsWith('custom_')) {
+                value.kind = ['box','label','value','gauge'].includes(source.kind) ? source.kind : 'label';
+                value.name = typeof source.name === 'string' ? source.name : '';
+                value.gauge = ['hp','mp','tp','exp','mhp','mmp','atk','def','mat','mdf','agi','luk','variable'].includes(source.gauge) ? source.gauge : 'variable';
+                for (const prop of ['variableId','maxVariableId','max']) value[prop] = Math.min(999999999,Math.max(0,Number(source[prop]) || (prop==='max'?100:0)));
+            }
+            for (const prop of ['x','y','width','height','fontSize','corner','thickness','iconSize','iconGap']) {
+                if (source[prop] === '' || source[prop] == null || !Number.isFinite(Number(source[prop]))) continue;
+                value[prop] = Math.min(9999, Math.max(['x','y'].includes(prop) ? -9999 : ['corner','iconGap'].includes(prop) ? 0 : 1, Number(source[prop])));
+            }
+            for (const prop of ['color','color2','backColor']) {
+                if (/^#[0-9a-f]{6}$/i.test(source[prop])) value[prop] = source[prop];
+            }
+            if (['left','center','right'].includes(source.align)) value.align = source.align;
+            if (['rectangle','rounded','chamfer','circular'].includes(source.shape)) value.shape = source.shape;
+            if (['current','currentMax','percent'].includes(source.valueFormat)) value.valueFormat = source.valueFormat;
+            if (typeof source.text === 'string') value.text = source.text;
+            if (typeof source.visible === 'boolean') value.visible = source.visible;
+            result[key] = value;
+        }
+        return result;
+    }
+
+    static actorPanelLayout(node, width, height, fontSize) {
+        const fields = new Set(node.actorFields || ['portrait','name','class','level','hp','mp','exp','states']);
+        const pad = node.actorPadding ?? 12, gap = node.actorGap ?? 4;
+        const size = Math.max(0, Math.min(node.portraitSize || 144, height - pad * 2, (width - pad * 2) / 3));
+        const x = pad + (fields.has('portrait') ? size + gap + 8 : 0);
+        const w = Math.max(1, width - pad - x);
+        const gauges = ['hp','mp','tp','exp'].filter(k => fields.has(k));
+        const barHeight = key => node.actorElements?.[key]?.height || 6;
+        const barSpace = gauges.reduce((sum,key)=>sum+barHeight(key)+2,0);
+        const lines = Number(fields.has('name')) + Number(fields.has('class') || fields.has('level')) + gauges.length;
+        const textHeight = Math.max(10, Math.floor(Math.min(fontSize + 8, (height - pad * 2 - gap * Math.max(0,lines-1) - barSpace) / Math.max(1,lines))));
+        const textSize = Math.max(8, Math.min(fontSize, textHeight - 8));
+        const result = {};
+        const add = (key, kind, rect, props = {}) => {
+            result[key] = Object.assign({ kind, visible: true, fontSize: textSize, align: 'left', ...rect }, props, node.actorElements?.[key] || {});
+        };
+        if(fields.has('portrait')) add('portrait','portrait',{x:pad,y:pad,width:size,height:size});
+        let y = pad;
+        if(fields.has('name')) { add('name','text',{x,y,width:fields.has('states')&&!fields.has('portrait')?Math.max(1,w-160):w,height:textHeight},{text:'{actor.name}'}); y+=textHeight+gap; }
+        if(fields.has('class') || fields.has('level')) {
+            const levelWidth = Math.min(w / 3, Math.max(64,textSize * 5));
+            if(fields.has('class')) add('class','text',{x,y,width:w-(fields.has('level')?levelWidth+gap:0),height:textHeight},{text:'{actor.class}'});
+            if(fields.has('level')) add('level','text',{x:x+w-levelWidth,y,width:levelWidth,height:textHeight},{align:'right',text:'{levelLabel} {actor.level}'});
+            y+=textHeight+gap;
+        }
+        for(const key of gauges) {
+            const valueWidth = Math.min(w / 2, Math.max(88,textSize * 9));
+            add(key+'Label','label',{x,y,width:Math.max(1,w-valueWidth-gap),height:textHeight},{gauge:key,text:''});
+            add(key+'Value','value',{x:x+w-valueWidth,y,width:valueWidth,height:textHeight},{gauge:key,align:'right',valueFormat:key==='exp'?'percent':'currentMax'});
+            add(key,'gauge',{x,y:y+textHeight+2,width:w,height:barHeight(key)},{gauge:key,shape:'rectangle',corner:4,thickness:8});
+            y+=textHeight+barHeight(key)+2+gap;
+        }
+        if(fields.has('states')) add('states','states',{
+            x:fields.has('portrait')?pad:Math.max(pad,width-pad-160), y:fields.has('portrait')?pad+size+gap:pad,
+            width:fields.has('portrait')?size:160,height:32},{iconSize:28,iconGap:4});
+        for(const [key,element] of Object.entries(node.actorElements || {})) {
+            if(!/^custom_[1-9]\d*$/.test(key)) continue;
+            result[key]=Object.assign({kind:'label',visible:true,x:pad,y:pad,width:160,height:32,fontSize:fontSize,
+                align:'left',text:'',shape:'rectangle',corner:4,thickness:8,valueFormat:'current',gauge:'variable',max:100},element);
+        }
+        return result;
+    }
+
+    static actorGaugePath(ctx, rect, shape, corner) {
+        const {x,y,width:w,height:h}=rect;
+        const c=Math.max(0,Math.min(corner || 0,w/2,h/2));
+        ctx.beginPath();
+        if(shape==='rounded') {
+            ctx.moveTo(x+c,y); ctx.lineTo(x+w-c,y); ctx.quadraticCurveTo(x+w,y,x+w,y+c);
+            ctx.lineTo(x+w,y+h-c); ctx.quadraticCurveTo(x+w,y+h,x+w-c,y+h);
+            ctx.lineTo(x+c,y+h); ctx.quadraticCurveTo(x,y+h,x,y+h-c);
+            ctx.lineTo(x,y+c); ctx.quadraticCurveTo(x,y,x+c,y);
+        } else if(shape==='chamfer') {
+            ctx.moveTo(x+c,y); ctx.lineTo(x+w,y); ctx.lineTo(x+w,y+h-c);
+            ctx.lineTo(x+w-c,y+h); ctx.lineTo(x,y+h); ctx.lineTo(x,y+c);
+        } else ctx.rect(x,y,w,h);
+        ctx.closePath();
+    }
+
+    static drawActorGauge(ctx, rect, element, rate, colors) {
+        const {x,y,width:w,height:h}=rect;
+        rate=Math.max(0,Math.min(1,Number(rate)||0));
+        ctx.save();
+        const gradient=ctx.createLinearGradient(x,y,x+w,y);
+        gradient.addColorStop(0,element.color||colors[0]);gradient.addColorStop(1,element.color2||colors[1]);
+        if(element.shape==='circular') {
+            const thickness=Math.min(Math.max(1,element.thickness||8),Math.min(w,h)/2);
+            const radius=Math.max(0,(Math.min(w,h)-thickness)/2);
+            ctx.lineWidth=thickness;ctx.lineCap='butt';
+            ctx.beginPath();ctx.arc(x+w/2,y+h/2,radius,0,Math.PI*2);ctx.strokeStyle=element.backColor||colors[2];ctx.stroke();
+            if(rate>0) {ctx.beginPath();ctx.arc(x+w/2,y+h/2,radius,-Math.PI/2,-Math.PI/2+Math.PI*2*rate);ctx.strokeStyle=gradient;ctx.stroke();}
+        } else {
+            this.actorGaugePath(ctx,rect,element.shape,element.corner);ctx.clip();
+            ctx.fillStyle=element.backColor||colors[2];ctx.fillRect(x,y,w,h);
+            ctx.fillStyle=gradient;ctx.fillRect(x,y,w*rate,h);
+        }
+        ctx.restore();
+    }
+
     static defaultAction(type = 'none') {
-        return { type, id: 1, scene: 'menu', plugin: '', command: '', args: {}, on: true, op: 'set', value: 0, script: '', contextName: 'selection', andClose: false };
+        return { type, id: 1, scene: 'menu', plugin: '', command: '', args: {}, on: true, op: 'set', value: 0, script: '', sceneClass: '', argsExpression: '', actorFirst: false, contextName: 'selection', chooseActor: true, andClose: false };
     }
 
     static normalizeLiteralItems(raw) {
@@ -204,9 +321,40 @@ class DatabaseUserInterfaceEditor {
         return segments;
     }
 
+    static upgradeMenuActorPanel(entry) {
+        const nodes = Array.isArray(entry.nodes) ? entry.nodes : [];
+        if (entry.stock !== 'menu' || nodes.some(node => node.rowLayout === 'actorPanel')) return nodes;
+        const party = nodes.find(node => node.type === 'box' && node.name === 'Party');
+        if (!party) return nodes;
+        const legacyNames = ['Party members', 'Selected face', 'Selected name', 'Selected level and class', 'Selected HP', 'Selected MP', 'Selected EXP'];
+        const panel = Object.assign({}, party, { type: 'list', name: 'Actor Panel', dataSource: 'party',
+            rowLayout: 'actorPanel', rowHeight: 256, portraitSize: 144,
+            actorFields: ['portrait', 'name', 'class', 'level', 'hp', 'mp', 'exp', 'states'], contextName: 'selectedActor' });
+        return nodes.filter(node => node.parent !== party.id || !legacyNames.includes(node.name))
+            .map(node => node === party ? panel : node);
+    }
+
+    static upgradeMenuFormation(entry, enabled, label) {
+        const nodes=Array.isArray(entry.nodes)?entry.nodes:[];
+        if(entry.stock!=='menu' || entry.menuCommandVersion>=2 || !enabled || nodes.some(n=>n.action?.type==='formation')) return nodes;
+        const status=nodes.find(n=>n.type==='button' && n.action?.type==='personalStatus');
+        const parent=nodes.find(n=>n.id===status?.parent && n.name==='Commands');
+        if(!status || !parent) return nodes;
+        const id=Math.max(0,...nodes.map(n=>n.id))+1;
+        const button={...status,id,name:'Formation',text:label||'Formation',labelScript:'',y:status.y+status.height,
+            action:{type:'formation',contextName:'selectedActor'},
+            enabled:{type:'script',script:'$gameParty.size() > 1 && $gameSystem.isFormationEnabled()'},
+            focusUp:0,focusDown:0,focusLeft:0,focusRight:0};
+        return nodes.flatMap(n=>n===status?[n,button]:[{...n,...(n.parent===parent.id && n.y>=button.y?{y:n.y+button.height}:{})}]);
+    }
+
     /** Fills in whatever an older or hand-edited record is missing, in place. */
     normalizeInterface(entry) {
         if (!entry || typeof entry !== 'object') return entry;
+        entry.nodes = DatabaseUserInterfaceEditor.upgradeMenuActorPanel(entry);
+        const system=this.databaseManager?.data?.system || {};
+        entry.nodes=DatabaseUserInterfaceEditor.upgradeMenuFormation(entry,system.menuCommands?.[4]!==false,system.terms?.commands?.[8]);
+        entry.menuCommandVersion=2;
         const legacyCoordinates = entry.coordinateSpace !== 'screen';
         if (typeof entry.name !== 'string') entry.name = '';
         if (entry.mode !== 'scene' && entry.mode !== 'overlay') entry.mode = 'scene';
@@ -255,6 +403,18 @@ class DatabaseUserInterfaceEditor {
             if (type === 'list') {
                 merged.items = DatabaseUserInterfaceEditor.normalizeLiteralItems(merged.items);
                 if (!merged.contextName) merged.contextName = 'selection';
+                merged.rowLayout = node.rowLayout === 'actorPanel' ? 'actorPanel' : 'text';
+                merged.portraitSize = Math.min(144, Math.max(32, Number(merged.portraitSize) || 144));
+                merged.actorPadding = Math.min(200, Math.max(0, Number(merged.actorPadding) || 0));
+                merged.actorGap = Math.min(200, Math.max(0, Number(merged.actorGap) || 0));
+                merged.actorElements = DatabaseUserInterfaceEditor.normalizeActorElements(merged.actorElements);
+                if (merged.rowLayout==='actorPanel' && !node.actorLayoutVersion && node.rowHeight===192) merged.rowHeight=256;
+                merged.actorLayoutVersion=3;
+                merged.actorFields = Array.isArray(merged.actorFields) ? merged.actorFields.filter(key => ['portrait','name','class','level','hp','mp','tp','exp','states'].includes(key)) : ['portrait','name','class','level','hp','mp','exp','states'];
+                if (merged.rowLayout === 'actorPanel') {
+                    merged.dataSource = 'party';
+                    if ((node.actorLayoutVersion || 0)<3 && !merged.actorFields.includes('states')) merged.actorFields.push('states');
+                }
             }
             if (type === 'gauge') {
                 if (!['current', 'currentMax', 'percent', 'hidden'].includes(node.valueFormat)) merged.valueFormat = merged.showValue === false ? 'hidden' : 'current';
@@ -307,6 +467,8 @@ class DatabaseUserInterfaceEditor {
         this.detach();
         this.current = this.normalizeInterface(entry);
         this.selectedId = 0;
+        this.selectedIds = new Set();
+        this.selectionAnchor = 0;
         this.undoStack = [];
         this.redoStack = [];
         this.drag = null;
@@ -341,7 +503,7 @@ class DatabaseUserInterfaceEditor {
                         <details class="rr-ui-add-menu">
                             <summary class="rr-btn-chip">${tt('+ Add Node')}</summary>
                             <div class="rr-ui-add-menu-items" role="menu" aria-label="${tt('Add Node')}">
-                                ${DatabaseUserInterfaceEditor.NODE_TYPES.map(type => `<button type="button" role="menuitem" data-add="${type}">${this.typeLabel(type)}</button>`).join('')}
+                                ${[...DatabaseUserInterfaceEditor.NODE_TYPES, 'actorPanel'].map(type => `<button type="button" role="menuitem" data-add="${type}">${this.typeLabel(type)}</button>`).join('')}
                             </div>
                         </details>
                         <div class="rr-ui-layer-endpoint">${tt('Back')}</div>
@@ -603,7 +765,8 @@ class DatabaseUserInterfaceEditor {
         const parsed = JSON.parse(serialized);
         this.current.nodes = parsed.nodes;
         this.current.firstFocus = parsed.firstFocus;
-        if (!this.node(this.selectedId)) this.selectedId = 0;
+        this.selectedIds = new Set(this.selectedNodes().map(node => node.id));
+        if (!this.node(this.selectedId)) this.selectedId = [...this.selectedIds][0] || 0;
         this.touch();
         this.refreshFirstFocus();
         this.renderTree();
@@ -635,8 +798,54 @@ class DatabaseUserInterfaceEditor {
         return this.node(this.selectedId);
     }
 
-    select(id) {
-        this.selectedId = id;
+    selectedNodes() {
+        const ids = this.selectedIds?.size ? this.selectedIds : new Set([this.selectedId]);
+        return DatabaseUserInterfaceEditor.orderNodes(this.current.nodes).filter(node => ids.has(node.id));
+    }
+
+    selectionRoots() {
+        const nodes = this.selectedNodes(), ids = new Set(nodes.map(node => node.id));
+        return nodes.filter(node => {
+            const visited = new Set([node.id]);
+            let parent = this.node(node.parent);
+            while (parent && !visited.has(parent.id)) {
+                if (ids.has(parent.id)) return false;
+                visited.add(parent.id);
+                parent = this.node(parent.parent);
+            }
+            return true;
+        });
+    }
+
+    selectionBounds() {
+        const rects = this.rects();
+        const selected = this.selectedNodes().map(node => rects.get(node.id)).filter(Boolean);
+        return { x: Math.min(...selected.map(rect => rect.x)), y: Math.min(...selected.map(rect => rect.y)) };
+    }
+
+    translateSelection(dx, dy, origins = this.selectionRoots().map(node => ({ node, x: node.x, y: node.y }))) {
+        for (const origin of origins) {
+            origin.node.x = origin.x + dx;
+            origin.node.y = origin.y + dy;
+        }
+    }
+
+    select(id, { toggle = false, range = false } = {}) {
+        if (!this.selectedIds) this.selectedIds = new Set();
+        if (range && this.selectionAnchor && id) {
+            const ids = DatabaseUserInterfaceEditor.orderNodes(this.current.nodes).map(node => node.id);
+            const a = ids.indexOf(this.selectionAnchor), b = ids.indexOf(id);
+            if (!toggle) this.selectedIds.clear();
+            for (const selectedId of ids.slice(Math.min(a, b), Math.max(a, b) + 1)) this.selectedIds.add(selectedId);
+        } else if (toggle && id) {
+            if (this.selectedIds.has(id)) this.selectedIds.delete(id);
+            else this.selectedIds.add(id);
+            this.selectionAnchor = id;
+        } else {
+            this.selectedIds = new Set(id ? [id] : []);
+            this.selectionAnchor = id;
+        }
+        this.selectedId = this.selectedIds.has(id) ? id : [...this.selectedIds].at(-1) || 0;
         const inspector = this.wrapper && this.wrapper.querySelector('.rr-ui-props-panel');
         if (inspector) inspector.classList.add('is-open');
         this.renderTree();
@@ -668,7 +877,7 @@ class DatabaseUserInterfaceEditor {
         const node = this.node(id);
         if (!node) return;
         this.pushUndo();
-        const doomed = new Set([id]);
+        const doomed = new Set(this.selectedIds?.has(id) ? this.selectedNodes().map(node => node.id) : [id]);
         let grew = true;
         while (grew) {
             grew = false;
@@ -687,6 +896,8 @@ class DatabaseUserInterfaceEditor {
         }
         if (doomed.has(this.current.firstFocus)) this.current.firstFocus = 0;
         this.selectedId = 0;
+        this.selectedIds = new Set();
+        this.selectionAnchor = 0;
         this.touch();
         this.refreshFirstFocus();
         this.renderTree();
@@ -697,16 +908,28 @@ class DatabaseUserInterfaceEditor {
     duplicateNode(id) {
         const node = this.node(id);
         if (!node) return;
+        const roots = this.selectedIds?.has(id) ? this.selectionRoots() : [node];
+        const source = this.current.nodes.filter(candidate => roots.some(root => candidate === root || this.wouldCycle(root.id, candidate.id)));
+        const ids = new Map(source.map((candidate, index) => [candidate.id, this.nextNodeId(this.current) + index]));
         this.pushUndo();
-        const copy = JSON.parse(JSON.stringify(node));
-        copy.id = this.nextNodeId(this.current);
-        copy.x += 16;
-        copy.y += 16;
-        const index = this.current.nodes.indexOf(node);
-        this.current.nodes.splice(index + 1, 0, copy);
+        const copies = source.map(candidate => {
+            const copy = JSON.parse(JSON.stringify(candidate));
+            copy.id = ids.get(candidate.id);
+            if (ids.has(copy.parent)) copy.parent = ids.get(copy.parent);
+            else { copy.x += 16; copy.y += 16; }
+            for (const key of ['focusUp', 'focusDown', 'focusLeft', 'focusRight']) {
+                if (ids.has(copy[key])) copy[key] = ids.get(copy[key]);
+            }
+            return copy;
+        });
+        this.current.nodes.push(...copies);
         this.touch();
         this.refreshFirstFocus();
-        this.select(copy.id);
+        this.select(copies[0].id);
+        this.selectedIds = new Set(copies.map(copy => copy.id));
+        this.renderTree();
+        this.renderProperties();
+        this.scheduleRender();
     }
 
     /** Nodes in draw order: parents before children, siblings as authored. */
@@ -769,15 +992,25 @@ class DatabaseUserInterfaceEditor {
     moveNode(id, delta) {
         const node = this.node(id);
         if (!node) return false;
-        this.canonicalizeNodes();
-        const siblings = this.siblingsOf(node);
-        const index = siblings.indexOf(node);
-        const target = delta === -Infinity ? 0 : delta === Infinity ? siblings.length - 1 : index + delta;
-        if (index < 0 || target < 0 || target >= siblings.length || target === index) return false;
+        const roots = this.selectedIds?.has(id) ? this.selectionRoots() : [node];
+        const selected = new Set(roots);
+        const groups = [...new Set(roots.map(root => this.effectiveParent(root)))].map(parent => {
+            const before = this.siblingsOf(roots.find(root => this.effectiveParent(root) === parent));
+            const after = before.slice();
+            if (!Number.isFinite(delta)) {
+                const picked = after.filter(item => selected.has(item)), rest = after.filter(item => !selected.has(item));
+                return { parent, before, after: delta < 0 ? [...picked, ...rest] : [...rest, ...picked] };
+            }
+            const indices = delta < 0 ? after.map((_, i) => i) : after.map((_, i) => i).reverse();
+            for (const i of indices) {
+                const j = i + delta;
+                if (selected.has(after[i]) && j >= 0 && j < after.length && !selected.has(after[j])) [after[i], after[j]] = [after[j], after[i]];
+            }
+            return { parent, before, after };
+        });
+        if (groups.every(group => group.after.every((item, i) => item === group.before[i]))) return false;
         this.pushUndo();
-        siblings.splice(index, 1);
-        siblings.splice(target, 0, node);
-        this.reorderSiblingGroup(this.effectiveParent(node), siblings);
+        for (const group of groups) this.reorderSiblingGroup(group.parent, group.after);
         this.touch();
         this.renderTree();
         this.renderProperties();
@@ -785,43 +1018,33 @@ class DatabaseUserInterfaceEditor {
         return true;
     }
 
-    /** Reorders or reparents one subtree while preserving its root's screen rectangle. */
+    /** Move selected subtrees together, retaining order and screen positions. */
     moveNodeTo(id, targetId, placement) {
-        const node = this.node(id);
-        const target = this.node(targetId);
-        if (!node || !target || node === target || this.wouldCycle(node.id, target.id)) return false;
+        const node = this.node(id), target = this.node(targetId);
+        if (!node || !target || !['before', 'after', 'inside'].includes(placement)) return false;
+        const roots = this.selectedIds?.has(id) ? this.selectionRoots() : [node];
+        if (roots.some(root => root === target || this.wouldCycle(root.id, target.id))) return false;
         if (placement === 'inside' && target.type !== 'box' && target.type !== 'image') return false;
-        if (!['before', 'after', 'inside'].includes(placement)) return false;
-        this.canonicalizeNodes();
-        const oldParent = this.effectiveParent(node);
-        const newParent = placement === 'inside' ? target.id : this.effectiveParent(target);
-        const siblings = DatabaseUserInterfaceEditor.orderNodes(this.current.nodes)
-            .filter(candidate => candidate !== node && this.effectiveParent(candidate) === newParent);
-        let insert = placement === 'inside' ? siblings.length : siblings.indexOf(target) + (placement === 'after' ? 1 : 0);
-        if (insert < 0) return false;
-        const currentSiblings = this.siblingsOf(node);
-        const oldIndex = currentSiblings.indexOf(node);
-        if (oldParent === newParent) {
-            const desired = currentSiblings.filter(candidate => candidate !== node);
-            insert = placement === 'inside' ? desired.length : desired.indexOf(target) + (placement === 'after' ? 1 : 0);
-            desired.splice(insert, 0, node);
-            if (desired.every((candidate, index) => candidate === currentSiblings[index])) return false;
-        }
-        const before = this.rects().get(node.id);
+        const parent = placement === 'inside' ? target.id : this.effectiveParent(target);
+        const siblings = DatabaseUserInterfaceEditor.orderNodes(this.current.nodes).filter(candidate => !roots.includes(candidate) && this.effectiveParent(candidate) === parent);
+        const insert = placement === 'inside' ? siblings.length : siblings.indexOf(target) + (placement === 'after' ? 1 : 0);
+        siblings.splice(insert, 0, ...roots);
+        if (roots.every(root => this.effectiveParent(root) === parent) && this.siblingsOf(roots[0]).every((item, i) => item === siblings[i])) return false;
+        const rects = this.rects();
+        const screen = this.screenSize();
+        const parentRect = rects.get(parent) || { x: 0, y: 0, width: screen.width, height: screen.height };
         this.pushUndo();
-        node.parent = newParent;
-        siblings.splice(insert, 0, node);
-        this.reorderSiblingGroup(newParent, siblings);
-        if (before && oldParent !== newParent) {
-            const screen = this.screenSize();
-            const parentRect = this.rects().get(newParent) || { x: 0, y: 0, width: screen.width, height: screen.height };
-            const [ax, ay] = DatabaseUserInterfaceEditor.ANCHORS[node.anchor] || [0, 0];
-            node.x = Math.round(before.x - (parentRect.x + parentRect.width * ax - before.width * ax));
-            node.y = Math.round(before.y - (parentRect.y + parentRect.height * ay - before.height * ay));
+        for (const root of roots) {
+            const before = rects.get(root.id), oldParent = this.effectiveParent(root);
+            root.parent = parent;
+            if (before && oldParent !== parent) {
+                const [ax, ay] = DatabaseUserInterfaceEditor.ANCHORS[root.anchor] || [0, 0];
+                root.x = Math.round(before.x - (parentRect.x + parentRect.width * ax - before.width * ax));
+                root.y = Math.round(before.y - (parentRect.y + parentRect.height * ay - before.height * ay));
+            }
         }
-        void oldIndex;
-        this.canonicalizeNodes();
-        this.selectedId = node.id;
+        this.reorderSiblingGroup(parent, siblings);
+        if (!this.selectedIds?.has(id)) { this.selectedIds = new Set([id]); this.selectedId = id; }
         this.touch();
         this.refreshFirstFocus();
         this.renderTree();
@@ -889,7 +1112,7 @@ class DatabaseUserInterfaceEditor {
     // ==========================================
 
     typeLabel(type) {
-        return this._t({ box: 'Box', image: 'Image', text: 'Text', button: 'Button', list: 'List', gauge: 'Gauge' }[type] || type);
+        return this._t({ box: 'Box', image: 'Image', text: 'Text', button: 'Button', list: 'List', gauge: 'Gauge', actorPanel: 'Actor Panel' }[type] || type);
     }
 
     nodeLabel(node) {
@@ -903,7 +1126,7 @@ class DatabaseUserInterfaceEditor {
         }
         if (node.type === 'image' && node.file) return node.file;
         if (node.type === 'gauge') return node.gauge === 'variable' ? (node.label || this._t('Variable')) : node.gauge.toUpperCase();
-        return this.typeLabel(node.type) + ' ' + node.id;
+        return this.typeLabel(node.rowLayout === 'actorPanel' ? 'actorPanel' : node.type) + ' ' + node.id;
     }
 
     renderTree() {
@@ -914,6 +1137,7 @@ class DatabaseUserInterfaceEditor {
         const focused = tree.contains(document.activeElement);
         tree.innerHTML = '';
         tree.setAttribute('role', 'listbox');
+        tree.setAttribute('aria-multiselectable', 'true');
         tree.setAttribute('aria-label', this._t('Layers, Back to Front'));
         const ordered = this.canonicalizeNodes();
         if (this.reference) {
@@ -932,14 +1156,15 @@ class DatabaseUserInterfaceEditor {
         }
         ordered.forEach((node, index) => {
             const row = document.createElement('div');
-            row.className = 'rr-ui-tree-row' + (node.id === this.selectedId ? ' selected' : '');
+            row.className = 'rr-ui-tree-row' + (this.selectedIds?.has(node.id) || node.id === this.selectedId ? ' selected' : '');
             row.style.paddingLeft = (6 + this.depth(node) * 12) + 'px';
             row.dataset.id = String(node.id);
             row.draggable = true;
+            row.title = this.nodeLabel(node);
             row.tabIndex = -1;
             row.setAttribute('role', 'option');
-            row.setAttribute('aria-selected', String(node.id === this.selectedId));
-            row.setAttribute('aria-label', `${index + 1}. ${this.nodeLabel(node)}, ${this.typeLabel(node.type)}`);
+            row.setAttribute('aria-selected', String(this.selectedIds?.has(node.id) || node.id === this.selectedId));
+            row.setAttribute('aria-label', `${index + 1}. ${this.nodeLabel(node)}, ${this.typeLabel(node.rowLayout === 'actorPanel' ? 'actorPanel' : node.type)}`);
             const ordinal = document.createElement('span');
             ordinal.className = 'rr-ui-tree-ordinal';
             ordinal.textContent = String(index + 1);
@@ -949,7 +1174,7 @@ class DatabaseUserInterfaceEditor {
             handle.textContent = '⠿';
             const type = document.createElement('span');
             type.className = 'rr-ui-tree-type rr-ui-type-' + node.type;
-            type.textContent = this.typeLabel(node.type);
+            type.textContent = this.typeLabel(node.rowLayout === 'actorPanel' ? 'actorPanel' : node.type);
             const label = document.createElement('span');
             label.className = 'rr-ui-tree-label';
             label.textContent = this.nodeLabel(node);
@@ -966,18 +1191,19 @@ class DatabaseUserInterfaceEditor {
             }
             tree.appendChild(row);
         });
-        if (focused) (tree.querySelector('.rr-ui-tree-row.selected') || tree).focus({ preventScroll: true });
+        if (focused) (tree.querySelector(`[data-id="${this.selectedId}"]`) || tree).focus({ preventScroll: true });
         const selected = this.selected();
-        const siblings = this.siblingsOf(selected);
-        const index = siblings.indexOf(selected);
         const disable = (selector, value) => {
             const button = this.wrapper.querySelector(selector);
             if (button) button.disabled = value;
         };
-        disable('.rr-ui-send-back', !selected || index <= 0);
-        disable('.rr-ui-node-up', !selected || index <= 0);
-        disable('.rr-ui-node-down', !selected || index < 0 || index >= siblings.length - 1);
-        disable('.rr-ui-bring-front', !selected || index < 0 || index >= siblings.length - 1);
+        const roots = this.selectionRoots();
+        const canBack = roots.some(root => this.siblingsOf(root).slice(0, this.siblingsOf(root).indexOf(root)).some(item => !roots.includes(item)));
+        const canFront = roots.some(root => this.siblingsOf(root).slice(this.siblingsOf(root).indexOf(root) + 1).some(item => !roots.includes(item)));
+        disable('.rr-ui-send-back', !canBack);
+        disable('.rr-ui-node-up', !canBack);
+        disable('.rr-ui-node-down', !canFront);
+        disable('.rr-ui-bring-front', !canFront);
         disable('.rr-ui-node-duplicate', !selected);
         disable('.rr-ui-node-delete', !selected);
     }
@@ -1043,7 +1269,12 @@ class DatabaseUserInterfaceEditor {
     }
 
     optionalColorControl(cls, value, placeholder) {
-        return `<input type="text" class="database-field-value ${cls}" value="${this.escapeHTML(value || '')}" placeholder="${this.escapeHTML(placeholder)}" pattern="#[0-9a-fA-F]{6}">`;
+        const custom = /^#[0-9a-f]{6}$/i.test(value || '');
+        return `<div class="rr-ui-color-option">
+            <input type="hidden" class="${cls}" value="${this.escapeHTML(value || '')}">
+            ${this.selectControl('rr-ui-color-mode', custom ? 'custom' : 'default', [['default', this._t('Default')], ['custom', this._t('Custom')]])}
+            <input type="color" class="rr-ui-color rr-ui-optional-swatch" aria-label="${this._t('Color')}" value="${custom ? value : '#ffffff'}"${custom ? '' : ' hidden'}>
+        </div>`;
     }
 
     textControl(cls, value, placeholder = '') {
@@ -1139,6 +1370,7 @@ class DatabaseUserInterfaceEditor {
             </div>
             <div class="rr-ui-condition-script"${condition.type === 'script' ? '' : ' hidden'}>
                 <textarea class="database-field-value ${prefix}-script" rows="2" placeholder="return $gameParty.gold() > 0;">${this.escapeHTML(condition.script)}</textarea>
+                <button type="button" class="rr-btn-chip rr-ui-expand-script">${tt('Expand Script')}</button>
             </div>
         </div>`;
     }
@@ -1169,7 +1401,7 @@ class DatabaseUserInterfaceEditor {
         const types = [
             ['none', tt('Nothing')], ['close', tt('Close this interface')], ['closeAll', tt('Close all interfaces')],
             ['callInterface', tt('Call another interface')], ['commonEvent', tt('Run common event')],
-            ['scene', tt('Open scene')], ['pluginCommand', tt('Plugin command')],
+            ['scene', tt('Open scene')], ['pluginScene', tt('Open plugin scene')], ['pluginCommand', tt('Plugin command')], ['formation', tt('Formation')],
             ['switch', tt('Set switch')], ['variable', tt('Change variable')], ['script', tt('Run script')],
             ['setMenuActor', `${tt('Set')} ${tt('Actor')}`], ['personalSkill', `${tt('Skills')} (${tt('Actor')})`],
             ['personalEquip', `${tt('Equipment')} (${tt('Actor')})`], ['personalStatus', `${tt('Status')} (${tt('Actor')})`],
@@ -1205,6 +1437,14 @@ class DatabaseUserInterfaceEditor {
             <div class="rr-ui-action-scene"${show('scene')}>
                 ${this.selectControl(prefix + '-scene', action.scene, scenes)}
             </div>
+            <div class="rr-ui-action-pluginScene"${show('pluginScene')}>
+                ${this.textControl(prefix + '-sceneClass', action.sceneClass || '', 'Scene_SkillTree')}
+                ${this.textControl(prefix + '-argsExpression', action.argsExpression || '', '[actor.actorId()]')}
+                <div class="rr-ui-hint">${tt('Scene arguments are an array expression. Use actor for the selected actor.')}</div>
+            </div>
+            <div class="rr-ui-action-actorFirst"${['pluginScene','pluginCommand','script'].includes(action.type) ? '' : ' hidden'}>
+                ${this.checkControl(prefix + '-actorFirst', !!action.actorFirst, tt('Select actor first'))}
+            </div>
             <div class="rr-ui-action-pluginCommand"${show('pluginCommand')}>
                 ${this.textControl(prefix + '-plugin', action.plugin, tt('Plugin name'))}
                 ${this.textControl(prefix + '-command', action.command, tt('Command name'))}
@@ -1221,10 +1461,14 @@ class DatabaseUserInterfaceEditor {
             </div>
             <div class="rr-ui-action-script"${show('script')}>
                 <textarea class="database-field-value ${prefix}-script" rows="2">${this.escapeHTML(action.script)}</textarea>
+                <button type="button" class="rr-btn-chip rr-ui-expand-script">${tt('Expand Script')}</button>
             </div>
-            <div class="rr-ui-action-context"${['setMenuActor', 'personalSkill', 'personalEquip', 'personalStatus'].includes(action.type) ? '' : ' hidden'}>
+            <div class="rr-ui-action-context"${['setMenuActor', 'personalSkill', 'personalEquip', 'personalStatus', 'pluginScene', 'pluginCommand', 'script', 'formation'].includes(action.type) ? '' : ' hidden'}>
                 ${this.textControl(prefix + '-contextName', action.contextName || 'selection', 'selection')}
                 <div class="rr-ui-hint">${tt('List context')}</div>
+            </div>
+            <div class="rr-ui-action-chooseActor"${(['personalSkill', 'personalEquip', 'personalStatus'].includes(action.type) || (action.type === 'scene' && action.scene === 'item')) ? '' : ' hidden'}>
+                ${this.checkControl(prefix + '-chooseActor', action.chooseActor !== false, `${tt('Select')} ${tt('Actor')}`)}
             </div>
             <div class="rr-ui-action-andClose"${['pluginCommand', 'switch', 'variable', 'script'].includes(action.type) ? '' : ' hidden'}>
                 ${this.checkControl(prefix + '-andClose', action.andClose, tt('Then close this interface'))}
@@ -1239,6 +1483,7 @@ class DatabaseUserInterfaceEditor {
             case 'callInterface': if (q('interface')) target.id = Number(q('interface').value) || 0; break;
             case 'commonEvent': if (q('commonEvent')) target.id = Number(q('commonEvent').value) || 0; break;
             case 'scene': target.scene = q('scene').value; break;
+            case 'pluginScene': target.sceneClass=q('sceneClass').value.trim(); target.argsExpression=q('argsExpression').value.trim(); break;
             case 'pluginCommand': {
                 target.plugin = q('plugin').value.trim();
                 target.command = q('command').value.trim();
@@ -1262,7 +1507,9 @@ class DatabaseUserInterfaceEditor {
             case 'script': target.script = q('script').value; break;
             default: break;
         }
+        if (q('actorFirst')) target.actorFirst=q('actorFirst').checked;
         if (q('andClose')) target.andClose = q('andClose').checked;
+        if (q('chooseActor')) target.chooseActor = q('chooseActor').checked;
         if (q('contextName')) target.contextName = q('contextName').value.trim() || 'selection';
         const block = root.querySelector(`.rr-ui-action[data-prefix="${prefix}"]`);
         if (block) {
@@ -1270,7 +1517,9 @@ class DatabaseUserInterfaceEditor {
                 const section = block.querySelector('.rr-ui-action-' + type);
                 if (section) section.hidden = target.type !== type;
             }
+            block.querySelector('.rr-ui-action-actorFirst').hidden=!['pluginScene','pluginCommand','script'].includes(target.type);
             block.querySelector('.rr-ui-action-andClose').hidden = !['pluginCommand', 'switch', 'variable', 'script'].includes(target.type);
+            block.querySelector('.rr-ui-action-chooseActor').hidden = !(['personalSkill', 'personalEquip', 'personalStatus'].includes(target.type) || (target.type === 'scene' && target.scene === 'item'));
             block.querySelector('.rr-ui-action-context').hidden = !['setMenuActor', 'personalSkill', 'personalEquip', 'personalStatus'].includes(target.type);
         }
     }
@@ -1306,21 +1555,36 @@ class DatabaseUserInterfaceEditor {
         if (!panel) return;
         const node = this.selected();
         const title = this.wrapper.querySelector('.rr-ui-inspector-title');
+        if (this.selectedNodes().length > 1) {
+            const label = `${tt('Selection')} (${this.selectedNodes().length})`;
+            if (title) title.textContent = label;
+            const bounds = this.selectionBounds();
+            panel.innerHTML = `<div class="rr-ui-prop-title">${label}</div>`
+                + this.group(tt('Position'))
+                + this.row('X', this.numberControl('p-group-x', bounds.x, -9999, 9999))
+                + this.row('Y', this.numberControl('p-group-y', bounds.y, -9999, 9999));
+            this.organizeProperties(panel);
+            panel.querySelector('.rr-ui-property-section').open = true;
+            return;
+        }
         if (!node) {
             if (title) title.textContent = tt('Interface Settings');
             panel.innerHTML = this.interfacePropertiesMarkup();
             this.refreshFirstFocus();
             this.updatePresentationFields();
+            this.organizeProperties(panel);
             return;
         }
-        if (title) title.textContent = node.name && node.name.trim() ? node.name.trim() : `${this.typeLabel(node.type)} #${node.id}`;
+        if (title) title.textContent = node.name && node.name.trim() ? node.name.trim()
+            : node.type === 'button' && node.text ? node.text : this.typeLabel(node.rowLayout === 'actorPanel' ? 'actorPanel' : node.type);
         const fills = [['window', tt('Window skin')], ['color', tt('Solid color')], ['gradient', tt('Gradient')], ['none', tt('None')]];
         const isSurface = node.type === 'box' || node.type === 'button' || node.type === 'list';
         const isLabel = node.type === 'text' || node.type === 'button';
         const colorFill = node.fill === 'color' || node.fill === 'gradient';
         let html = '';
-        html += `<div class="rr-ui-prop-title rr-ui-type-${node.type}">${this.typeLabel(node.type)} #${node.id}</div>`;
+        html += `<div class="rr-ui-prop-title rr-ui-type-${node.type}">${this.typeLabel(node.rowLayout === 'actorPanel' ? 'actorPanel' : node.type)} #${node.id}</div>`;
         html += this.row(tt('Name'), this.textControl('p-name', node.name));
+        html += this.group(`${tt('Position')} / ${tt('Size')}`);
         html += this.row(tt('Parent'), this.selectControl('p-parent', node.parent, this.parentOptions(node)));
         html += this.row(tt('Anchor'), this.selectControl('p-anchor', node.anchor, this.anchorOptions()));
         html += this.pair('X', this.numberControl('p-x', node.x, -9999, 9999), 'Y', this.numberControl('p-y', node.y, -9999, 9999));
@@ -1330,7 +1594,7 @@ class DatabaseUserInterfaceEditor {
         html += this.row(tt('Visible'), this.conditionMarkup('p-visible', node.visible));
 
         if (isSurface) {
-            html += this.group(tt('Surface'));
+            html += this.group(tt('Background'));
             html += this.row(tt('Fill'), this.selectControl('p-fill', node.fill, fills));
             html += `<div class="rr-ui-sub rr-ui-fill-color"${colorFill ? '' : ' hidden'}>`;
             html += this.pair(tt('Color'), this.colorControl('p-color', node.color), tt('Color 2'), this.colorControl('p-color2', node.color2), 'rr-ui-gradient-end' + (node.fill === 'gradient' ? '' : ' rr-ui-hidden'));
@@ -1343,17 +1607,29 @@ class DatabaseUserInterfaceEditor {
         }
         if (isLabel) {
             html += this.group(node.type === 'button' ? tt('Label') : tt('Text'));
-            html += this.row(tt('Text'), `<textarea class="database-field-value p-text" rows="3">${this.escapeHTML(node.text)}</textarea>`,
-                tt('Escape codes work: \\V[n], \\N[n], \\C[n], \\I[n], \\G') + ' ' + tt('Party codes: \\GOLD, \\PLV[n], \\PCLASS[n], \\PHP[n], \\PMHP[n], \\PMP[n], \\PMMP[n], \\PTP[n] (n = party slot)'));
+            if(node.type==='button') {
+                html += this.row(tt('Label expression'), this.textControl('p-labelScript', node.labelScript || '', 'SkillTreesSystem.buttonValue'));
+                html += this.hintRow(tt('Optional expression for a dynamic label. Text below is used in the editor and if the expression fails.'));
+            }
+            html += this.row(tt('Text'), `<textarea class="database-field-value p-text" rows="3">${this.escapeHTML(node.text)}</textarea>`);
+            const references = [
+                [tt('Text'), tt('Escape codes work: \\V[n], \\N[n], \\C[n], \\I[n], \\G')],
+                [tt('Party'), tt('Party codes: \\GOLD, \\PLV[n], \\PCLASS[n], \\PHP[n], \\PMHP[n], \\PMP[n], \\PMMP[n], \\PTP[n] (n = party slot)')]
+            ];
             if (node.type === 'text') {
-                html += this.hintRow(`${tt('Actor')}: {actor.name}, {actor.nickname}, {actor.class}, {actor.level}, {actor.profile}, {actor.hp}, {actor.mp}, {actor.tp}, {actor.maxHp}, {actor.currentExp}, {actor.totalExp}, {actor.nextExp}, {actor.nextRequiredExp}, {actor.atk}...`);
                 html += this.row(`${tt('List context')} ${tt('Name')}`, this.textControl('p-contextName', node.contextName || 'selection', 'selection'));
-                html += this.hintRow('{context.name}, {context.value}, {context.valueText}, {context.title}, {context.playtime}, {context.date}, {context.existing}...');
+                references.push(
+                    [tt('Actor'), '{actor.name}, {actor.nickname}, {actor.class}, {actor.level}, {actor.profile}, {actor.hp}, {actor.mp}, {actor.tp}, {actor.maxHp}, {actor.currentExp}, {actor.totalExp}, {actor.nextExp}, {actor.nextRequiredExp}, {actor.atk}'],
+                    [tt('List context'), '{context.name}, {context.value}, {context.valueText}, {context.title}, {context.playtime}, {context.date}, {context.existing}']
+                );
+            }
+            html += this.codeReferenceMarkup(tt('Text Codes'), references);
+            if (node.type === 'text') {
                 html += this.group(tt('Actor source'));
                 html += this.actorBindingMarkup(node);
                 html += this.hintRow(tt('The editor uses starting-party and class data; runtime preview is authoritative.'));
             }
-            html += this.group(tt('Appearance'));
+            html += this.group(`${tt('Text')} ${tt('Style')}`);
             html += this.row(tt('Align'), this.selectControl('p-align', node.align, [['left', tt('Left')], ['center', tt('Center')], ['right', tt('Right')]]));
             html += this.pair(tt('Size'), this.numberControl('p-fontSize', node.fontSize, 0, 200), tt('Color'), this.textColorControl('p-textColor', node.textColor));
             html += this.hintRow(tt('Font size 0 uses the game default; color is a window skin index or a captured hex color.'));
@@ -1377,7 +1653,7 @@ class DatabaseUserInterfaceEditor {
             html += this.row(tt('Fit'), this.selectControl('p-fit', node.fit, [['none', tt('Actual size')], ['stretch', tt('Stretch')], ['contain', tt('Fit inside')]]));
             const sliceSafe = node.source === 'picture' || node.source === 'system';
             html += `<div class="rr-ui-sub rr-ui-nine-slice"${sliceSafe ? '' : ' hidden'}>`;
-            html += this.group(tt('Appearance'));
+            html += this.group(`${tt('Image')} ${tt('Style')}`);
             html += this.row('', this.checkControl('p-nineSlice', node.nineSlice, tt('Nine-slice')),
                 tt('Keeps image borders unscaled; available for Picture and System images.'));
             html += this.pair(tt('Left'), this.numberControl('p-sliceLeft', node.sliceLeft, 0, 9999), tt('Top'), this.numberControl('p-sliceTop', node.sliceTop, 0, 9999));
@@ -1391,12 +1667,23 @@ class DatabaseUserInterfaceEditor {
             const system = (this.databaseManager && this.databaseManager.data && this.databaseManager.data.system) || {};
             const skillTypes = (system.skillTypes || []).map((name, id) => id > 0 && name ? [String(id), name] : null).filter(Boolean);
             const source = node.dataSource;
-            html += this.group(tt('Rows'));
+            html += this.group(node.rowLayout === 'actorPanel' ? tt('Actor Panel') : tt('Rows'));
+            html += this.row(tt('Layout'), this.selectControl('p-rowLayout', node.rowLayout, [['text', tt('Text')], ['actorPanel', tt('Actor Panel')]]));
+            if (node.rowLayout === 'actorPanel') {
+                html += this.row(tt('Portrait size'), this.numberControl('p-portraitSize', node.portraitSize, 32, 144));
+                html += this.pair(tt('Padding'), this.numberControl('p-actorPadding', node.actorPadding, 0, 200), tt('Spacing'), this.numberControl('p-actorGap', node.actorGap, 0, 200));
+                for (const [key, label] of [['portrait','Portrait'],['name','Name'],['class','Class'],['level','Level'],['hp','HP'],['mp','MP'],['tp','TP'],['exp','EXP'],['states','States']]) {
+                    html += this.row('', this.checkControl('p-actorField-' + key, node.actorFields.includes(key), tt(label)));
+                }
+                html += this.actorElementMarkup(node);
+            }
+            html += `<div class="rr-ui-sub"${node.rowLayout === 'actorPanel' ? ' hidden' : ''}>`;
             html += this.row(tt('Data source'), this.selectControl('p-dataSource', source, [
                 ['party', tt('Party')], ['inventory', tt('Inventory')], ['skills', tt('Actor skills')],
                 ['actorParameters', `${tt('Actor')} ${tt('Parameters')}`], ['actorEquipment', `${tt('Actor')} ${tt('Equipment')}`], ['actorStates', `${tt('Actor')} ${tt('States')}`],
                 ['options', tt('Options')], ['saveSlots', tt('Save slots')], ['variableRange', tt('Variable range')], ['literal', tt('Literal list')]
             ]));
+            html += '</div>';
             html += `<div class="rr-ui-sub rr-ui-list-options"${source === 'options' ? '' : ' hidden'}>`;
             html += this.hintRow(tt('Options rows and values come from the running game; runtime is authoritative.'));
             html += `</div>`;
@@ -1415,9 +1702,12 @@ class DatabaseUserInterfaceEditor {
             html += `</div><div class="rr-ui-sub rr-ui-list-literal"${source === 'literal' ? '' : ' hidden'}>`;
             html += this.row(tt('Literal rows'), `<textarea class="database-field-value p-items" rows="6">${this.escapeHTML(DatabaseUserInterfaceEditor.literalItemsText(node.items))}</textarea>`, tt('One row per line: id|value|text. Add |disabled to disable a row.'));
             html += `</div>`;
-            html += this.row(tt('Row template'), this.textControl('p-rowText', node.rowText, '{name}'), '{key}, {kind}, {id}, {value}, {name}, {description}, {icon}, {count}, {paramName}, {paramValue}, {price}, {level}, {playtime}, {symbol}, {valueText}, {title}, {timestamp}, {date}, {partyCharacters}, {partyFaces}, {existing}, {enabled}, {index}');
-            html += this.group(tt('Appearance'));
-            html += this.pair(tt('Row height'), this.numberControl('p-rowHeight', node.rowHeight, 24, 240), tt('Align'), this.selectControl('p-align', node.align, [['left', tt('Left')], ['center', tt('Center')], ['right', tt('Right')]]));
+            html += `<div class="rr-ui-sub"${node.rowLayout === 'actorPanel' ? ' hidden' : ''}>`;
+            html += this.row(tt('Row template'), this.textControl('p-rowText', node.rowText, '{name}'));
+            html += this.codeReferenceMarkup(tt('Text Codes'), [[tt('Row template'), '{key}, {kind}, {id}, {value}, {name}, {description}, {icon}, {count}, {paramName}, {paramValue}, {price}, {level}, {playtime}, {symbol}, {valueText}, {title}, {timestamp}, {date}, {partyCharacters}, {partyFaces}, {existing}, {enabled}, {index}']]);
+            html += '</div>';
+            html += this.group(`${tt('Text')} ${tt('Style')}`);
+            html += this.pair(tt('Row height'), this.numberControl('p-rowHeight', node.rowHeight, 24, 9999), tt('Align'), this.selectControl('p-align', node.align, [['left', tt('Left')], ['center', tt('Center')], ['right', tt('Right')]]));
             html += this.pair(tt('Font size'), this.numberControl('p-fontSize', node.fontSize, 0, 200), tt('Text color'), this.textColorControl('p-textColor', node.textColor));
             html += this.row(tt('Font face'), this.textControl('p-fontFace', node.fontFace, tt('Game font')), tt('Blank uses the game font.'));
             html += this.pair('', this.checkControl('p-fontBold', node.fontBold, tt('Bold')), '', this.checkControl('p-fontItalic', node.fontItalic, tt('Italic')));
@@ -1457,25 +1747,59 @@ class DatabaseUserInterfaceEditor {
             html += this.group(tt('Behavior'));
             html += this.row(tt('Action'), this.actionMarkup('p-action', node.action));
             html += this.row(tt('Enabled'), this.conditionMarkup('p-enabled', node.enabled));
-            html += this.row(tt('Sound'), `<div class="rr-ui-file-row">${this.textControl('p-se', node.se ? node.se.name : '', tt('Default'))}<button type="button" class="rr-btn-chip p-se-browse">…</button></div>`);
-            html += this.group(tt('Appearance'));
-            html += this.hintRow(tt('Blank state values inherit the base appearance.'));
+            html += this.row(tt('Sound'), `<div class="rr-ui-file-row">${this.textControl('p-se', node.se ? node.se.name : '', tt('Default'))}<button type="button" class="rr-btn-chip p-se-browse">${tt('Browse')}</button></div>`);
+            html += this.group(`${tt('Button')} ${tt('Style')}`);
             html += this.row(`${tt('Preview')} ${tt('State')}`, this.selectControl('p-previewState', this._controlPreviewState || 'automatic', [
-                ['automatic', tt('Automatic')], ['focused', tt('Focused')], ['pressed', tt('Pressed')], ['disabled', tt('Disabled')]
+                ['automatic', tt('Automatic')], ['focused', tt('Selected')], ['pressed', tt('Pressed')], ['disabled', tt('Disabled')]
             ]));
-            html += this.row(tt('Highlight'), this.colorControl('p-highlightColor', node.highlightColor));
-            html += this.pair(`${tt('Focused')} ${tt('Fill')}`, this.optionalColorControl('p-focusedFillColor', node.focusedFillColor, tt('Inherit')), `${tt('Focused')} ${tt('Text Color')}`, this.optionalColorControl('p-focusedTextColor', node.focusedTextColor, tt('Inherit')));
-            html += this.pair(`${tt('Focused')} ${tt('Border')}`, this.optionalColorControl('p-focusedBorderColor', node.focusedBorderColor, tt('Inherit')), `${tt('Focused')} ${tt('Opacity')}`, this.optionalNumberControl('p-focusedOpacity', node.focusedOpacity, 0, 255, tt('Inherit')));
+            html += node.type === 'list' ? this.row(tt('Highlight'), this.colorControl('p-highlightColor', node.highlightColor))
+                : `<input type="hidden" class="p-highlightColor" value="${this.escapeHTML(node.highlightColor)}">`;
+            html += `<details class="rr-ui-property-section" open><summary>${tt('Selected')}</summary><div class="rr-ui-property-body">`;
+            html += this.pair(tt('Fill'), this.optionalColorControl('p-focusedFillColor', node.focusedFillColor, tt('Default')), tt('Text Color'), this.optionalColorControl('p-focusedTextColor', node.focusedTextColor, tt('Default')));
+            html += this.pair(tt('Border'), this.optionalColorControl('p-focusedBorderColor', node.focusedBorderColor, tt('Default')), tt('Opacity'), this.optionalNumberControl('p-focusedOpacity', node.focusedOpacity, 0, 255, tt('Default')));
+            html += `</div></details><details class="rr-ui-property-section"><summary>${tt('Pressed')}</summary><div class="rr-ui-property-body">`;
             html += this.pair(`${tt('Pressed')} X`, this.numberControl('p-pressedOffsetX', node.pressedOffsetX, -32, 32), `${tt('Pressed')} Y`, this.numberControl('p-pressedOffsetY', node.pressedOffsetY, -32, 32));
-            html += this.row(`${tt('Pressed')} ${tt('Opacity')}`, this.optionalNumberControl('p-pressedOpacity', node.pressedOpacity, 0, 255, tt('Inherit')));
-            html += this.pair(`${tt('Disabled')} ${tt('Fill')}`, this.optionalColorControl('p-disabledFillColor', node.disabledFillColor, tt('Inherit')), `${tt('Disabled')} ${tt('Text Color')}`, this.optionalColorControl('p-disabledTextColor', node.disabledTextColor, tt('Inherit')));
-            html += this.row(`${tt('Disabled')} ${tt('Opacity')}`, this.optionalNumberControl('p-disabledOpacity', node.disabledOpacity, 0, 255, tt('Inherit')));
+            html += this.row(tt('Opacity'), this.optionalNumberControl('p-pressedOpacity', node.pressedOpacity, 0, 255, tt('Default')));
+            html += `</div></details><details class="rr-ui-property-section"><summary>${tt('Disabled')}</summary><div class="rr-ui-property-body">`;
+            html += this.pair(tt('Fill'), this.optionalColorControl('p-disabledFillColor', node.disabledFillColor, tt('Default')), tt('Text Color'), this.optionalColorControl('p-disabledTextColor', node.disabledTextColor, tt('Default')));
+            html += this.row(tt('Opacity'), this.optionalNumberControl('p-disabledOpacity', node.disabledOpacity, 0, 255, tt('Default')));
+            html += `</div></details>`;
             html += this.group(tt('Navigation'));
-            html += this.hintRow(tt('Automatic uses geometric navigation; invalid targets safely fall back to it.'));
             html += this.pair(`${tt('Focus')} ${tt('Up')}`, this.selectControl('p-focusUp', node.focusUp, this.focusOptions(node)), `${tt('Focus')} ${tt('Down')}`, this.selectControl('p-focusDown', node.focusDown, this.focusOptions(node)));
             html += this.pair(`${tt('Focus')} ${tt('Left')}`, this.selectControl('p-focusLeft', node.focusLeft, this.focusOptions(node)), `${tt('Focus')} ${tt('Right')}`, this.selectControl('p-focusRight', node.focusRight, this.focusOptions(node)));
         }
         panel.innerHTML = html;
+        this.drawGaugeStylePreview();
+        this.organizeProperties(panel);
+    }
+
+    /** Keep the common content/action controls visible; disclose details on demand. */
+    organizeProperties(panel) {
+        if (!panel.ownerDocument) return;
+        const doc = panel.ownerDocument;
+        const openTitles = ['Label', 'Text', 'Image', 'Rows', 'Actor Panel', 'Gauge', 'Behavior'].map(title => this._t(title));
+        const headings = [...panel.children].filter(el => el.classList.contains('rr-ui-group'));
+        for (const heading of headings) {
+            const name = heading.textContent;
+            const section = doc.createElement('details');
+            section.className = 'rr-ui-property-section';
+            section.dataset.section = name;
+            section.open = this._propertySections?.[name] ?? openTitles.includes(name);
+            const summary = doc.createElement('summary');
+            summary.textContent = name;
+            const body = doc.createElement('div');
+            body.className = 'rr-ui-property-body';
+            heading.before(section);
+            section.append(summary, body);
+            while (heading.nextSibling && !heading.nextSibling.classList?.contains('rr-ui-group')) body.append(heading.nextSibling);
+            heading.remove();
+        }
+    }
+
+    /** One reference per content card, with related codes grouped inside. */
+    codeReferenceMarkup(title, groups) {
+        return `<details class="rr-ui-property-help"><summary>${this.escapeHTML(title)}</summary><dl>${groups.map(([label, text]) =>
+            `<dt>${this.escapeHTML(label)}</dt><dd>${this.escapeHTML(text)}</dd>`).join('')}</dl></details>`;
     }
 
     applyInterfaceProperties() {
@@ -1562,6 +1886,7 @@ class DatabaseUserInterfaceEditor {
         }
         if (node.type === 'text' || node.type === 'button') {
             node.text = q('p-text').value;
+            if(q('p-labelScript')) node.labelScript=q('p-labelScript').value;
             node.align = q('p-align').value;
             node.fontSize = num('p-fontSize', 0, 200, node.fontSize);
             node.textColor = DatabaseUserInterfaceEditor.parseTextColor(q('p-textColor').value);
@@ -1597,7 +1922,14 @@ class DatabaseUserInterfaceEditor {
             if (node.source === 'partyFace') this.readActorBinding(panel, node, num);
         }
         if (node.type === 'list') {
-            node.dataSource = q('p-dataSource').value;
+            const oldLayout = node.rowLayout;
+            node.rowLayout = q('p-rowLayout').value;
+            if (q('p-portraitSize')) node.portraitSize = num('p-portraitSize', 32, 144, 144);
+            if (q('p-actorPadding')) node.actorPadding = num('p-actorPadding', 0, 200, 12);
+            if (q('p-actorGap')) node.actorGap = num('p-actorGap', 0, 200, 4);
+            if (oldLayout === 'actorPanel') node.actorFields = ['portrait','name','class','level','hp','mp','tp','exp','states'].filter(key => q('p-actorField-' + key)?.checked);
+            node.dataSource = node.rowLayout === 'actorPanel' ? 'party' : q('p-dataSource').value;
+            if (oldLayout !== node.rowLayout) { if (node.rowLayout === 'actorPanel') q('p-rowHeight').value = 256; queueMicrotask(() => this.renderProperties()); }
             node.category = q('p-category').value;
             this.readActorBinding(panel, node, num);
             node.skillTypeId = num('p-skillTypeId', 0, 9999, node.skillTypeId);
@@ -1606,7 +1938,7 @@ class DatabaseUserInterfaceEditor {
             node.rangeEnd = num('p-rangeEnd', 1, 9999, node.rangeEnd);
             node.items = DatabaseUserInterfaceEditor.parseLiteralItems(q('p-items').value);
             node.rowText = q('p-rowText').value;
-            node.rowHeight = num('p-rowHeight', 24, 240, node.rowHeight);
+            node.rowHeight = num('p-rowHeight', 24, 9999, node.rowHeight);
             node.align = q('p-align').value;
             node.fontSize = num('p-fontSize', 0, 200, node.fontSize);
             node.textColor = DatabaseUserInterfaceEditor.parseTextColor(q('p-textColor').value);
@@ -1670,7 +2002,7 @@ class DatabaseUserInterfaceEditor {
             this.refreshFirstFocus();
             if (changedElement.classList.contains('p-name')) {
                 const title = this.wrapper.querySelector('.rr-ui-inspector-title');
-                if (title) title.textContent = node.name.trim() || `${this.typeLabel(node.type)} #${node.id}`;
+                if (title) title.textContent = node.name.trim() || `${this.typeLabel(node.rowLayout === 'actorPanel' ? 'actorPanel' : node.type)} #${node.id}`;
             }
         }
         if (changedElement && changedElement.classList.contains('p-parent')) {
@@ -1803,7 +2135,7 @@ class DatabaseUserInterfaceEditor {
         });
         q('.rr-ui-tree').addEventListener('click', event => {
             const row = event.target.closest('.rr-ui-tree-row');
-            if (row && row.dataset.id) this.select(Number(row.dataset.id));
+            if (row && row.dataset.id) this.select(Number(row.dataset.id), { toggle: event.ctrlKey || event.metaKey, range: event.shiftKey });
         });
         q('.rr-ui-tree').addEventListener('dragstart', event => {
             const row = event.target.closest('.rr-ui-tree-row[data-id]');
@@ -1823,7 +2155,8 @@ class DatabaseUserInterfaceEditor {
             const ratio = bounds.height > 0 ? (event.clientY - bounds.top) / bounds.height : 0.5;
             const placement = ratio < 0.28 ? 'before' : ratio > 0.72 ? 'after' : 'inside';
             if (placement === 'inside' && (!target || (target.type !== 'box' && target.type !== 'image'))) return;
-            if (this.wouldCycle(this._layerDragId, Number(row.dataset.id))) return;
+            const roots = this.selectedIds.has(this._layerDragId) ? this.selectionRoots() : [this.node(this._layerDragId)];
+            if (roots.some(root => root.id === target.id || this.wouldCycle(root.id, target.id))) return;
             event.preventDefault();
             q('.rr-ui-tree').querySelectorAll('.is-drop-before,.is-drop-after,.is-drop-inside').forEach(item => item.classList.remove('is-drop-before', 'is-drop-after', 'is-drop-inside'));
             row.classList.add('is-drop-' + placement);
@@ -1866,17 +2199,70 @@ class DatabaseUserInterfaceEditor {
         let propsUndoArmed = true;
         props.addEventListener('focusin', () => { propsUndoArmed = true; });
         const onPropChange = event => {
+            if(event.target.classList.contains('p-customElementKind')) return;
+            if (event.target.classList.contains('p-actorElement')) {
+                this._actorElementKey=event.target.value; this.renderProperties(); this.scheduleRender(); return;
+            }
+            const colorOption = event.target.closest('.rr-ui-color-option');
+            if (colorOption) {
+                const value = colorOption.querySelector('input[type="hidden"]');
+                const swatch = colorOption.querySelector('.rr-ui-optional-swatch');
+                const custom = colorOption.querySelector('.rr-ui-color-mode').value === 'custom';
+                swatch.hidden = !custom;
+                value.value = custom ? swatch.value : '';
+            }
             if (this.selected() && propsUndoArmed) {
                 // One undo step per field visit, not per keystroke.
                 this.pushUndo();
                 propsUndoArmed = false;
             }
-            if (this.selected()) this.applyProperties(event.target);
+            const elementField = event.target.closest('[data-actor-element-property]');
+            if (elementField && this.selected()?.rowLayout === 'actorPanel') {
+                const node=this.selected(), key=this._actorElementKey, prop=elementField.dataset.actorElementProperty;
+                const input=elementField.querySelector('.p-element-'+prop);
+                const value=input.type==='checkbox'?input.checked:input.type==='number'?Number(input.value):input.value;
+                node.actorElements ||= {}; node.actorElements[key] ||= {};
+                const oldShape=node.actorElements[key].shape || 'rectangle';
+                node.actorElements[key][prop]=value;
+                if(prop==='shape' && value==='circular' && oldShape!=='circular') {
+                    const previousHeight=node.actorElements[key].height || 6;
+                    node.actorElements[key].width=node.actorElements[key].height=80;
+                    if(!key.startsWith('custom_')) node.rowHeight+=Math.max(0,80-previousHeight);
+                }
+                node.actorElements=DatabaseUserInterfaceEditor.normalizeActorElements(node.actorElements);
+                this.touch(); this.scheduleRender();
+                if(event.type==='change' && ['shape','gauge','name'].includes(prop)) this.renderProperties();
+                this.drawGaugeStylePreview();return;
+            }
+            if (this.selectedNodes().length > 1) {
+                const bounds = this.selectionBounds();
+                const x = props.querySelector('.p-group-x'), y = props.querySelector('.p-group-y');
+                if (!x || !y || x.value === '' || y.value === '') return;
+                this.translateSelection(Number(x.value) - bounds.x, Number(y.value) - bounds.y);
+                this.touch();
+                this.scheduleRender();
+            } else if (this.selected()) this.applyProperties(event.target);
             else this.applyInterfaceProperties();
+            if(event.type==='change' && /p-(actorField-|actorPadding|actorGap|portraitSize|rowHeight)/.test(event.target.className)) this.renderProperties();
         };
         props.addEventListener('input', onPropChange);
         props.addEventListener('change', onPropChange);
+        props.addEventListener('toggle', event => {
+            if (!event.target.matches('.rr-ui-property-section[data-section]')) return;
+            this._propertySections ||= {};
+            this._propertySections[event.target.dataset.section] = event.target.open;
+        }, true);
         props.addEventListener('click', event => {
+            if (event.target.classList.contains('p-element-reset') && this.selected()) {
+                this.pushUndo();
+                const node=this.selected(), key=this._actorElementKey, element=node.actorElements[key];
+                if(key.startsWith('custom_')) node.actorElements[key]={kind:element.kind,name:element.name,text:element.kind==='label'?this._t('Custom Label'):'',gauge:element.gauge,variableId:element.variableId,maxVariableId:element.maxVariableId,max:element.max};
+                else delete node.actorElements[key];
+                this.touch(); this.renderProperties(); this.scheduleRender();
+            }
+            if(event.target.classList.contains('p-element-add')) this.addCustomActorElement(props.querySelector('.p-customElementKind').value);
+            if(event.target.classList.contains('p-element-remove')) {this.pushUndo();delete this.selected().actorElements[this._actorElementKey];this.touch();this.renderProperties();this.scheduleRender();}
+            if(event.target.classList.contains('rr-ui-expand-script')) this.expandScript(event.target.parentElement.querySelector('textarea'));
             if (event.target.classList.contains('p-browse')) this.browseImage();
             if (event.target.classList.contains('p-se-browse')) this.browseSe();
         });
@@ -1905,7 +2291,7 @@ class DatabaseUserInterfaceEditor {
             canvas.focus({ preventScroll: true });
             const rects = this.rects();
             const selected = this.selected();
-            if (selected) {
+            if (selected && this.selectedNodes().length === 1 && !event.shiftKey && !event.ctrlKey && !event.metaKey) {
                 const handle = this.handleAt(rects.get(selected.id), point);
                 if (handle) {
                     this.pushUndo();
@@ -1916,9 +2302,17 @@ class DatabaseUserInterfaceEditor {
             }
             const hit = this.nodeAt(rects, point);
             if (hit) {
-                if (hit.id !== this.selectedId) this.select(hit.id);
+                if (event.shiftKey || event.ctrlKey || event.metaKey) {
+                    this.select(hit.id, { toggle: true });
+                    event.preventDefault();
+                    return;
+                }
+                if (!this.selectedNodes().includes(hit)) this.select(hit.id);
                 this.pushUndo();
-                this.drag = { kind: 'move', node: hit, start: point, origin: { x: hit.x, y: hit.y }, moved: false };
+                const roots = this.selectionRoots();
+                const primary = roots.includes(hit) ? hit : roots[0];
+                this.drag = { kind: 'move', node: primary, start: point, origin: { x: primary.x, y: primary.y },
+                    origins: roots.map(node => ({ node, x: node.x, y: node.y })), moved: false };
             } else if (this.selectedId) {
                 this.select(0);
             }
@@ -1935,8 +2329,8 @@ class DatabaseUserInterfaceEditor {
             const snap = value => this.snap && !event.altKey ? Math.round(value / DatabaseUserInterfaceEditor.GRID) * DatabaseUserInterfaceEditor.GRID : Math.round(value);
             const node = this.drag.node;
             if (this.drag.kind === 'move') {
-                node.x = snap(this.drag.origin.x + dx);
-                node.y = snap(this.drag.origin.y + dy);
+                this.translateSelection(snap(this.drag.origin.x + dx) - this.drag.origin.x,
+                    snap(this.drag.origin.y + dy) - this.drag.origin.y, this.drag.origins);
                 this.drag.moved = true;
             } else {
                 this.applyResize(node, this.drag, dx, dy, snap);
@@ -1961,6 +2355,12 @@ class DatabaseUserInterfaceEditor {
         const key = event.key.toLowerCase();
         const mod = event.ctrlKey || event.metaKey;
         if (mod && key === 'z') { handled(); if (event.shiftKey) this.redo(); else this.undo(); return; }
+        if (mod && key === 'a') {
+            handled();
+            const nodes = DatabaseUserInterfaceEditor.orderNodes(this.current.nodes);
+            if (nodes.length) { this.select(nodes[0].id); this.select(nodes.at(-1).id, { range: true }); }
+            return;
+        }
         if (mod && key === 'y') { handled(); this.redo(); return; }
         const erase = event.key === 'Delete' || event.key === 'Backspace';
         if (target && target.closest && target.closest('.rr-ui-capture-list')) {
@@ -1988,7 +2388,7 @@ class DatabaseUserInterfaceEditor {
                 const rows = [...this.wrapper.querySelectorAll('.rr-ui-tree-row[data-id]')];
                 const index = rows.findIndex(row => Number(row.dataset.id) === node.id);
                 const next = rows[Math.min(rows.length - 1, Math.max(0, index + (event.key === 'ArrowUp' ? -1 : 1)))];
-                if (next) { this.select(Number(next.dataset.id)); next.focus({ preventScroll: true }); }
+                if (next) { this.select(Number(next.dataset.id), { range: event.shiftKey }); next.focus({ preventScroll: true }); }
                 return;
             }
         }
@@ -1998,8 +2398,7 @@ class DatabaseUserInterfaceEditor {
         if (moves[event.key]) {
             handled();
             this.pushUndo();
-            node.x += moves[event.key][0];
-            node.y += moves[event.key][1];
+            this.translateSelection(...moves[event.key]);
             this.touch();
             this.syncPositionFields(node);
             this.scheduleRender();
@@ -2019,7 +2418,16 @@ class DatabaseUserInterfaceEditor {
 
     syncPositionFields(node) {
         const panel = this.wrapper.querySelector('.rr-ui-props');
-        if (!panel || node !== this.selected()) return;
+        if (!panel) return;
+        if (this.selectedNodes().length > 1) {
+            const bounds = this.selectionBounds();
+            for (const axis of ['x', 'y']) {
+                const field = panel.querySelector('.p-group-' + axis);
+                if (field && document.activeElement !== field) field.value = bounds[axis];
+            }
+            return;
+        }
+        if (node !== this.selected()) return;
         const set = (cls, value) => { const el = panel.querySelector('.' + cls); if (el && document.activeElement !== el) el.value = value; };
         set('p-x', node.x);
         set('p-y', node.y);
@@ -2090,7 +2498,7 @@ class DatabaseUserInterfaceEditor {
     updateCursor(point) {
         const selected = this.selected();
         let cursor = 'default';
-        if (selected) {
+        if (selected && this.selectedNodes().length === 1) {
             const handle = this.handleAt(this.rects().get(selected.id), point);
             if (handle) cursor = { n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize', ne: 'nesw-resize', sw: 'nesw-resize', nw: 'nwse-resize', se: 'nwse-resize' }[handle];
         }
@@ -2877,7 +3285,7 @@ class DatabaseUserInterfaceEditor {
             let buffer = '';
             const flush = () => { if (buffer) { runs.push({ text: buffer, color, size }); buffer = ''; } };
             while (rest.length) {
-                const match = /^\\(C\[(\d+)\]|I\[(\d+)\]|\{|\}|FS\[(\d+)\]|PX\[\d+\]|PY\[\d+\]|[A-Za-z]+(\[[^\]]*\])?)/.exec(rest);
+                const match = /^\\(C\[(\d+)\]|I\[(\d+)\]|\{|\}|FS\[(\d+)\]|PX\[\d+\]|PY\[\d+\]|[A-Za-z]+(\[[^\]]*\])?)/i.exec(rest);
                 if (match) {
                     flush();
                     if (match[2] !== undefined) color = this.skinColor(Number(match[2]));
@@ -2995,6 +3403,21 @@ class DatabaseUserInterfaceEditor {
         return this.measureRuns(this.layoutText(node));
     }
 
+    iconTile(image, index) {
+        this._iconTiles ||= new WeakMap();
+        let tiles = this._iconTiles.get(image);
+        if (!tiles) { tiles = new Map(); this._iconTiles.set(image, tiles); }
+        if (!tiles.has(index)) {
+            const tile = document.createElement('canvas');
+            tile.width = tile.height = 32;
+            const context = tile.getContext('2d');
+            context.imageSmoothingEnabled = false;
+            context.drawImage(image, index % 16 * 32, Math.floor(index / 16) * 32, 32, 32, 0, 0, 32, 32);
+            tiles.set(index, tile);
+        }
+        return tiles.get(index);
+    }
+
     drawText(node, rect) {
         const ctx = this.ctx;
         const lines = this.layoutText(node);
@@ -3020,7 +3443,7 @@ class DatabaseUserInterfaceEditor {
             for (const run of line.runs) {
                 if (run.icon !== undefined) {
                     if (iconSet.image) {
-                        ctx.drawImage(iconSet.image, (run.icon % 16) * 32, Math.floor(run.icon / 16) * 32, 32, 32, x + 2, y + (line.height - 32) / 2, 32, 32);
+                        ctx.drawImage(this.iconTile(iconSet.image, run.icon), x + 2, y + (line.height - 32) / 2, 32, 32);
                     }
                     x += 36;
                     continue;
@@ -3100,6 +3523,28 @@ class DatabaseUserInterfaceEditor {
         draw(sx + c, sy + S - c, S - c * 2, c, x + c, y + h - c, w - c * 2, c);
         draw(sx, sy + c, c, S - c * 2, x, y + c, c, h - c * 2);
         draw(sx + S - c, sy + c, c, S - c * 2, x + w - c, y + c, c, h - c * 2);
+    }
+
+    drawSelection(node, rect) {
+        if (!node._previewFocused || node.focusedFillColor) return;
+        const skin = this.skin && this.skin.image;
+        const pad = node.fill === 'window' ? 12 : 0;
+        const x = rect.x + pad, y = rect.y + pad;
+        const w = Math.max(0, rect.width - pad * 2), h = Math.max(0, rect.height - pad * 2);
+        if (!skin) {
+            this.ctx.fillStyle = 'rgba(255,255,255,0.3)';
+            this.ctx.fillRect(x, y, w, h);
+            return;
+        }
+        // Same 48px cursor cell and 4px corners as Window._refreshCursor.
+        const mx = Math.min(4, w / 2), my = Math.min(4, h / 2);
+        const sx = [96, 100, 140], sy = [96, 100, 140];
+        const sw = [4, 40, 4], sh = [4, 40, 4];
+        const dx = [x, x + mx, x + w - mx], dy = [y, y + my, y + h - my];
+        const dw = [mx, w - 2 * mx, mx], dh = [my, h - 2 * my, my];
+        for (let row = 0; row < 3; row++) for (let col = 0; col < 3; col++) {
+            if (dw[col] > 0 && dh[row] > 0) this.ctx.drawImage(skin, sx[col], sy[row], sw[col], sh[row], dx[col], dy[row], dw[col], dh[row]);
+        }
     }
 
     drawSurface(node, rect) {
@@ -3277,6 +3722,7 @@ class DatabaseUserInterfaceEditor {
                 this.ctx.fillStyle = this.cssColor(color, node.focusedFillColor ? 255 : 96);
                 this.ctx.fillRect(rowRect.x, rowRect.y, rowRect.width, rowRect.height);
             }
+            if (node.rowLayout === 'actorPanel') { this.drawActorPanelRow(node, {x:rowRect.x+4,y:rowRect.y+2,width:Math.max(1,rowRect.width-8),height:Math.max(1,rowRect.height-4)}, index); return; }
             const textRect = { x: rowRect.x + 8, y: rowRect.y, width: Math.max(0, rowRect.width - 16), height: rowRect.height };
             const alpha = this.ctx.globalAlpha;
             if (entry.enabled === false) this.ctx.globalAlpha *= (node.disabledOpacity === '' ? 255 : node.disabledOpacity) / 255;
@@ -3289,6 +3735,196 @@ class DatabaseUserInterfaceEditor {
         this.ctx.restore();
     }
 
+    actorPortraitPreview(actor) {
+        if (!actor || typeof RRDatabase3DBindings === 'undefined' || !this.project()?.path) return null;
+        const key = 'actor-portrait:' + actor.id;
+        if (this.images.has(key)) return this.images.get(key);
+        const entry = { image: null, bound: false };
+        this.images.set(key, entry);
+        try {
+            const spec = RRDatabase3DBindings.get(this.project().path, 'actors', actor.id, 'face');
+            if (!spec) return entry;
+            entry.bound = true;
+            Promise.resolve(RRDatabase3DBindings.modelThumbnail(this.parentEditor?.reactor3dEditor, spec)).then(url => {
+                if (!url || this.images.get(key) !== entry) return;
+                const image = new Image();
+                image.onload = () => { if (this.images.get(key) === entry) { entry.image = image; this.scheduleRender(); } };
+                image.src = url;
+            }).catch(error => console.warn('Could not preview actor portrait:', error));
+        } catch (error) { console.warn('Could not read actor portrait:', error); }
+        return entry;
+    }
+
+    drawGaugeStylePreview() {
+        const canvas=this.wrapper?.querySelector('.rr-ui-gauge-preview'),node=this.selected();
+        if(!canvas || !node) return;
+        const element=DatabaseUserInterfaceEditor.actorPanelLayout(node,node.width,node.rowHeight,this.fontSize(node))[this._actorElementKey];
+        if(!element) return;
+        const ctx=canvas.getContext('2d');ctx.clearRect(0,0,canvas.width,canvas.height);
+        const rect=element.shape==='circular'?{x:96,y:8,width:68,height:68}:{x:16,y:22,width:228,height:36};
+        const scaled={...element,corner:Math.min(element.corner || 0,element.height/2)*36/Math.max(1,element.height)};
+        DatabaseUserInterfaceEditor.drawActorGauge(ctx,rect,scaled,0.65,['#42b9e8','#85dcff','#41434c']);
+    }
+
+    customElementAddMarkup() {
+        return '<div class="rr-ui-element-actions">'+this.selectControl('p-customElementKind','label',[['box',this._t('Custom Element')],['label',this._t('Custom Label')],['value',this._t('Custom Value')],['gauge',this._t('Custom Gauge')]])
+            +'<button type="button" class="rr-btn-chip p-element-add">'+this._t('Add')+'</button></div>';
+    }
+
+    panelVariableOptions() {
+        return [[0,this._t('None')],...(this.databaseManager.data.system?.variables || []).map((name,id)=>id>0?[id,String(id).padStart(4,'0')+(name?': '+name:'')]:null).filter(Boolean)];
+    }
+
+    addCustomActorElement(kind) {
+        const node=this.selected();if(node?.rowLayout!=='actorPanel') return;
+        node.actorElements ||= {};
+        if (Object.keys(node.actorElements).filter(key => key.startsWith('custom_')).length >= 100) return;
+        let id=1;while(node.actorElements['custom_'+id]) id++;
+        this.pushUndo();
+        const key='custom_'+id;
+        node.actorElements[key]={kind,name:this._t({box:'Custom Element',label:'Custom Label',value:'Custom Value',gauge:'Custom Gauge'}[kind]),
+            x:node.actorPadding || 12,y:Math.max(12,node.rowHeight-48),width:160,height:kind==='gauge'?16:32,
+            fontSize:24,text:kind==='label'?this._t('Custom Label'):'',gauge:'variable',variableId:1,max:100};
+        this._actorElementKey=key;this.touch();this.renderProperties();this.scheduleRender();
+    }
+
+    expandScript(textarea) {
+        if(!textarea) return;
+        const dialog=document.createElement('dialog');dialog.className='rr-ui-script-dialog';
+        const title=document.createElement('strong');title.textContent=this._t('Edit Script');
+        const input=document.createElement('textarea');input.className='database-field-value';input.value=textarea.value;input.spellcheck=false;input.setAttribute('aria-label',this._t('Script'));
+        const footer=document.createElement('footer');
+        for(const [label,apply] of [['Cancel',false],['Apply',true]]) {
+            const button=document.createElement('button');button.type='button';button.className='rr-btn-chip';button.textContent=this._t(label);
+            button.onclick=()=>{if(apply && textarea.isConnected){textarea.value=input.value;textarea.dispatchEvent(new FocusEvent('focusin',{bubbles:true}));textarea.dispatchEvent(new Event('input',{bubbles:true}));textarea.dispatchEvent(new Event('change',{bubbles:true}));}dialog.close();};
+            footer.appendChild(button);
+        }
+        dialog.append(title,input,footer);dialog.addEventListener('close',()=>{dialog.remove();textarea.focus();},{once:true});
+        document.body.appendChild(dialog);dialog.showModal();input.focus();
+    }
+
+    actorElementMarkup(node) {
+        const tt = text => this._t(text);
+        const inset = node.fill === 'window' ? 12 : 0;
+        const elements = DatabaseUserInterfaceEditor.actorPanelLayout(node, Math.max(1,node.width-inset*2-8), node.rowHeight-4, this.fontSize(node));
+        const keys=Object.keys(elements);
+        if (!keys.length) return this.group(tt('Panel elements')) + this.customElementAddMarkup();
+        const key=keys.includes(this._actorElementKey) ? this._actorElementKey : keys[0];
+        this._actorElementKey=key;
+        const element=elements[key];
+        const label = key => {
+            const match=/^(hp|mp|tp|exp)(Label|Value)?$/.exec(key);
+            return key.startsWith('custom_') ? (elements[key].name || tt('Custom Element')) : match ? tt(match[1].toUpperCase())+' '+tt(match[2] || 'Gauge') : tt({portrait:'Portrait',name:'Name',class:'Class',level:'Level',states:'States'}[key]);
+        };
+        const field=(prop,markup)=>'<div data-actor-element-property="'+prop+'">'+markup+'</div>';
+        const number=(prop,min=0,max=9999)=>field(prop,this.numberControl('p-element-'+prop,Math.round(element[prop]*100)/100,min,max));
+        let html=this.group(tt('Panel elements'));
+        html+=this.customElementAddMarkup();
+        html+=this.row(tt('Edit element'),this.selectControl('p-actorElement',key,keys.map(k=>[k,label(k)])));
+        html+=this.hintRow(tt('Positions are relative to each actor row. Changes apply to every actor.'));
+        html+=this.row('',field('visible',this.checkControl('p-element-visible',element.visible,tt('Visible'))));
+        html+=this.pair('X',number('x',-9999),'Y',number('y',-9999));
+        html+=this.pair(tt('Width'),number('width',1),tt('Height'),number('height',1));
+        if(key.startsWith('custom_')) html+=this.row(tt('Name'),field('name',this.textControl('p-element-name',element.name || '')));
+        if(element.kind==='gauge' || element.kind==='box') {
+            html+=this.row(tt('Shape'),field('shape',this.selectControl('p-element-shape',element.shape,[['rectangle',tt('Rectangle')],['rounded',tt('Rounded')],['chamfer',tt('Cut Corners')],...(element.kind==='gauge'?[['circular',tt('Circular')]]:[]) ])));
+            if(element.shape==='circular') html+=this.row(tt('Thickness'),number('thickness',1,Math.floor(Math.min(element.width,element.height)/2)));
+            else if(element.shape!=='rectangle') {
+                html+=this.row(tt('Corners'),number('corner',0,Math.floor(Math.min(element.width,element.height)/2)));
+                html+=this.hintRow(tt('Increase Height to make larger corners visible.'));
+            }
+            if(element.kind==='gauge') html+='<canvas class="rr-ui-gauge-preview" width="260" height="88" aria-label="'+tt('Style Preview')+'"></canvas>';
+            for(const [prop,name] of [['color','Color 1'],['color2','Color 2'],['backColor','Background']]) html+=this.row(tt(name),field(prop,this.optionalColorControl('p-element-'+prop,element[prop]||'',tt('Default'))));
+        } else if(element.kind==='states') {
+            html+=this.pair(tt('Icon size'),number('iconSize',8,144),tt('Spacing'),number('iconGap',0,100));
+            html+=this.hintRow(tt('Preview icons are examples. In game, this shows active states and buffs.'));
+        } else if(element.kind!=='portrait') {
+            html+=this.pair(tt('Font size'),number('fontSize',8,200),tt('Align'),field('align',this.selectControl('p-element-align',element.align,[['left',tt('Left')],['center',tt('Center')],['right',tt('Right')]])));
+            html+=this.row(tt('Color'),field('color',this.optionalColorControl('p-element-color',element.color||'',tt('Default'))));
+            if(element.kind==='value') html+=this.row(tt('Show value'),field('valueFormat',this.selectControl('p-element-valueFormat',element.valueFormat,[['current',tt('Value')],['currentMax',tt('Value')+' / '+tt('Maximum')],['percent','%']])));
+            else html+=this.row(tt('Text'),field('text',this.textControl('p-element-text',element.text,tt('Game default'))));
+        }
+        if(key.startsWith('custom_') && ['value','gauge'].includes(element.kind)) {
+            html+=this.row(tt('Source'),field('gauge',this.selectControl('p-element-gauge',element.gauge,DatabaseUserInterfaceEditor.GAUGE_KINDS.map(k=>[k,tt(k==='variable'?'Variable':k.toUpperCase())]))));
+            if(element.gauge==='variable') {
+                html+=this.row(tt('Variable'),field('variableId',this.selectControl('p-element-variableId',element.variableId,this.panelVariableOptions())));
+                html+=this.row(tt('Maximum'),number('max',1,999999999));
+                html+=this.row(tt('Maximum variable'),field('maxVariableId',this.selectControl('p-element-maxVariableId',element.maxVariableId,this.panelVariableOptions())));
+                html+=this.hintRow(tt('Game variables are shared by all actors.'));
+                html+=this.hintRow(tt('Variable previews use sample values; playtest shows the current game value.'));
+            } else if(!['hp','mp','tp','exp'].includes(element.gauge)) html+=this.row(tt('Maximum'),number('max',1,999999999));
+        }
+        html+='<div class="rr-ui-element-actions"><button type="button" class="rr-btn-chip p-element-reset">'+tt('Reset Element')+'</button>';
+        if(key.startsWith('custom_')) html+='<button type="button" class="rr-btn-chip p-element-remove">'+tt('Remove')+'</button>';
+        html+='</div>';
+        return html;
+    }
+
+    drawActorPanelRow(node, rect, index) {
+        const actorNode={...node,actorSource:'partySlot',index,fill:'none',_previewFocused:false};
+        const actor=this.startingActor(actorNode), ctx=this.ctx;
+        const elements=DatabaseUserInterfaceEditor.actorPanelLayout(node,rect.width,rect.height,this.fontSize(node));
+        const basic=this.databaseManager.data.system?.terms?.basic || [];
+        ctx.save(); ctx.beginPath(); ctx.rect(rect.x,rect.y,rect.width,rect.height); ctx.clip();
+        for(const [key,element] of Object.entries(elements)) {
+            if(!element.visible) continue;
+            const r={x:rect.x+element.x,y:rect.y+element.y,width:element.width,height:element.height};
+            ctx.save(); ctx.beginPath(); ctx.rect(r.x,r.y,r.width,r.height); ctx.clip();
+            if(element.kind==='portrait') {
+                const portrait=this.actorPortraitPreview(actor);
+                if(portrait?.image) ctx.drawImage(portrait.image,r.x,r.y,r.width,r.height);
+                else if(!portrait?.bound) this.drawImageNode({...actorNode,type:'image',source:'partyFace',fit:'stretch'},r);
+            } else if(element.kind==='states') {
+                const sheet=this.image('system','IconSet'),size=Math.min(element.iconSize,r.height),gap=element.iconGap;
+                const icons=(this.databaseManager.data.states || []).filter(state=>state?.iconIndex>0).map(state=>state.iconIndex);
+                const count=Math.max(0,Math.floor((r.width+gap)/(size+gap)));
+                if(sheet.image) icons.slice(0,count).forEach((id,index)=>ctx.drawImage(this.iconTile(sheet.image,id),r.x+index*(size+gap),r.y,size,size));
+            } else if(element.kind==='box') {
+                DatabaseUserInterfaceEditor.drawActorGauge(ctx,r,element,1,[element.color||'#30343c',element.color2||element.color||'#30343c','#30343c']);
+            } else {
+                const gauge=element.gauge;
+                const param=['mhp','mmp','atk','def','mat','mdf','agi','luk'].indexOf(gauge);
+                const maximum=gauge==='variable'?(element.maxVariableId?100:element.max||100):gauge==='tp'?100:gauge==='exp'?1:param>=0?(element.max||100):Math.max(1,this.startingParam(actor,gauge==='hp'?0:1));
+                const current=gauge==='variable'?maximum*0.65:gauge==='hp'?this.startingParam(actor,0):gauge==='mp'?this.startingParam(actor,1):param>=0?this.startingParam(actor,param):0;
+                const rate=maximum>0?Math.max(0,Math.min(1,current/maximum)):0;
+                if(element.kind==='gauge') {
+                    const colors={hp:[20,21],mp:[22,23],tp:[28,29],exp:[14,6]}[gauge] || [14,6];
+                    DatabaseUserInterfaceEditor.drawActorGauge(ctx,r,element,rate,[this.skinColor(colors[0]),this.skinColor(colors[1]),this.skinColor(19)]);
+                } else {
+                    const term={hp:basic[3]||'HP',mp:basic[5]||'MP',tp:basic[7]||'TP',exp:basic[9]||'EXP'}[gauge] || '';
+                    const text=element.kind==='value'?(element.valueFormat==='percent'?Math.round(rate*100)+'%':element.valueFormat==='current'?String(current):current+' / '+maximum)
+                        :element.kind==='label'?(element.text||term):element.text.replace(/\{levelLabel\}/g,basic[1]||'Lv');
+                    this.drawActorElementText({...actorNode,type:'text',text,fontSize:element.fontSize,textColor:element.color||node.textColor,align:element.align},r);
+                }
+            }
+            ctx.restore();
+            if(index===0 && this.selectedId===node.id && this._actorElementKey===key) {
+                ctx.save(); ctx.strokeStyle='#e5be37'; ctx.lineWidth=1/this.scale; ctx.setLineDash([4/this.scale,3/this.scale]);
+                ctx.strokeRect(r.x,r.y,r.width,r.height); ctx.restore();
+            }
+        }
+        ctx.restore();
+    }
+
+    drawActorElementText(node,rect) {
+        const ctx=this.ctx, runs=this.parseText(node)[0]?.runs || [];
+        const iconSize=Math.min(32,Math.max(1,rect.height-2));
+        const width=runs.reduce((sum,run)=>{this.setTextFont(ctx,node,run.size);return sum+(run.icon!==undefined?iconSize+4:ctx.measureText(run.text).width);},0);
+        let x=rect.x+(node.align==='right'?Math.max(0,rect.width-width):node.align==='center'?Math.max(0,(rect.width-width)/2):0);
+        const icons=this.image('system','IconSet');
+        for(const run of runs) {
+            if(run.icon!==undefined) {
+                if(icons.image) ctx.drawImage(this.iconTile(icons.image,run.icon),x+2,rect.y+(rect.height-iconSize)/2,iconSize,iconSize);
+                x+=iconSize+4;
+            } else {
+                this.setTextFont(ctx,node,run.size); ctx.textAlign='left'; ctx.textBaseline='alphabetic';
+                const y=rect.y+rect.height/2+run.size*0.35;
+                if(node.outline) {ctx.lineJoin='round';ctx.lineWidth=node.outlineWidth;ctx.strokeStyle=node.outlineColor||'rgba(0,0,0,0.6)';ctx.strokeText(run.text,x,y);}
+                ctx.fillStyle=run.color;ctx.fillText(run.text,x,y);x+=ctx.measureText(run.text).width;
+            }
+        }
+    }
+
     /** A gauge as Sprite_Gauge draws it: label in the system colour, value right-aligned, the bar across the lower half. */
     drawGaugeNode(node, rect) {
         const ctx = this.ctx;
@@ -3297,8 +3933,8 @@ class DatabaseUserInterfaceEditor {
         const main = this.fontSize({ fontSize: 0 });
         const h = rect.height;
         const gaugeH = node.gaugeHeight > 0 ? node.gaugeHeight : Math.max(4, Math.floor(h / 2));
-        const labelSize = Math.max(DatabaseUserInterfaceEditor.MIN_FONT_SIZE, Math.round((main - 2) * h / 24));
-        const valueSize = Math.max(DatabaseUserInterfaceEditor.MIN_FONT_SIZE, Math.round((main - 6) * h / 24));
+        const labelSize = node.rowLayout === 'actorPanel' ? Math.min(node.fontSize || main, h - 4) : Math.max(DatabaseUserInterfaceEditor.MIN_FONT_SIZE, Math.round((main - 2) * h / 24));
+        const valueSize = node.rowLayout === 'actorPanel' ? labelSize : Math.max(DatabaseUserInterfaceEditor.MIN_FONT_SIZE, Math.round((main - 6) * h / 24));
         const variable = node.gauge === 'variable';
         const actor = this.startingActor(node);
         const paramNames = (data.system && data.system.terms && data.system.terms.params) || ['Max HP', 'Max MP', 'ATK', 'DEF', 'MAT', 'MDF', 'AGI', 'LUK'];
@@ -3350,14 +3986,25 @@ class DatabaseUserInterfaceEditor {
         ctx.textBaseline = 'alphabetic';
         ctx.lineJoin = 'round';
         if (node.showLabel && label) {
-            ctx.font = `${labelSize}px ${this.fontFamily()}`;
-            ctx.textAlign = 'left';
-            const y = Math.round(rect.y + 3 + h / 2 + labelSize * 0.35);
-            ctx.lineWidth = 3;
-            ctx.strokeStyle = 'rgba(0,0,0,0.6)';
-            ctx.strokeText(label, rect.x + 1.5, y);
-            ctx.fillStyle = this.skinColor(16);
-            ctx.fillText(label, rect.x + 1.5, y);
+            const labelNode = Object.assign({}, node, { type: 'text', text: label, fontSize: labelSize, textColor: 16, wrap: false });
+            const runs = this.parseText(labelNode)[0]?.runs || [];
+            let x = rect.x + 1.5;
+            const icons = this.image('system', 'IconSet');
+            for (const run of runs) {
+                if (run.icon !== undefined) {
+                    const size = Math.min(32, Math.max(1, h - 2));
+                    if (icons.image) ctx.drawImage(this.iconTile(icons.image, run.icon),
+                        x, rect.y + (h - size) / 2, size, size);
+                    x += size + 4;
+                } else {
+                    this.setTextFont(ctx, labelNode, run.size);
+                    ctx.textAlign = 'left';
+                    const y = Math.round(rect.y + h / 2 + run.size * 0.35);
+                    ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+                    ctx.strokeText(run.text, x, y); ctx.fillStyle = run.color; ctx.fillText(run.text, x, y);
+                    x += ctx.measureText(run.text).width;
+                }
+            }
         }
         if (node.valueFormat !== 'hidden' && value !== '') {
             ctx.font = `${valueSize}px ${this.fontFamily()}`;
@@ -3392,7 +4039,7 @@ class DatabaseUserInterfaceEditor {
             ctx.restore();
             return;
         }
-        const image = entry.image;
+        const image = node.source === 'icon' ? this.iconTile(entry.image, node.index) : entry.image;
         let sx = 0, sy = 0, sw = image.width, sh = image.height;
         if (node.source === 'face' || node.source === 'partyFace') { sw = 144; sh = 144; sx = (faceIndex % 4) * sw; sy = Math.floor(faceIndex / 4) * sh; }
         else if (node.source === 'character') {
@@ -3400,7 +4047,7 @@ class DatabaseUserInterfaceEditor {
             sw = image.width / (big ? 3 : 12); sh = image.height / (big ? 4 : 8);
             const n = big ? 0 : node.index;
             sx = ((n % 4) * 3 + 1) * sw; sy = Math.floor(n / 4) * 4 * sh;
-        } else if (node.source === 'icon') { sw = 32; sh = 32; sx = (node.index % 16) * 32; sy = Math.floor(node.index / 16) * 32; }
+        }
         if (node.nineSlice && (node.source === 'picture' || node.source === 'system')) {
             const insets = { left: node.sliceLeft, top: node.sliceTop, right: node.sliceRight, bottom: node.sliceBottom };
             for (const part of DatabaseUserInterfaceEditor.nineSliceSegments(sw, sh, rect.width, rect.height, insets)) {
@@ -3489,16 +4136,16 @@ class DatabaseUserInterfaceEditor {
                 case 'box': this.drawSurface(drawn, drawnRect); break;
                 case 'image': this.drawImageNode(drawn, drawnRect); break;
                 case 'text': this.drawText(drawn, drawnRect); break;
-                case 'button': this.drawSurface(drawn, drawnRect); this.drawText(drawn, drawnRect); break;
+                case 'button': this.drawSurface(drawn, drawnRect); this.drawSelection(drawn, drawnRect); this.drawText(drawn, drawnRect); break;
                 case 'list': this.drawListNode(drawn, drawnRect); break;
                 case 'gauge': this.drawGaugeNode(drawn, drawnRect); break;
                 default: break;
             }
             ctx.globalAlpha = 1;
         }
-        const selected = this.selected();
-        const rect = selected ? rects.get(selected.id) : null;
-        if (rect) {
+        for (const selected of this.selectedNodes()) {
+            const rect = rects.get(selected.id);
+            if (!rect) continue;
             const accent = (typeof ThemeColors !== 'undefined' && ThemeColors.resolve) ? ThemeColors.resolve('--color-accent-bright') : '#4da3ff';
             ctx.save();
             ctx.strokeStyle = accent;
@@ -3508,7 +4155,7 @@ class DatabaseUserInterfaceEditor {
             ctx.setLineDash([]);
             const size = 8 / this.scale;
             ctx.fillStyle = accent;
-            for (const [, hx, hy] of this.handles(rect)) ctx.fillRect(hx - size / 2, hy - size / 2, size, size);
+            for (const [, hx, hy] of (this.selectedNodes().length === 1 ? this.handles(rect) : [])) ctx.fillRect(hx - size / 2, hy - size / 2, size, size);
             ctx.restore();
         }
     }

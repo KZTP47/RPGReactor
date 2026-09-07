@@ -506,6 +506,21 @@ class UIManager {
             const eventEditorModal = document.getElementById('event-editor-modal');
             const eventEditorOpen = eventEditorModal && eventEditorModal.style.display !== 'none';
             const commandModifier = e.ctrlKey || e.metaKey;
+            const propsManager = window.reactor?.projectController?.modelPropsManager || window.reactor?.modelPropsManager;
+            const lightsManager = window.reactor?.projectController?.lightingManager || window.reactor?.lightingManager;
+            const objectTool = lightsManager?.active ? lightsManager : (propsManager?.active ? propsManager : null);
+            if ((e.key === 'Delete' || e.key === 'Backspace') && !isTextInput && !eventEditorOpen
+                && objectTool) {
+                // Claim the key before map shortcuts, including repeats after
+                // the object has gone. Object deletion remains undoable.
+                e.preventDefault();
+                e.stopPropagation();
+                if (objectTool.selectedId) {
+                    if (objectTool === lightsManager) lightsManager.removeSelected();
+                    else propsManager.remove(propsManager.selectedId);
+                }
+                return;
+            }
             if (arrowDelta && !isTextInput && !eventEditorOpen && this.callbacks.getEventManager) {
                 const eventManager = this.callbacks.getEventManager();
                 if (eventManager?.eventMode) {
@@ -651,15 +666,6 @@ class UIManager {
                     }
                 }
 
-                // A selected 3D prop owns the key: Delete removes the prop
-                // (undoable through the map history), never the map behind it.
-                const propsManager = window.reactor?.projectController?.modelPropsManager || window.reactor?.modelPropsManager;
-                if (!isTextInput && !eventEditorOpen && propsManager?.active && propsManager.selectedId) {
-                    e.preventDefault();
-                    propsManager.remove(propsManager.selectedId);
-                    return;
-                }
-
                 if (!isTextInput && !eventEditorOpen && this.callbacks.getEventManager) {
                     const eventManager = this.callbacks.getEventManager();
                     if (eventManager && eventManager.eventMode && eventManager.selectedEvent) {
@@ -713,6 +719,7 @@ class UIManager {
                 const isTextInput = activeElement && (
                     activeElement.tagName === 'INPUT' ||
                     activeElement.tagName === 'TEXTAREA' ||
+                    activeElement.tagName === 'SELECT' ||
                     activeElement.isContentEditable
                 );
 
@@ -1459,10 +1466,10 @@ class UIManager {
                     }
                 }
                 break;
+            case 'media-surfaces':
+                window.reactor?.mediaSurfaceManager?.toggle();
+                break;
             case 'lighting-tool':
-                if (this.callbacks.disableEventModeIfActive) {
-                    this.callbacks.disableEventModeIfActive();
-                }
                 if (typeof window !== 'undefined' && window.reactor?.lightingManager) {
                     window.reactor.lightingManager.toggle();
                 }
@@ -1477,6 +1484,8 @@ class UIManager {
                     if (mapEditor) {
                         const isShadowPen = !mapEditor.shadowPenMode;
                         mapEditor.setShadowPenMode(isShadowPen);
+                        if (!isShadowPen && !mapEditor.currentTool) mapEditor.setTool('pencil');
+                        window.reactor?.syncMapToolButtons?.();
                     }
                 }
                 break;

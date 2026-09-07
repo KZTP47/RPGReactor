@@ -375,6 +375,7 @@ class RegionManager {
 
     // Select a region
     selectRegion(regionId) {
+        if (window.reactor?.mapTool !== 'paint') window.reactor?.tilesetPaletteViewer?.selectLayer('R');
         if (this.mapEditor?.mapStamp) this.mapEditor.clearMapStamp();
         this.selectedRegion = regionId;
 

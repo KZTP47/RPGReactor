@@ -90,7 +90,7 @@ const appVersion = editorPkg.version || '0.0.0';
 const INCLUDE_DIRS = ['src', 'css', 'images', 'libs', 'build-scripts'];
 const INCLUDE_REPOSITORY_DIRS = [path.join('template', 'Demo')];
 const INCLUDE_FILES = [
-    'index.html', 'package.json', 'package-lock.json',
+    'index.html', 'media-surface-panel.html', 'package.json', 'package-lock.json',
     'CHANGELOG.md', 'README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md',
 ];
 
@@ -1259,9 +1259,10 @@ function buildWeb(stageRoot, stagingDir) {
     const runtimeSrc = runtimeCandidates.find(candidate => fs.existsSync(path.join(candidate, 'reactor_main.js')));
     if (runtimeSrc) {
         const requiredRuntimeFiles = [
-            'reactor_main.js', 'reactor_core.js', 'reactor_3d.js', 'reactor_managers.js',
+            'reactor_main.js', 'reactor_json.js', 'reactor_core.js', 'reactor_3d.js', 'reactor_managers.js',
             'reactor_objects.js', 'reactor_scenes.js', 'reactor_sprites.js', 'reactor_picture_extensions.js',
             'reactor_media_surfaces.js', 'reactor_quests.js',
+            'reactor_battle_data.js', 'reactor_battle_room.js', 'reactor_battle_presentation.js', 'reactor_battle_events.js',
             'reactor_windows.js', 'reactor_speech_3d.js', 'reactor_ui.js', 'reactor_mv_compat.js', 'reactor_plugins.js',
             path.join('libs', 'pixi.js'), path.join('libs', 'pixi_compat.js'),
             path.join('libs', 'pako.min.js'), path.join('libs', 'lz-string.js'), path.join('libs', 'localforage.min.js'),

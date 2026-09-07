@@ -483,7 +483,7 @@ class EventPageEditor {
         const tilesetsPath = path.join(currentProject.path, 'data', 'Tilesets.json');
         if (!fs.existsSync(tilesetsPath)) return;
 
-        const tilesets = JSON.parse(fs.readFileSync(tilesetsPath, 'utf8'));
+        const tilesets = RRJson.parse(fs.readFileSync(tilesetsPath));
         const tilesetId = tilemapManager.currentMap.tilesetId || 1;
         const currentTileset = tilesets[tilesetId];
         if (!currentTileset) return;
@@ -924,7 +924,8 @@ class EventPageEditor {
     setPageModelSpec(pageIndex, spec) {
         if (!this.parentEditor.pendingModels) this.parentEditor.pendingModels = [];
         this.parentEditor.pendingModels[pageIndex] = spec;
-        if (this.parentEditor._writePendingModels) this.parentEditor._writePendingModels();
+        // The preview reads pendingModels directly; only Apply/OK commits
+        // this selection to the map alongside the rest of the event draft.
     }
 
     _fitPreviewCanvas(canvas) {
@@ -1037,7 +1038,7 @@ class EventPageEditor {
                     camera.updateProjectionMatrix();
                 }
                 Reactor3D.aimCamera(camera, { x: -0.5, y: 0, z: -0.5 }, { yaw: 0, pitch: 12, distance: 2.4 });
-                renderer.render(scene, camera);
+                Reactor3D.renderScene(renderer, scene, camera);
                 this._modelPreviewRaf = requestAnimationFrame(tick);
             };
             this._modelPreviewRaf = requestAnimationFrame(tick);

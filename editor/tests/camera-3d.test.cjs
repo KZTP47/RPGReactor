@@ -155,7 +155,7 @@ test('a map default camera is written to the sidecar only when it differs from t
 
 test('the runtime, editor, and manifest are wired for the camera module', () => {
     const main = read('runtime/reactor_main.js');
-    assert.match(main, /runtime revision: 20260904.17/);
+    assert.match(main, /runtime revision: 20260906\.19/);
     assert.doesNotMatch(main, /reactor_camera_3d/, 'the camera lives in reactor_3d.js, not a file of its own');
 
     const sprites = read('runtime/reactor_sprites.js');
@@ -181,4 +181,34 @@ test('the runtime, editor, and manifest are wired for the camera module', () => 
     }
     const controller = read('editor/src/ProjectController.js');
     assert.match(controller, /elevation\.setCamera\(target, this\.readMap3DCameraForm\(\)\)/);
+});
+
+test('first/third-person cameras follow click routes and manual movement cancels immediately',()=>{
+    const saved={Game_Player:global.Game_Player,$gameMap:global.$gameMap,$gameTemp:global.$gameTemp};
+    let routed=0,cleared=0;
+    global.Game_Player=function(){};
+    global.Game_Player.prototype.moveByInput=function(){routed++;};
+    global.$gameMap={_reactorCamera3d:{mode:'firstPerson'}};
+    global.$gameTemp={isDestinationValid:()=>true,clearDestination(){cleared++;}};
+    try {
+        cameras.held.clear();cameras.installHooks();
+        const player=new global.Game_Player();
+        player.isMoving=()=>true;player.canMove=()=>true;
+        player.moveByInput();assert.equal(routed,1);assert.equal(cleared,0);
+        global.$gameMap._reactorCamera3d.mode='thirdPerson';player.moveByInput();assert.equal(routed,2);
+        cameras.held.add('forward');player.moveByInput();assert.equal(cleared,1,'keyboard takeover clears even during a step');assert.equal(routed,2);
+    } finally {
+        cameras.held.clear();
+        for(const [key,value] of Object.entries(saved)){if(value===undefined)delete global[key];else global[key]=value;}
+    }
+});
+
+test('isometric directions follow screen axes and combined keys at the displayed yaw',()=>{
+    assert.deepEqual(cameras.moveForView(1,0,45),{horz:6,vert:8},'Up moves toward the top of an isometric view');
+    assert.deepEqual(cameras.moveForView(0,1,45),{horz:6,vert:2},'Right follows screen right');
+    assert.deepEqual(cameras.moveForView(-1,0,45),{horz:4,vert:2});
+    assert.deepEqual(cameras.moveForView(0,-1,45),{horz:4,vert:8});
+    assert.deepEqual(cameras.moveForView(1,1,45),{horz:6,vert:0},'Up+Right maps to one map axis');
+    assert.deepEqual(cameras.moveForView(1,0,135),{horz:6,vert:2},'Rotated isometric cameras use their actual yaw');
+    assert.equal(cameras.moveForView(0,0,45),null);
 });

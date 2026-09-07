@@ -98,7 +98,7 @@ test('every trait section uses the shared chip buttons', () => {
         'DatabaseArmorEditor.js', 'DatabaseStateEditor.js', 'DatabaseEnemyEditor.js'];
     for (const name of editors) {
         const editorSource = source('database', name);
-        assert.match(editorSource, /<th colspan="2">\$\{tt\('Type'\)\}<\/th>/, name);
+        assert.match(editorSource, /<th class="trait-indicator-heading" aria-hidden="true"><\/th><th scope="col">\$\{tt\('Type'\)\}<\/th>/, name);
         assert.doesNotMatch(editorSource, /<th style="width: [34]px;[^>]*><\/th>\s*<th>\$\{tt\('Type'\)\}<\/th>/, name);
         assert.match(editorSource, /class="trait-btn-add rr-btn-chip">/, name);
         assert.match(editorSource, /class="trait-btn-edit rr-btn-chip" disabled>/, name);

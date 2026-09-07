@@ -12,6 +12,7 @@ const workspaceRoot = path.resolve(repoRoot, '..');
 function loadBrowserClass(filePath, className, globals = {}) {
     const source = fs.readFileSync(filePath, 'utf8');
     return vm.runInNewContext(`${source}\n${className};`, {
+        RRJson: require('../src/utils/JsonFiles.js'),
         console,
         process,
         require,

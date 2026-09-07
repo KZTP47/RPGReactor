@@ -195,11 +195,12 @@
             const inner = COMMAND_WIDTH - PADDING * 2;
             const entries = [];
             const partyEnabled = () => condition('script', { script: '$gameParty.exists()' });
-            const actorEnabled = () => condition('script', { script: 'return !!scene.context("selectedActor");' });
-            if (on(0)) entries.push(['item', action('scene', { scene: 'item' }), partyEnabled()]);
+            const actorEnabled = partyEnabled;
+            if (on(0)) entries.push(['item', action('scene', { scene: 'item', contextName: 'selectedActor', chooseActor: true }), partyEnabled()]);
             if (on(1)) entries.push(['skill', action('personalSkill', { contextName: 'selectedActor' }), actorEnabled()]);
             if (on(2)) entries.push(['equip', action('personalEquip', { contextName: 'selectedActor' }), actorEnabled()]);
             if (on(3)) entries.push(['status', action('personalStatus', { contextName: 'selectedActor' }), actorEnabled()]);
+            if (on(4)) entries.push(['formation', action('formation', { contextName: 'selectedActor' }), condition('script', { script: '$gameParty.size() > 1 && $gameSystem.isFormationEnabled()' })]);
             entries.push(['options', action('scene', { scene: 'options' })]);
             if (on(5)) entries.push(['save', action('scene', { scene: 'save' }), condition('script', { script: '!DataManager.isEventTest() && $gameSystem.isSaveEnabled()' })]);
             entries.push(['gameEnd', action('scene', { scene: 'gameEnd' })]);
@@ -212,27 +213,12 @@
             const gold = b.box('Gold', commandX, m.boxY + m.mainAreaTop + m.mainAreaHeight - goldHeight, COMMAND_WIDTH, goldHeight);
             b.text(gold.id, '\\GOLD \\G', PADDING, PADDING, COMMAND_WIDTH - PADDING * 2, { name: 'Gold', align: 'right' });
             const statusWidth = m.boxWidth - COMMAND_WIDTH;
-            const status = b.box('Party', m.boxX, m.boxY + m.mainAreaTop, statusWidth, m.mainAreaHeight);
-            const listWidth = Math.min(280, Math.max(200, Math.floor(statusWidth * 0.35)));
-            b.list('Party members', status.id, 'party', PADDING, PADDING, listWidth - PADDING, m.mainAreaHeight - PADDING * 2, {
-                actorSource: 'partySlot', contextName: 'selectedActor', rowText: '{name}  ' + this.basic(system, 1) + ' {level}'
+            b.list('Actor Panel', 0, 'party', m.boxX, m.boxY + m.mainAreaTop, statusWidth, m.mainAreaHeight, {
+                contextName: 'selectedActor', rowLayout: 'actorPanel', rowHeight: 256, portraitSize: 144,
+                actorFields: ['portrait', 'name', 'class', 'level', 'hp', 'mp', 'exp', 'states']
             });
-            const detailX = listWidth + PADDING;
-            const detailWidth = Math.max(0, statusWidth - detailX - PADDING);
-            const faceSize = Math.min(FACE, Math.max(96, detailWidth - PADDING * 2));
-            b.partyFace(status.id, 0, detailX, PADDING, {
-                name: 'Selected face', width: faceSize, height: faceSize, fit: 'contain',
-                actorSource: 'context', actorContextName: 'selectedActor'
-            });
-            const textX = detailX + faceSize + PADDING;
-            const textWidth = Math.max(120, statusWidth - textX - PADDING);
-            const actor = { actorSource: 'context', actorContextName: 'selectedActor' };
-            b.text(status.id, '{actor.name}', textX, PADDING, textWidth, Object.assign({ name: 'Selected name' }, actor));
-            b.text(status.id, this.basic(system, 0) + ' {actor.level}  {actor.class}', textX, PADDING + LINE, textWidth, Object.assign({ name: 'Selected level and class' }, actor));
-            b.gauge(status.id, 'hp', textX, PADDING + LINE * 2, textWidth, Object.assign({ name: 'Selected HP' }, actor));
-            b.gauge(status.id, 'mp', textX, PADDING + LINE * 3, textWidth, Object.assign({ name: 'Selected MP' }, actor));
-            b.gauge(status.id, 'exp', textX, PADDING + LINE * 4, textWidth, Object.assign({ name: 'Selected EXP', valueFormat: 'percent' }, actor));
             const record = this.record('menu', 'Main Menu', b, { firstFocus });
+            record.menuCommandVersion = 2;
             record.note = 'Baseline of the stock main menu. Bind it in System 2 to replace the main / pause menu; the stock menu stays in use until this one is called or bound.';
             return record;
         },

@@ -160,9 +160,9 @@ class ChangeItemsEditor {
             btn.style.cssText = `
                 flex: 1;
                 padding: 8px;
-                background-color: ${this.operation === value ? 'var(--color-link)' : 'var(--color-bg-input)'};
-                color: var(--color-text-strong);
-                border: 1px solid ${this.operation === value ? 'var(--color-link)' : 'var(--color-border-input)'};
+                background-color: ${this.operation === value ? 'var(--color-accent)' : 'var(--color-bg-input)'};
+                color: ${this.operation === value ? 'var(--color-accent-on)' : 'var(--color-text-strong)'};
+                border: 1px solid ${this.operation === value ? 'var(--color-accent)' : 'var(--color-border-input)'};
                 border-radius: 3px;
                 cursor: pointer;
                 font-size: 12px;
@@ -215,9 +215,9 @@ class ChangeItemsEditor {
             btn.style.cssText = `
                 flex: 1;
                 padding: 8px;
-                background-color: ${this.operandType === value ? 'var(--color-link)' : 'var(--color-bg-input)'};
-                color: var(--color-text-strong);
-                border: 1px solid ${this.operandType === value ? 'var(--color-link)' : 'var(--color-border-input)'};
+                background-color: ${this.operandType === value ? 'var(--color-accent)' : 'var(--color-bg-input)'};
+                color: ${this.operandType === value ? 'var(--color-accent-on)' : 'var(--color-text-strong)'};
+                border: 1px solid ${this.operandType === value ? 'var(--color-accent)' : 'var(--color-border-input)'};
                 border-radius: 3px;
                 cursor: pointer;
                 font-size: 12px;

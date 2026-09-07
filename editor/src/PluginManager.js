@@ -2446,7 +2446,8 @@ class PluginManager {
             padding: 6px 8px;
             border-bottom: 1px solid var(--color-border);
             cursor: pointer;
-            background-color: ${isSelected ? 'var(--color-selection-deep)' : 'var(--color-bg-surface)'};
+            background-color: ${isSelected ? 'var(--color-accent)' : 'var(--color-bg-surface)'};
+            color: ${isSelected ? 'var(--color-accent-on)' : 'var(--color-text)'};
             display: grid;
             grid-template-columns: 20px 1fr 50px;
             align-items: center;
@@ -2481,7 +2482,7 @@ class PluginManager {
             this.pluginListContainer.querySelectorAll('[data-drop-indicator]').forEach(el => el.remove());
             const indicator = document.createElement('div');
             indicator.dataset.dropIndicator = '1';
-            indicator.style.cssText = 'height: 2px; background-color: var(--color-link); pointer-events: none;';
+            indicator.style.cssText = 'height: 2px; background-color: var(--color-accent); pointer-events: none;';
             if (insertBefore) {
                 item.parentNode.insertBefore(indicator, item);
             } else {
@@ -2531,7 +2532,7 @@ class PluginManager {
         // Plugin name
         const nameSpan = document.createElement('span');
         nameSpan.style.cssText = `
-            color: ${plugin.status ? 'var(--color-text-strong)' : 'var(--color-text-muted)'};
+            color: ${isSelected ? 'var(--color-accent-on)' : plugin.status ? 'var(--color-text-strong)' : 'var(--color-text-muted)'};
             font-size: 13px;
             overflow: hidden;
             text-overflow: ellipsis;

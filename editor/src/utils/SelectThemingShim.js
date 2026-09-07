@@ -320,6 +320,9 @@
     };
 
     const wrap = (selectEl) => {
+        // Mutation records can outlive a select removed by an inspector redraw.
+        // Leave detached nodes unmarked so reattaching them can still wrap them.
+        if (!selectEl.isConnected || !selectEl.parentNode) return;
         if (WRAPPED.has(selectEl)) return;
         if (selectEl.dataset.noShim === '1') return;
         WRAPPED.add(selectEl);

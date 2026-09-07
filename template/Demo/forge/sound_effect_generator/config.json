@@ -31,7 +31,8 @@
   },
   "mode": "pattern",
   "pattern": [
-    "7,2"
+    "7,2",
+    "7,7"
   ],
   "bpm": 120,
   "jitterStrength": "medium"

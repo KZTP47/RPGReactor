@@ -28,7 +28,7 @@ test('no dialog closes from a click on its backdrop', () => {
                     && allowed.some(ok => ok.test(match[0]));
                 // Exiting an in-canvas editing mode by clicking off the
                 // surface is a tool gesture, not a dialog dismissal.
-                const isCanvasTool = relative.endsWith('VideoSurfaceEditor.js') && /cancelEdit\(\)/.test(match[0]);
+                const isCanvasTool = relative.endsWith('MediaSurfaceEditor.js') && /cancelEdit\(\)/.test(match[0]);
                 if (!isUIManagerConfirm && !isCanvasTool) offenders.push(`${relative}: ${match[0].trim()}`);
             }
         }

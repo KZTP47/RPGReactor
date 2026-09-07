@@ -231,7 +231,7 @@ class TilemapManager {
             if (typeof this.fs.statSync === 'function' && this.fs.statSync(mapPath).size > maxMapBytes) {
                 throw new RangeError(`Map ${mapId} exceeds the ${maxMapBytes}-byte editor safety limit`);
             }
-            const mapData = JSON.parse(this.fs.readFileSync(mapPath, 'utf8'));
+            const mapData = RRJson.parse(this.fs.readFileSync(mapPath));
             const validMapSize = typeof globalThis.rrIsMapSizeSupported === 'function'
                 ? globalThis.rrIsMapSizeSupported(mapData.width, mapData.height)
                 : Number.isInteger(mapData.width) && Number.isInteger(mapData.height) &&
@@ -3330,7 +3330,7 @@ class TilemapManager {
                 this.unreadableMapSidecars.delete(filePath);
                 return false;
             }
-            const sidecar = JSON.parse(this.fs.readFileSync(filePath, 'utf8'));
+            const sidecar = RRJson.parse(this.fs.readFileSync(filePath));
             if (sidecar && typeof sidecar === 'object' && !Array.isArray(sidecar)) {
                 mapData.reactor3d = sidecar;
                 this.unreadableMapSidecars.delete(filePath);
@@ -3451,7 +3451,7 @@ class TilemapManager {
     bumpVersionId() {
         try {
             const systemPath = this.path.join(this.projectPath, 'data', 'System.json');
-            const system = JSON.parse(this.fs.readFileSync(systemPath, 'utf8'));
+            const system = RRJson.parse(this.fs.readFileSync(systemPath));
             system.versionId = Math.floor(Math.random() * 100000000);
             this._writeFileAtomic(this.fs, systemPath, JSON.stringify(system, null, 2));
         } catch (error) {
@@ -3492,7 +3492,7 @@ class TilemapManager {
                 return false;
             }
 
-            const mapData = JSON.parse(this.fs.readFileSync(mapPath, 'utf8'));
+            const mapData = RRJson.parse(this.fs.readFileSync(mapPath));
             const { width, height, data, tilesetId } = mapData;
 
             // Load tileset

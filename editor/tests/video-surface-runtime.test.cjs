@@ -463,3 +463,48 @@ test('the image owner path skips playback machinery and gates on decode', () => 
     assert.match(source, /new PIXI\.CanvasSource\(\{ resource: canvas \}\)/);
     assert.match(source, /if \(this\.isImage \|\| !video\) return;/, 'updateAudio skips stills');
 });
+
+test('map decorations seed a map once and remain addressable by normal transform and stop commands', () => {
+    const previous=global.$gameMap;global.$gameMap={mapId:()=>7};
+    try {
+        const manager=new runtime.VideoSurfaceManager();
+        manager.seedMapSurfaces({reactor3d:{mediaSurfaces:[{id:81,movie:'wall.png',x:4,y:6,z:3,target:'map',wait:true}]}});
+        assert.equal(manager.descriptor(81).file,'wall.png');assert.equal(manager.descriptor(81).wait,false);
+        manager.transform({id:81,z:5});assert.equal(manager.descriptor(81).z,5);
+        manager.stop({id:81});assert.equal(manager.descriptor(81),null);
+        manager.teardownRuntime('suspend');assert.equal(manager.descriptor(81),null);
+        manager.seedMapSurfaces({});assert.equal(manager.descriptor(81),null);
+    } finally {global.$gameMap=previous;}
+});
+
+test('media surface runtime names retain identical legacy APIs and serialized command contracts', () => {
+    assert.equal(globalThis.RPGReactorMediaSurfaces, runtime);
+    assert.equal(globalThis.RPGReactorVideoSurfaces, runtime);
+    assert.equal(runtime.MediaSurfaceOwner, runtime.VideoSurfaceOwner);
+    assert.equal(runtime.MediaSurfaceManager, runtime.VideoSurfaceManager);
+    assert.equal(runtime.STORE_KEY, '_reactorVideoSurfaces');
+    assert.equal(runtime.WAIT_MODE, 'reactorVideoSurface');
+    const vm = require('node:vm'), commands = new Map();
+    vm.runInNewContext(source, {PluginManager:{registerCommand(plugin, name, callback){commands.set(`${plugin}:${name}`, callback);}}});
+    assert.deepEqual([...commands.keys()], ['RPGReactor:ShowVideoSurface','RPGReactor:TransformVideoSurface','RPGReactor:StopVideoSurface']);
+});
+
+test('3D corner shapes survive sparse transforms and saved descriptors without changing legacy rectangles', () => {
+    const quad=[{x:-.7,y:-.8},{x:.5,y:-.5},{x:.5,y:.5},{x:-.5,y:.5}];
+    const args={id:1,file:'display.png',target:'map',worldCorners:JSON.stringify(quad)};
+    const original=runtime.normalizeShowArgs(args);assert.deepEqual(original.worldCorners,quad);
+    assert.deepEqual(runtime.normalizeShowArgs(JSON.parse(JSON.stringify(original))).worldCorners,quad);
+    const changed=runtime.normalizeTransformArgs({id:1,opacity:100},original);assert.deepEqual(changed.worldCorners,quad);
+    changed.worldCorners[0].x=2;assert.equal(original.worldCorners[0].x,-.7);
+    assert.equal(runtime.normalizeTransformArgs({id:1,worldCorners:null},original).worldCorners,undefined);
+    for(const invalid of [[],[{}, {}, {}, {}],'broken'])assert.equal(runtime.normalizeShowArgs({...args,worldCorners:invalid}),null);
+    const legacy=runtime.normalizeShowArgs({id:1,file:'display.png',corners:quad});assert.equal(legacy.worldCorners,undefined);
+});
+
+test('3D media geometry pins UV corners to their own vertices and leaves legacy geometry untouched', () => {
+    const points=[],position={setXYZ(i,x,y,z){points[i]=[x,y,z];}},calls=[];
+    const geometry={getAttribute:()=>position,computeVertexNormals(){calls.push('normals');},computeBoundingBox(){calls.push('box');},computeBoundingSphere(){calls.push('sphere');}};
+    assert.equal(runtime.applyWorldCorners(geometry,null,4,2),geometry);assert.equal(calls.length,0);
+    runtime.applyWorldCorners(geometry,[{x:-.7,y:-.8},{x:.5,y:-.5},{x:.5,y:.5},{x:-.5,y:.5}],4,2);
+    assert.deepEqual(points,[[-2.8,1.6,0],[2,1,0],[-2,-1,0],[2,-1,0]]);assert.equal(position.needsUpdate,true);assert.deepEqual(calls,['normals','box','sphere']);
+});

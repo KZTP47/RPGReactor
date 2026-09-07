@@ -308,13 +308,13 @@
       "volume": 90
     },
     {
-      "name": "Evasion1",
+      "name": "Miss3",
       "pan": 0,
       "pitch": 100,
       "volume": 90
     },
     {
-      "name": "Evasion2",
+      "name": "Miss2",
       "pan": 0,
       "pitch": 100,
       "volume": 90
@@ -564,7 +564,7 @@
       "actorId": 1,
       "level": 1,
       "equips": [
-        2,
+        0,
         1,
         2,
         3,
@@ -572,35 +572,13 @@
       ]
     },
     {
-      "actorId": 4,
+      "actorId": 2,
       "level": 1,
       "equips": [
-        31,
         0,
         0,
-        5,
-        0
-      ]
-    },
-    {
-      "actorId": 6,
-      "level": 1,
-      "equips": [
-        7,
         0,
-        65,
-        21,
-        0
-      ]
-    },
-    {
-      "actorId": 7,
-      "level": 1,
-      "equips": [
-        7,
-        0,
-        0,
-        20,
+        9,
         0
       ]
     }
@@ -642,7 +620,7 @@
     "",
     ""
   ],
-  "versionId": 70032471,
+  "versionId": 23423339,
   "victoryMe": {
     "name": "Victory1",
     "pan": 0,
@@ -680,5 +658,7 @@
   "iconSize": 32,
   "optSplashScreen": false,
   "optMessageSkip": true,
-  "startDirection": 8
+  "startDirection": 8,
+  "reactorTitleInterfaceId": 1,
+  "reactorMenuInterfaceId": 2
 }

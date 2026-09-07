@@ -137,8 +137,8 @@ class ScrollMapEditor {
             btn.style.cssText = `
                 width: 50px;
                 height: 50px;
-                background-color: ${dir === this.direction ? 'var(--color-link)' : (dir ? 'var(--color-bg-input)' : 'transparent')};
-                color: ${dir ? 'var(--color-text-strong)' : 'transparent'};
+                background-color: ${dir === this.direction ? 'var(--color-accent)' : (dir ? 'var(--color-bg-input)' : 'transparent')};
+                color: ${dir === this.direction ? 'var(--color-accent-on)' : dir ? 'var(--color-text-strong)' : 'transparent'};
                 border: ${dir ? '1px solid var(--color-border-input)' : 'none'};
                 border-radius: 3px;
                 cursor: ${dir ? 'pointer' : 'default'};

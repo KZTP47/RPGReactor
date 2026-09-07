@@ -285,10 +285,9 @@ test('events can only be picked with the event tool up', () => {
     // question up front now, because it has a second thing to refuse — the
     // menu on bare ground, which offers to create an event and so has no more
     // business appearing outside event mode than the one on an event does.
-    const doubleClick = source.slice(source.indexOf('this._onDoubleClick = event =>'));
-    assert.match(doubleClick.slice(0, doubleClick.indexOf('this._onWheel')),
-        /this\.canSelectEvents\(\) && this\.eventAt\(event\.clientX, event\.clientY\)/,
-        'double-click to open');
+    const doubleClick = methodBody('handleDoubleClick');
+    assert.ok(doubleClick.indexOf('canSelectEvents') < doubleClick.indexOf('this.eventAt('));
+    assert.match(doubleClick, /activateEventAt\(tile.x, tile.y\)/, 'empty cells create events through the normal editor');
 
     const contextMenu = source.slice(source.indexOf('this._onContextMenu = event =>'));
     const body = contextMenu.slice(0, contextMenu.indexOf('this._onPointerLeave'));
@@ -477,4 +476,18 @@ test('right-clicking bare ground offers a new event, as it does in 2D', () => {
     const wiring = main.slice(main.indexOf('this.mapEditor3D.onMapContextMenu'));
     assert.match(wiring, /this\.eventManager\.selectTile\(tile\.x, tile\.y\)/);
     assert.match(wiring, /getEventAt\(tile\.x, tile\.y\)/);
+});
+
+test('3D empty-tile click and activation use normal event creation without reframing the camera', () => {
+    const vm=require('node:vm'),Type=vm.runInNewContext(`${source};MapEditor3D;`,{console,window:{}});
+    const view=Object.create(Type.prototype),selected=[],activated=[],edited=[];
+    const manager={eventMode:true,selectTile:(x,y)=>selected.push([x,y]),activateEventAt:(x,y)=>activated.push([x,y])};
+    view.projectController={eventManager:manager};view.eventManager=()=>manager;
+    view.eventAt=()=>null;view.tileAt=()=>({x:4,y:6});view.select=mesh=>mesh?.userData.event||null;
+    view.onEventActivated=e=>edited.push(e);view.currentMap=()=>({id:2});let framed=0;view.frameMap=()=>framed++;
+    view.handleClick(10,20);assert.deepEqual(selected,[[4,6]]);
+    view.handleDoubleClick({clientX:10,clientY:20,preventDefault(){}});assert.deepEqual(activated,[[4,6]]);assert.equal(framed,0);
+    const event={id:1};view.eventAt=()=>({userData:{event}});view.handleDoubleClick({clientX:10,clientY:20,preventDefault(){}});assert.deepEqual(edited,[event]);assert.equal(activated.length,1);
+    manager.eventMode=false;view.handleDoubleClick({clientX:10,clientY:20});assert.equal(framed,1);assert.equal(activated.length,1);
+    view.projectController.mediaSurfacePreviewManager={authoring:{}};view.handleDoubleClick({clientX:10,clientY:20});assert.equal(framed,1);
 });

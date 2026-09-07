@@ -38,6 +38,10 @@ class EventEditor {
             this.cancelBaseline = this._clone(event);
             this.currentEvent = this._clone(event);
             this.onCommit = options?.onCommit || null;
+            this.onAfterCommit = options?.onAfterCommit || null;
+            this.needsInitialCommit = options?.isNew === true;
+            this.pendingZ = this.needsInitialCommit ? 0 : this._eventZ(event.id);
+            this.pendingZBaseline = this.pendingZ;
             this.onCancel = options?.onCancel || null;
             this._loadPendingModels(event);
         }
@@ -129,7 +133,9 @@ class EventEditor {
     cancelChanges() {
         if (this.cancelBaseline) this.currentEvent = this._clone(this.cancelBaseline);
         this.pendingModels = this._clone(this.pendingModelsBaseline);
-        this._writePendingModels();
+        this.pendingZ = this.pendingZBaseline;
+        // Drafts never write the sidecar until committed. Cancelling must not
+        // restore an old height/model over a subsequent map edit.
         if (this.onCancel) this.onCancel(this.sourceEvent);
         this._hideEditor();
     }
@@ -189,7 +195,7 @@ class EventEditor {
 
     _loadPendingModels(event) {
         const pages = (event && event.pages) || [];
-        this.pendingModels = pages.map((_, index) => this._storedModelSpec(event && event.id, index));
+        this.pendingModels = pages.map((_, index) => this.needsInitialCommit ? null : this._storedModelSpec(event && event.id, index));
         this.pendingModelsBaseline = this._clone(this.pendingModels);
     }
 
@@ -271,16 +277,20 @@ class EventEditor {
         const eventChanged = JSON.stringify(committed) !== JSON.stringify(this.cancelBaseline);
         const modelsChanged = zChanged
             || JSON.stringify(this.pendingModels) !== JSON.stringify(this.pendingModelsBaseline);
-        if (eventChanged) {
+        const changed = this.needsInitialCommit || eventChanged || modelsChanged;
+        if (changed) {
             if (this.onCommit) {
-                if (this.onCommit(this.sourceEvent, committed) === false) return false;
+                if (this.onCommit(this.sourceEvent, committed, { modelsChanged }) === false) return false;
             } else {
                 this._replaceObject(this.sourceEvent, committed);
             }
         }
-        if (eventChanged || modelsChanged) this._writePendingModels();
+        if (changed) this._writePendingModels();
+        this.needsInitialCommit = false;
+        this.pendingZBaseline = this.pendingZ;
         this.pendingModelsBaseline = this._clone(this.pendingModels);
         this.cancelBaseline = this._clone(committed);
+        if (changed) this.onAfterCommit?.();
         return true;
     }
 
@@ -330,7 +340,7 @@ class EventEditor {
                         style="width: 64px; padding: 3px 6px; background: var(--color-bg-input-alt); color: var(--color-text); border: 1px solid var(--color-border-input); border-radius: 3px; font-size: 12px;">
                     <span>Y:</span><input type="number" id="event-position-y" data-no-stepper min="0" step="1" value="${event.y}"
                         style="width: 64px; padding: 3px 6px; background: var(--color-bg-input-alt); color: var(--color-text); border: 1px solid var(--color-border-input); border-radius: 3px; font-size: 12px;">
-                    <span>Z:</span><input type="number" id="event-position-z" data-no-stepper min="0" step="0.25" value="${this._eventZ(event.id)}"
+                    <span>Z:</span><input type="number" id="event-position-z" data-no-stepper min="0" step="0.25" value="${this.pendingZ ?? this._eventZ(event.id)}"
                         style="width: 64px; padding: 3px 6px; background: var(--color-bg-input-alt); color: var(--color-text); border: 1px solid var(--color-border-input); border-radius: 3px; font-size: 12px;">
                 </div>
             </div>

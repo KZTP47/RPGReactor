@@ -221,7 +221,10 @@ test('replacing a shadow mask unbinds its source before destruction', () => {
     } finally { if (saved === undefined) delete global.PIXI; else global.PIXI = saved; }
 });
 
-test('flat model materials keep their own lighting when another preview changes shared uniforms', () => {
+test('flat model materials keep their own lighting when another preview changes shared uniforms', t => {
+    const previous = global.Reactor3D;
+    global.Reactor3D = { SHADER_LIGHTS: 32 };
+    t.after(() => { if (previous === undefined) delete global.Reactor3D; else global.Reactor3D = previous; });
     const sharedCount = { value: 12 }, sharedAmbient = { value: [0.2, 0.1, 0.3] };
     const material = { __reactorLit: true, customProgramCacheKey: () => 'model',
         onBeforeCompile(shader) { shader.uniforms = { rrLightCount: sharedCount, rrAmbient: sharedAmbient }; } };
@@ -232,4 +235,35 @@ test('flat model materials keep their own lighting when another preview changes 
     assert.equal(shader.uniforms.rrLightCount.value, 0);
     assert.deepEqual(Array.from(shader.uniforms.rrAmbient.value), [1, 1, 1]);
     assert.notEqual(shader.uniforms.rrAmbient, sharedAmbient);
+});
+
+
+test('flat surfaces use world-height lights even when their floor footprint is empty', t => {
+    const previous = global.Reactor3D;
+    const R = require('../../runtime/reactor_3d.js');
+    global.Reactor3D = R;
+    t.after(() => { if (previous === undefined) delete global.Reactor3D; else global.Reactor3D = previous; });
+    const preview = new Preview({});
+    const entry = { prop: { x: 20, y: 30, z: 4 }, radius: 8,
+        lighting: preview.isolateLighting({ traverse() {} }) };
+    const light = { type: 'spot', x: 21, y: 31, height: 10, radius: 5,
+        colour: 0xff0080, intensity: 2, yaw: 70, pitch: -35, angle: 60 };
+    assert.equal(FlatLightField2D.bounds(light, { width: 100, height: 100 }), null);
+    const shared = R.lightUniforms(), before = Array.from(shared.rrLightPos.value);
+    preview.syncLighting(entry, [light], { intensity: 0.2, colour: 0xffffff });
+    assert.equal(entry.lighting.rrLightCount.value, 1);
+    assert.deepEqual(Array.from(entry.lighting.rrLightPos.value.slice(0, 4)), [1, 6, 1.5, 5]);
+    assert.ok(entry.lighting.rrLightAim.value[0] < 0, 'editor yaw is converted to runtime yaw');
+    assert.deepEqual(Array.from(shared.rrLightPos.value), before, 'packing never mutates another viewport');
+    entry.dirty = false;
+    preview.syncLighting(entry, [light], { intensity: 0.2, colour: 0xffffff });
+    assert.equal(entry.dirty, false, 'unchanged light fields reuse their texture');
+    preview.syncLighting(entry, [{ ...light, intensity: 0.5 }], { intensity: 0.2, colour: 0xffffff });
+    assert.equal(entry.dirty, true, 'flicker repaints a static model');
+    entry.prop.x = 100;
+    preview.syncLighting(entry, [light], { intensity: 0.2, colour: 0xffffff });
+    assert.equal(entry.lighting.rrLightCount.value, 0, 'moving beyond reach removes illumination');
+    entry.prop.x = 20;
+    preview.syncLighting(entry, [{ ...light, shadowSource: { x: 20.5, y: 6, z: 30.5 } }], { intensity: 1 });
+    assert.deepEqual(Array.from(entry.lighting.rrLightPos.value.slice(0, 3)), [0, 2, 0], 'carried lights use their world anchor rather than projected screen coordinates');
 });

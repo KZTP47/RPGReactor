@@ -46,6 +46,10 @@ function createElement(tagName) {
         listeners: {},
         disabled: false,
 
+        get isConnected() {
+            let root = this; while (root.parentNode) root = root.parentNode;
+            return root.tagName === 'DOCUMENT';
+        },
         get children() {
             return this.childNodes.filter(node => node.tagName);
         },

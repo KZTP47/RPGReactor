@@ -12,6 +12,7 @@ quietConsole.error = () => {};
 function loadBrowserClass(fileName, className, globals = {}) {
     const source = fs.readFileSync(path.join(editorRoot, 'src', fileName), 'utf8');
     return vm.runInNewContext(`${source}\n${className};`, {
+        RRJson: require('../src/utils/JsonFiles.js'),
         console: quietConsole,
         process,
         require,
@@ -53,7 +54,7 @@ test('DatabaseManager saveAllData propagates a file failure after attempting all
 
     assert.equal(await manager.saveAllData('/project'), false);
     // A project that never authored a user interface or a quest gains no file for either.
-    const optional = ['UserInterfaces.json', 'ReactorQuests.json'];
+    const optional = ['UserInterfaces.json', 'ReactorQuests.json', 'ActionSequences.json'];
     const expected = Array.from(manager.dataFiles, (entry) => entry[1]).filter((name) => !optional.includes(name));
     assert.deepEqual(attempted, expected);
     assert.equal(attempted.includes('MapInfos.json'), false);
@@ -62,7 +63,7 @@ test('DatabaseManager saveAllData propagates a file failure after attempting all
     manager.data.userInterfaces = [null, { id: 1, name: 'Menu', nodes: [] }];
     manager.data.quests = [null, { id: 1, name: 'Errand', objectives: [], rewards: [] }];
     await manager.saveAllData('/project');
-    assert.deepEqual(attempted, Array.from(manager.dataFiles, (entry) => entry[1]));
+    assert.deepEqual(attempted, Array.from(manager.dataFiles, (entry) => entry[1]).filter(name => name !== 'ActionSequences.json'));
 });
 
 test('DatabaseManager rejects malformed JSON without replacing the loaded database', async () => {

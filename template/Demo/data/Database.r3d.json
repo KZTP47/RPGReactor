@@ -67,5 +67,19 @@
       "faces": {},
       "texture": ""
     }
+  },
+  "enemies": {
+    "1": {
+      "name": "Actors/Psychronic-Mascot",
+      "file": "Psychronic-Mascot",
+      "ext": ".glb",
+      "size": 2,
+      "scale": 1,
+      "yaw": 0,
+      "pitch": 0,
+      "roll": 0,
+      "faces": {},
+      "texture": ""
+    }
   }
 }

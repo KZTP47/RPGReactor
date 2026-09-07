@@ -4,10 +4,10 @@
   "events": {
     "2": {
       "0": {
-        "name": "Actors/Psychronic-Mascot",
-        "file": "Psychronic-Mascot",
+        "name": "Map-Objects/Door-01",
+        "file": "Door-01",
         "ext": ".glb",
-        "size": 2,
+        "size": 5,
         "scale": 1,
         "yaw": 0,
         "pitch": 0,
@@ -10143,6 +10143,7 @@
     ]
   },
   "eventPreviews": {
+    "2": 0,
     "3": 0,
     "22": 0,
     "23": 0,
@@ -10172,8 +10173,12 @@
       "size": 20,
       "scale": 1,
       "passable": false,
+      "animations": [],
       "animation": "",
       "repeat": true,
+      "effects": [
+        "Core"
+      ],
       "effect": "Core"
     },
     {
@@ -10192,8 +10197,12 @@
       "size": 3.28,
       "scale": 1,
       "passable": false,
+      "animations": [],
       "animation": "",
       "repeat": false,
+      "effects": [
+        "Animated Screen"
+      ],
       "effect": "Animated Screen"
     },
     {
@@ -10212,8 +10221,10 @@
       "size": 3.28,
       "scale": 1,
       "passable": false,
+      "animations": [],
       "animation": "",
       "repeat": false,
+      "effects": [],
       "effect": ""
     },
     {
@@ -10232,8 +10243,10 @@
       "size": 3.3,
       "scale": 1,
       "passable": false,
+      "animations": [],
       "animation": "",
       "repeat": false,
+      "effects": [],
       "effect": ""
     },
     {
@@ -10252,9 +10265,17 @@
       "size": 9.2,
       "scale": 1,
       "passable": false,
+      "animations": [
+        "MonitorArmExtend"
+      ],
       "animation": "MonitorArmExtend",
       "repeat": true,
-      "effect": ""
+      "animationSpeed": 105,
+      "effects": [
+        "Static Video",
+        "Psychronic Logo"
+      ],
+      "effect": "Static Video"
     },
     {
       "id": 7,
@@ -10272,8 +10293,12 @@
       "size": 9.2,
       "scale": 1,
       "passable": false,
+      "animations": [
+        "MonitorArmExtend"
+      ],
       "animation": "MonitorArmExtend",
       "repeat": true,
+      "effects": [],
       "effect": ""
     },
     {
@@ -10292,8 +10317,12 @@
       "size": 9.2,
       "scale": 1,
       "passable": false,
+      "animations": [
+        "MonitorArmExtend"
+      ],
       "animation": "MonitorArmExtend",
       "repeat": true,
+      "effects": [],
       "effect": ""
     },
     {
@@ -10312,8 +10341,13 @@
       "size": 9.2,
       "scale": 1,
       "passable": false,
+      "animations": [
+        "MonitorArmExtend"
+      ],
       "animation": "MonitorArmExtend",
       "repeat": true,
+      "animationSpeed": 90,
+      "effects": [],
       "effect": ""
     },
     {
@@ -10332,8 +10366,12 @@
       "size": 9.2,
       "scale": 1,
       "passable": false,
+      "animations": [
+        "MonitorArmExtend"
+      ],
       "animation": "MonitorArmExtend",
       "repeat": true,
+      "effects": [],
       "effect": ""
     },
     {
@@ -10352,29 +10390,13 @@
       "size": 9.2,
       "scale": 1,
       "passable": false,
+      "animations": [
+        "MonitorArmExtend"
+      ],
       "animation": "MonitorArmExtend",
       "repeat": true,
+      "effects": [],
       "effect": ""
-    },
-    {
-      "id": 12,
-      "name": "Map-Objects/RPGReactor-MonitorArm",
-      "ext": ".glb",
-      "file": "RPGReactor-MonitorArm",
-      "texture": "",
-      "x": 15.92,
-      "y": 0,
-      "z": 9.56,
-      "yaw": 0.6,
-      "pitch": 89.8,
-      "roll": 6.4,
-      "direction": 2,
-      "size": 9.2,
-      "scale": 1,
-      "passable": false,
-      "animation": "MonitorArmExtend",
-      "repeat": true,
-      "effect": "Gentle Screen Glow"
     },
     {
       "id": 13,
@@ -10392,17 +10414,48 @@
       "size": 9.2,
       "scale": 1,
       "passable": false,
+      "animations": [
+        "MonitorArmExtend"
+      ],
       "animation": "MonitorArmExtend",
       "repeat": true,
+      "effects": [],
       "effect": ""
+    },
+    {
+      "id": 14,
+      "name": "Map-Objects/Tree-02",
+      "ext": ".glb",
+      "file": "Tree-02",
+      "texture": "",
+      "x": 28.35,
+      "y": 44.03,
+      "z": 0,
+      "yaw": 0.6,
+      "pitch": 52.2,
+      "roll": 6.4,
+      "direction": 2,
+      "size": 9.2,
+      "scale": 1,
+      "passable": false,
+      "animations": [
+        "MonitorArmExtend"
+      ],
+      "animation": "MonitorArmExtend",
+      "repeat": true,
+      "effects": [
+        "Gentle Screen Glow"
+      ],
+      "effect": "Gentle Screen Glow"
     }
   ],
   "camera": {
-    "mode": "firstPerson"
+    "mode": "thirdPerson"
   },
   "eventZ": {
-    "2": 20,
-    "17": 15.38
+    "1": 20,
+    "17": 15.38,
+    "26": 20
   },
   "lights": [
     {
@@ -10563,5 +10616,50 @@
   "lighting": {
     "ambient": 0.22,
     "ambientColour": "#9db4ff"
-  }
+  },
+  "mediaSurfaces": [
+    {
+      "id": 1,
+      "target": "map",
+      "movie": "Starshift Rebellion Poster.png",
+      "x": 13.32,
+      "y": -0.16,
+      "z": 5.89,
+      "width": 237.70781747435444,
+      "height": 320,
+      "opacity": 255,
+      "loop": true,
+      "muted": true,
+      "volume": 100,
+      "playbackRate": 1,
+      "corners": [
+        {
+          "x": -118.85390873717722,
+          "y": -160
+        },
+        {
+          "x": 118.85390873717722,
+          "y": -160
+        },
+        {
+          "x": 118.85390873717722,
+          "y": 160
+        },
+        {
+          "x": -118.85390873717722,
+          "y": 160
+        }
+      ],
+      "rotationX": -0.2,
+      "rotationY": 0,
+      "rotationZ": 0,
+      "scaleX": 1,
+      "scaleY": 1,
+      "layer": 3,
+      "depth": 0,
+      "cullingDistance": 0,
+      "scanlines": 0,
+      "wait": "false"
+    }
+  ]
 }

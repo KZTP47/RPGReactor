@@ -2,6 +2,10 @@
 // This is the main orchestrator that coordinates all subsystems
 
 class RPGReactor {
+    // Legacy integrations retain access to the same preview manager.
+    get videoSurfacePreviewManager() { return this.mediaSurfacePreviewManager; }
+    set videoSurfacePreviewManager(value) { this.mediaSurfacePreviewManager = value; }
+
     constructor() {
         this.instanceBroker = typeof EditorInstanceBroker !== 'undefined'
             ? EditorInstanceBroker.startForCurrentApp()
@@ -29,7 +33,7 @@ class RPGReactor {
         this.tilesetEditor = null;
         this.tilesetPaletteViewer = null;
         this.eventManager = null;
-        this.videoSurfacePreviewManager = null;
+        this.mediaSurfacePreviewManager = null;
 
         // PERFORMANCE: Cache last displayed coordinates to avoid unnecessary DOM updates
         this.lastDisplayedCoords = { x: null, y: null };
@@ -184,22 +188,6 @@ class RPGReactor {
                 this.projectController.bindMapEditorSurfaces();
             }
 
-            /*
-             * A palette tab that is already open is opened again.
-             *
-             * The Regions and Objects tabs do their setting up when they are
-             * *selected* — build their panel, make their overlay layer, show
-             * it. Nothing selects a tab on a project switch, because it is
-             * already the selected one, so the surfaces rebuilt for the new
-             * project arrived with no panel and no layer to draw on. Painting
-             * went nowhere and nothing appeared, on the one tab an author who
-             * uses it leaves open.
-             */
-            const openTab = this.tilesetPaletteViewer?.currentLayer;
-            if (openTab === 'O') this.tilesetPaletteViewer.onObject3DTabSelected?.();
-            else if (openTab === 'R') this.tilesetPaletteViewer.onRegionTabSelected?.();
-            else if (openTab === 'M') this.tilesetPaletteViewer.onModelPropsTabSelected?.();
-
             // Re-setup map interaction for the new map (important when switching maps)
             if (this.mapEditor) {
                 this.mapEditor.setupMapInteraction();
@@ -275,32 +263,16 @@ class RPGReactor {
                 };
             }
 
-            // Restore event mode state if it was on
-            if (wasInEventMode && this.eventManager) {
-                this.eventManager.setEventMode(true);
-                if (this.mapEditor) {
-                    this.mapEditor.setEnabled(false);
-                }
-                // Make sure button shows active state
-                const button = document.getElementById('toolbar-event-manager-btn');
-                if (button) {
-                    button.classList.add('active');
-                }
-            } else {
-                // Make sure tileset mode is properly enabled
-                if (this.mapEditor) {
-                    this.mapEditor.setEnabled(true);
-                }
-                // Make sure button shows inactive state
-                const button = document.getElementById('toolbar-event-manager-btn');
-                if (button) {
-                    button.classList.remove('active');
-                }
-            }
+            // Reapply ownership after binding the new map; loading a map must
+            // not silently turn painting back on underneath another tool.
+            if (wasInEventMode && this.eventManager) this.eventManager.setEventMode(true);
+            else if (this.lightingManager?.active) this.claimMapTool('lighting');
+            else if (this.tilesetPaletteViewer) this.tilesetPaletteViewer.selectLayer(this.tilesetPaletteViewer.currentLayer || 'A');
+            else this.claimMapTool('paint');
 
             // Update map info banner
             this.updateMapInfoBanner();
-            this.videoSurfacePreviewManager?.setMap(
+            this.mediaSurfacePreviewManager?.setMap(
                 this.projectController.getTilemapManager()?.currentMap,
                 this.projectController.getTilemapManager()
             );
@@ -334,6 +306,7 @@ class RPGReactor {
             // 2D map highlight follow a pick made in 3D, the same way they
             // follow one made anywhere else.
             if (event && this.eventManager) this.eventManager.selectEventById(event.id);
+            else this.eventManager?.selectEvent(null);
             this.uiManager.updateStatus(event
                 ? `${String(event.id).padStart(3, '0')}: ${event.name || ''}`
                 : '');
@@ -353,12 +326,14 @@ class RPGReactor {
             this.eventManager.showContextMenu(clientX, clientY, tile.x, tile.y,
                 this.eventManager.getEventAt(tile.x, tile.y));
         };
-        this.videoSurfacePreviewManager = new VideoSurfacePreviewManager(
+        this.mediaSurfacePreviewManager = new MediaSurfacePreviewManager(
             this.projectController,
             this.databaseManager
         );
-        this.projectController.videoSurfacePreviewManager = this.videoSurfacePreviewManager;
-        this.videoSurfacePreviewManager.setEnabled(this.optionsManager.getShowVideoPreviews());
+        this.projectController.mediaSurfacePreviewManager = this.mediaSurfacePreviewManager;
+        this.mediaSurfaceManager = new MediaSurfaceManager(this.projectController, this.databaseManager);
+        this.projectController.mediaSurfaceManager = this.mediaSurfaceManager;
+        this.mediaSurfacePreviewManager.setEnabled(this.optionsManager.getShowVideoPreviews());
         // The height brush's controls only mean anything while it is on, so
         // they are bound once here and shown with it.
 
@@ -370,7 +345,7 @@ class RPGReactor {
         });
         document.getElementById('map-video-previews')?.addEventListener('change', (event) => {
             this.optionsManager.setShowVideoPreviews(event.currentTarget.checked);
-            this.videoSurfacePreviewManager?.setEnabled(event.currentTarget.checked);
+            this.mediaSurfacePreviewManager?.setEnabled(event.currentTarget.checked);
         });
         const videoCheckbox = document.getElementById('map-video-previews');
         if (videoCheckbox) videoCheckbox.checked = this.optionsManager.getShowVideoPreviews();
@@ -607,6 +582,7 @@ class RPGReactor {
     async applyMap3DViewPreference(enabled) {
         if (!this.mapEditor3D) return false;
         const requested = enabled === true;
+        if (requested !== this.mapEditor3D.enabled) this.mediaSurfaceManager?.cancelPlacement?.();
 
         // Persist the safe state before loading libraries, allocating geometry,
         // or handing PIXI's WebGL context to Three. If Chromium exits in native
@@ -692,143 +668,81 @@ class RPGReactor {
         }
     }
 
-    // Toggle event mode
+    // One map input owner. Managers release listeners before the next owner
+    // becomes active; their local painting-resume flags cannot win a handoff.
+    claimMapTool(owner) {
+        if (this._changingMapTool) return;
+        this._changingMapTool = true;
+        this.mapTool = owner;
+        try {
+            if (owner !== 'media') {
+                this.mediaSurfaceManager?.close();
+                this.projectController?.mediaSurfacePreviewManager?.authoring?.editor?.close(true);
+            }
+            if (owner !== 'lighting') this.lightingManager?.setActive(false);
+            if (owner !== 'models') this.modelPropsManager?.deactivate();
+            if (owner !== 'events' && this.eventManager?.eventMode) this.eventManager.setEventMode(false);
+            const map = this.mapEditor, palette = this.tilesetPaletteViewer;
+            if (owner !== 'paint') {
+                if (map?.shadowPenMode) map.setShadowPenMode(false);
+                if (map?.eraserMode) map.setEraserMode(false);
+                this.projectController?.getRegionManager?.()?.setVisible(false);
+                this.projectController?.getObject3DManager?.()?.setVisible(false);
+            } else {
+                // A drawing button is an explicit return to painting, even
+                // when the model tab was the last visible palette context.
+                if (palette?.currentLayer === 'M') palette.selectLayer(palette.lastPaintLayer || 'A');
+                if (map && !map.currentTool && !map.shadowPenMode) map.setTool('pencil');
+                this.projectController?.getRegionManager?.()?.setVisible(palette?.currentLayer === 'R');
+                this.projectController?.getObject3DManager?.()?.setVisible(palette?.currentLayer === 'O');
+            }
+            map?.setEnabled(owner === 'paint');
+            if (owner === 'paint') map?.setupMapInteraction?.();
+            this.syncMapToolButtons();
+            this.projectController?.mediaSurfacePreviewManager?.syncToolInteraction?.();
+        } finally { this._changingMapTool = false; }
+    }
+
+    syncMapToolButtons() {
+        const owner = this.mapTool, map = this.mapEditor;
+        for (const [selector,tool] of [['#toolbar-event-manager-btn','events'],['[data-action="media-surfaces"]','media'],['[data-action="lighting-tool"]','lighting']]) {
+            const button=document.querySelector(selector);button?.classList.toggle('active',owner===tool);button?.setAttribute('aria-pressed',String(owner===tool));
+        }
+        document.querySelectorAll('.tool-draw-mode').forEach(button=>{
+            const active=owner==='paint'&&!map?.shadowPenMode&&button.dataset.tool===map?.currentTool;
+            button.classList.toggle('active',active);button.setAttribute('aria-pressed',String(active));
+        });
+        document.querySelectorAll('.tileset-layer-tab').forEach(tab=>{
+            const active=tab.dataset.layer===this.tilesetPaletteViewer?.currentLayer && (owner==='paint'||owner==='models'&&tab.dataset.layer==='M');
+            tab.classList.toggle('active',active);tab.setAttribute('aria-selected',String(active));
+            tab.style.backgroundColor=active?'var(--color-bg-hover)':'var(--color-bg-menubar)';
+            tab.style.borderColor=active?'var(--color-accent)':'var(--color-border-input)';
+            tab.style.color=active?'var(--color-text-strong)':'var(--color-text)';tab.style.fontWeight=active?'600':'400';
+        });
+    }
+
+    releaseMapTool(owner) {
+        if (this._changingMapTool || this.mapTool !== owner) return;
+        const palette=this.tilesetPaletteViewer;
+        if (palette) palette.selectLayer(palette.currentLayer || 'A');
+        else this.claimMapTool('paint');
+    }
+
     toggleEventMode() {
         if (!this.eventManager) {
-            this.uiManager.updateStatus(window.I18n ? window.I18n.t('status.loadMapFirst') : 'Load a map first');
-            return;
+            this.uiManager.updateStatus(window.I18n ? window.I18n.t('status.loadMapFirst') : 'Load a map first');return;
         }
-
-        // Ensure event manager has reference to tileset palette viewer
-        if (this.tilesetPaletteViewer) {
-            this.eventManager.setTilesetPaletteViewer(this.tilesetPaletteViewer);
-        }
-
-        // Toggle event mode
-        const newMode = !this.eventManager.eventMode;
-        this.eventManager.setEventMode(newMode);
-        // The props tool places models on click; the Event tool selects
-        // events on click. One of them owns the pointer.
-        if (newMode) this.modelPropsManager?.deactivate();
-
-        // Disable/enable map editor based on event mode
-        if (this.mapEditor) {
-            this.mapEditor.setEnabled(!newMode);
-            // Disable shadow pen when entering event mode
-            if (newMode && this.mapEditor.shadowPenMode) {
-                this.mapEditor.setShadowPenMode(false);
-            }
-            // Re-setup map interaction when returning to tileset mode
-            if (!newMode) {
-                this.mapEditor.setupMapInteraction();
-            }
-        }
-        // Back from event mode with the 3D-M tab still up: the props tool
-        // takes the pointer again (it is dropped on the way in, above).
-        if (!newMode && this.tilesetPaletteViewer?.currentLayer === 'M' && this.modelPropsManager) {
-            const container = document.getElementById('model-props-ui-container');
-            if (container) this.modelPropsManager.initializeUI(container);
-            this.modelPropsManager.activate();
-        }
-
-        // Clear tileset palette selection when entering event mode
-        if (newMode && this.tilesetPaletteViewer) {
-            this.tilesetPaletteViewer.clearSelection();
-        }
-
-        // Deselect all tileset tool buttons when entering event mode
-        if (newMode) {
-            document.querySelectorAll('.tool-draw-mode').forEach(btn => {
-                btn.classList.remove('active');
-            });
-        } else {
-            // Re-select the default tool (pencil) when exiting event mode
-            if (this.mapEditor) {
-                this.mapEditor.setTool('pencil');
-            }
-            document.querySelectorAll('.tool-draw-mode').forEach(btn => {
-                btn.classList.remove('active');
-                if (btn.dataset.tool === 'pencil') {
-                    btn.classList.add('active');
-                }
-            });
-        }
-
-        // Update button appearance
-        const button = document.getElementById('toolbar-event-manager-btn');
-        if (button) {
-            if (newMode) {
-                button.classList.add('active');
-            } else {
-                button.classList.remove('active');
-            }
-        }
-
-        // Update undo/redo button states based on the current mode
-        if (newMode) {
-            // Event mode - update buttons based on event manager undo state
-            this.uiManager.updateUndoRedoButtons(
-                this.eventManager.canUndo(),
-                this.eventManager.canRedo()
-            );
-        } else {
-            // Map editor mode - update buttons based on map editor undo state
-            if (this.mapEditor) {
-                this.uiManager.updateUndoRedoButtons(
-                    this.mapEditor.canUndo(),
-                    this.mapEditor.canRedo()
-                );
-            }
-        }
-
-        // Update status
-        this.uiManager.updateStatus(window.I18n
-            ? window.I18n.t(newMode ? 'status.eventModeEnabled' : 'status.eventModeDisabled')
-            : (newMode ? 'Event mode enabled' : 'Event mode disabled'));
+        this.eventManager.setTilesetPaletteViewer(this.tilesetPaletteViewer);
+        const enabled=!this.eventManager.eventMode;
+        this.eventManager.setEventMode(enabled);
+        if (!enabled) this.releaseMapTool('events');
+        const history=enabled?this.eventManager:this.mapEditor;
+        if (history) this.uiManager.updateUndoRedoButtons(history.canUndo(),history.canRedo());
+        this.uiManager.updateStatus(window.I18n ? window.I18n.t(enabled?'status.eventModeEnabled':'status.eventModeDisabled') : (enabled?'Event mode enabled':'Event mode disabled'));
     }
 
-    // Disable event mode if currently active (called when switching to tileset tools)
-    disableEventModeIfActive() {
-        if (!this.eventManager) return;
-
-        // If event mode is currently active, deactivate it
-        if (this.eventManager.eventMode) {
-
-            this.eventManager.setEventMode(false);
-
-            // Enable map editor
-            if (this.mapEditor) {
-                this.mapEditor.setEnabled(true);
-                // Re-setup map interaction when returning to tileset mode
-                this.mapEditor.setupMapInteraction();
-            }
-
-            // Clear tileset selection (important to prevent janky behavior)
-            if (this.tilesetPaletteViewer) {
-                this.tilesetPaletteViewer.clearSelection();
-            }
-
-            // Re-select the default tool (pencil)
-            if (this.mapEditor) {
-                this.mapEditor.setTool('pencil');
-            }
-            document.querySelectorAll('.tool-draw-mode').forEach(btn => {
-                btn.classList.remove('active');
-                if (btn.dataset.tool === 'pencil') {
-                    btn.classList.add('active');
-                }
-            });
-
-            // Update button appearance
-            const button = document.getElementById('toolbar-event-manager-btn');
-            if (button) {
-                button.classList.remove('active');
-            }
-
-            // Update status
-            this.uiManager.updateStatus('Tileset mode enabled');
-        }
-    }
+    // Legacy callback name used by drawing buttons and keyboard shortcuts.
+    disableEventModeIfActive() { this.claimMapTool('paint'); }
 
     // Show tileset palette viewer
     async showTilesetPalette() {
@@ -928,6 +842,10 @@ class RPGReactor {
                 manager.initializeUI(container);
                 if (this.eventManager && this.eventManager.eventMode) {
                     this.eventManager.setEventMode(false);
+                    // The props tool suspends painting and restores it when
+                    // its tab closes, including when entered from Events.
+                    this.mapEditor?.setEnabled(true);
+                    this.mapEditor?.setupMapInteraction();
                     document.getElementById('toolbar-event-manager-btn')?.classList.remove('active');
                 }
                 manager.activate();
