@@ -2013,6 +2013,9 @@ AudioManager._startBgmSequencePalette = function(state, entry, now) {
         silentUntil: 0,
         last: -1
     })).filter(layer => layer.pool.length > 0);
+    // Seeded by position in the filtered list, which the same entry reproduces.
+    const carried = state.lastPicks && state.lastPicks.index === state.index ? state.lastPicks.picks : null;
+    if (carried) layers.forEach((layer, i) => { if (Number.isFinite(carried[i])) layer.last = carried[i]; });
     const duration = Math.max(0, Number(entry.duration) || 0);
     state.palette = {
         layers: layers,
@@ -2065,6 +2068,11 @@ AudioManager._startBgmSequenceLayer = function(state, layer) {
 AudioManager._endBgmSequencePalette = function(state, fadeOut) {
     const palette = state.palette;
     if (!palette) return;
+    // Carried into the next draw of this same entry: without it the no-repeat
+    // guard resets every cycle and a layer can hand over to the track it is
+    // already playing -- inaudible when the palette faded to silence first,
+    // but an overlap makes it a track phasing against a copy of itself.
+    state.lastPicks = { index: state.index, picks: palette.layers.map(layer => layer.last) };
     state.palette = null;
     for (const layer of palette.layers) {
         if (layer.buffer) this._retireBgmSequenceBuffer(state, layer.buffer, fadeOut);

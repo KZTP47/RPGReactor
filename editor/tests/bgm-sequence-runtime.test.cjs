@@ -369,3 +369,25 @@ test('stopping the sequence releases a bed that is still fading out under the ne
     assert.deepEqual(live(), [], 'both the retiring bed and the live entry are released');
     assert.equal(AudioManager._bgmSequence, null);
 });
+
+test('a palette handing over to a fresh draw never crossfades a track into itself', () => {
+    // One palette, so the entry that follows it is itself: every cycle is a
+    // re-draw of the same pool, overlapping the draw it is replacing.
+    const map = { bgm: { name: '', volume: 90, pitch: 100, pan: 0 }, bgmSequence: { enabled: true, entries: [
+        { type: 'palette', duration: 30, fadeIn: 3, fadeOut: 4, layers: [
+            { volume: 100, pitch: 100, pan: 0, pool: [{ type: 'track', name: 'A' }, { type: 'track', name: 'B' }] }
+        ] }
+    ] } };
+
+    for (let run = 0; run < 40; run++) {
+        const { AudioManager, tick } = loadAudioManager({ map });
+        AudioManager.playBgm(AudioManager.mapBgmObject(map, 1));
+        const before = AudioManager._bgmSequence.palette.layers[0].buffer.name;
+        tick(30);
+        const after = AudioManager._bgmSequence.palette.layers[0].buffer.name;
+        // The guard has to survive the cycle: rebuilding the layer with last=-1
+        // let a layer hand over to the track it was already playing, which an
+        // overlap turns into a track phasing against a copy of itself.
+        assert.notEqual(after, before, 'run ' + run + ': handed over to its own track');
+    }
+});
