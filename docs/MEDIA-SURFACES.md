@@ -7,8 +7,13 @@ are displayed as **Show Media Surface**, **Transform Media Surface**, and
 
 Drag a corner freely to reshape/resize a surface; hold Shift to preserve its
 proportions. Shift can be pressed or released during the drag. In the 3D panel,
-**Keep Proportions** links numeric scale fields and sliders independently of
-that corner-drag shortcut. Move arrows and rotation rings edit the live pose.
+**Keep Proportions** links width/height and scale controls independently of
+that corner-drag shortcut. Newly selected media takes its actual image/video
+aspect ratio, keeping the longest surface dimension at the current size.
+Opening a saved surface preserves its authored dimensions. To refit an existing
+surface to the source ratio, turn Keep Proportions off and back on. Uncheck it
+for independent width/height or scale adjustments. Move arrows and rotation
+rings edit the live pose.
 
 A normal corner drag changes only that corner. Width/height and the standing
 anchor stay fixed while editing a quad; they define the base surface frame.

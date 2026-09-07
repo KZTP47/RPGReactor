@@ -74,7 +74,7 @@ Drag existing steps to reorder them. A highlighted insertion line shows the exac
 
 **Play Step** plays only the selected step, using earlier steps to establish its starting pose without replaying their sound/effect cues. It stops at the end even with Loop enabled and excludes following steps, including zero-duration steps at the same timeline boundary. An instantaneous motion gets a one-second viewing interval; other instantaneous cues get one frame. The time readout shows progress within the selected step. Full **Play / Pause**, scrubbing and frame controls remain available.
 
-**Play Sound** opens the same **Select Sound Effect** picker used elsewhere in the editor. Browse and audition the project’s SE files there, then choose volume, pitch and pan in the picker. The step inspector shows the selected filename without duplicating the level controls. OK saves the sound and all three levels as one undoable edit; Cancel leaves the step unchanged. Reopening retains the selected sound and levels.
+**Play Sound** opens the same **Select Sound Effect** picker used elsewhere in the editor. Browse and audition the project’s SE files there, then choose volume, pitch and pan in the picker. The step inspector shows the selected filename and a read-only volume/pitch/pan summary without duplicating the editable level controls. OK saves the sound and all three levels as one undoable edit; Cancel leaves the step unchanged. Reopening retains the selected sound and levels.
 
 ## Preview placement and motion transforms
 
@@ -121,7 +121,7 @@ The initial runtime adapter preserves PSYCHRONIC Battle Engine's combat resoluti
 
 VE Battle Motions, YEP Battle Engine Core, VisuStella Battle Core and LeTBS retain existing sequence behavior with a diagnostic; they need explicit adapters before Reactor can own their choreography. Their syntax inspired the builder but is not imported. Retaining Scene_Battle helps HUD integration; it does not establish compatibility with every MOG or third-party plugin configuration.
 
-Current room limitations include dynamic shadow integration, plugin fog/overlays, video surfaces, map-dependent plugin commands and full performance profiling. A room reproduces the implemented tiles/models/lights/effects, not every exploration renderer extension. The presentation also retains a canvas copy into the battle display; dense-room performance needs measurement.
+Current room limitations include dynamic shadow integration, plugin fog/overlays, map-dependent plugin commands and full performance profiling. Map and model media surfaces are supported, as described below. A room reproduces the implemented tiles/models/lights/effects, not every exploration renderer extension. The presentation also retains a canvas copy into the battle display; dense-room performance needs measurement.
 
 ## Verification
 
