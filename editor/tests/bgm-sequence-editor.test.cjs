@@ -28,7 +28,7 @@ test('a sequence normalizes to its three entry shapes with clamped levels, and a
     const sequence = plain(E.normalize(raw));
     assert.deepEqual(sequence.entries[0], { type: 'track', name: 'Forest', fadeIn: 0, once: false, volume: 100, pitch: 50, pan: 0 });
     assert.deepEqual(sequence.entries[1], { type: 'silence', duration: 2.6, once: false });
-    assert.deepEqual(sequence.entries[2], { type: 'palette', once: false, duration: 30, fadeIn: 0, fadeOut: 4, layers: [{ volume: 70, pitch: 100, pan: 0, order: 'random', pool: [{ type: 'track', name: 'A' }, { type: 'silence', duration: 0 }] }] });
+    assert.deepEqual(sequence.entries[2], { type: 'palette', once: false, single: false, duration: 30, fadeIn: 0, fadeOut: 4, layers: [{ volume: 70, pitch: 100, pan: 0, order: 'random', pool: [{ type: 'track', name: 'A' }, { type: 'silence', duration: 0 }] }] });
     assert.deepEqual(plain(E.levels(null)), { volume: 100, pitch: 100, pan: 0 }, 'a new row starts at full volume and pitch, not at the slider minimums');
     assert.deepEqual(plain(E.layer(null)).volume, 100);
     assert.equal(sequence.entries.length, 3);
@@ -145,7 +145,7 @@ test('every control round-trips, because an unhandled key silently reverts', () 
     // fadeIn branch reached a running editor. Sweep every control the form
     // renders, not just the ones a test happened to think of.
     const wanted = { duration: 3, fadeIn: 3, fadeOut: 3, volume: 70, pitch: 120, pan: -20,
-                     once: true, order: 'sequential' };
+                     once: true, single: true, order: 'shuffle' };
     const found = [];
     editor.container.innerHTML.replace(/<(input|select)[^>]*>/g, tag => {
         const path = (tag.match(/data-path="([^"]+)"/) || [])[1];

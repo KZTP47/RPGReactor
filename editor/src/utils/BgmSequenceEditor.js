@@ -5,7 +5,7 @@
  * `bgmSequence`. Entries play in order and repeat:
  *   { type: 'track', name, volume, pitch, pan, fadeIn }   (any entry may set `once`)
  *   { type: 'silence', duration }
- *   { type: 'palette', duration, fadeIn, fadeOut, layers: [{ volume, pitch, pan, order, pool }] }
+ *   { type: 'palette', duration, fadeIn, fadeOut, single, layers: [{ volume, pitch, pan, order, pool }] }
  * where a pool holds tracks (`{ type: 'track', name }`) and silences.
  *
  * The model functions are static so a save can normalize and validate what
@@ -48,7 +48,7 @@ class RRBgmSequenceEditor {
     static layer(raw) {
         const source = raw && typeof raw === 'object' ? raw : {};
         return Object.assign(RRBgmSequenceEditor.levels(source), {
-            order: source.order === 'sequential' ? 'sequential' : 'random',
+            order: source.order === 'sequential' || source.order === 'shuffle' ? source.order : 'random',
             pool: (Array.isArray(source.pool) ? source.pool : []).map(RRBgmSequenceEditor.poolEntry).filter(Boolean)
         });
     }
@@ -62,6 +62,7 @@ class RRBgmSequenceEditor {
                 return {
                     type: 'palette',
                     once: !!raw.once,
+                    single: !!raw.single,
                     duration: RRBgmSequenceEditor.seconds(raw.duration),
                     fadeIn: RRBgmSequenceEditor.seconds(raw.fadeIn),
                     fadeOut: RRBgmSequenceEditor.seconds(raw.fadeOut),
@@ -170,7 +171,8 @@ class RRBgmSequenceEditor {
     orderSelect(path, value) {
         const option = (v, label) => `<option value="${v}"${value === v ? ' selected' : ''}>${this.escape(label)}</option>`;
         return `<select data-path="${path}" style="padding: 2px 4px; font-size: 12px; background: var(--color-bg-input); color: var(--color-text); border: 1px solid var(--color-border-input); border-radius: 3px;">`
-            + option('random', this.tt('Random')) + option('sequential', this.tt('In order')) + `</select>`;
+            + option('random', this.tt('Random')) + option('shuffle', this.tt('Shuffle'))
+            + option('sequential', this.tt('In order')) + `</select>`;
     }
 
     smallButton(action, path, label, title) {
@@ -257,6 +259,7 @@ class RRBgmSequenceEditor {
                 <label style="display: inline-flex; align-items: center; gap: 4px; font-size: 12px;">${this.escape(this.tt('Duration (s)'))} ${this.numberInput(`${path}.duration`, entry.duration, 0, 36000, 1, 64)}</label>
                 <label style="display: inline-flex; align-items: center; gap: 4px; font-size: 12px;">${this.escape(this.tt('Fade-in (s)'))} ${this.numberInput(`${path}.fadeIn`, entry.fadeIn, 0, 600, 0.5, 60)}</label>
                 <label style="display: inline-flex; align-items: center; gap: 4px; font-size: 12px;">${this.escape(this.tt('Fade-out (s)'))} ${this.numberInput(`${path}.fadeOut`, entry.fadeOut, 0, 600, 0.5, 60)}</label>
+                <label title="${this.escape(this.tt('Each layer plays one track, then the sequence moves on.'))}" style="display: inline-flex; align-items: center; gap: 4px; font-size: 12px;"><input type="checkbox" data-path="${path}.single"${entry.single ? ' checked' : ''}> ${this.escape(this.tt('Move on after one track'))}</label>
             </div>
             ${layers}
             <div style="padding: 3px 0 0 22px;">${this.smallButton('add-layer', path, this.tt('+ Layer'))}</div>
@@ -354,8 +357,8 @@ class RRBgmSequenceEditor {
         else if (key === 'volume') node[key] = RRBgmSequenceEditor.number(input.value, 100, 0, 100);
         else if (key === 'pitch') node[key] = RRBgmSequenceEditor.number(input.value, 100, 50, 150);
         else if (key === 'pan') node[key] = RRBgmSequenceEditor.number(input.value, 0, -100, 100);
-        else if (key === 'order') node[key] = input.value === 'sequential' ? 'sequential' : 'random';
-        else if (key === 'once') { node[key] = !!input.checked; return; }
+        else if (key === 'order') node[key] = input.value === 'sequential' || input.value === 'shuffle' ? input.value : 'random';
+        else if (key === 'once' || key === 'single') { node[key] = !!input.checked; return; }
         input.value = node[key];
     }
 

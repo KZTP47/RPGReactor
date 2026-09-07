@@ -601,3 +601,63 @@ test('boarding a vehicle keeps the flag, since it saves the map BGM through mapB
     assert.equal(walking.looped, true, 'the running sequence lends its progress');
     assert.equal(AudioManager.mapBgmObject(map, 2).looped, undefined, 'but only for its own map');
 });
+
+test('a shuffled layer plays every track before any of them comes round again', () => {
+    const pool = ['A', 'B', 'C', 'D'].map(name => ({ type: 'track', name }));
+    const map = { bgm: { name: '', volume: 90, pitch: 100, pan: 0 }, bgmSequence: { enabled: true, entries: [
+        { type: 'palette', duration: 0, fadeIn: 0, fadeOut: 0, layers: [
+            { volume: 100, pitch: 100, pan: 0, order: 'shuffle', pool }
+        ] } ] } };
+    const { AudioManager } = loadAudioManager({ map });
+    AudioManager.playBgm(AudioManager.mapBgmObject(map, 1));
+    const layer = () => AudioManager._bgmSequence.palette.layers[0];
+
+    const heard = [layer().buffer.name];
+    for (let i = 0; i < 11; i++) { layer().buffer.end(); heard.push(layer().buffer.name); }
+    for (let round = 0; round < 3; round++) {
+        const bag = heard.slice(round * 4, round * 4 + 4);
+        assert.deepEqual(bag.slice().sort(), ['A', 'B', 'C', 'D'], 'round ' + round + ' held every track once: ' + bag);
+    }
+    for (let i = 1; i < heard.length; i++) {
+        assert.notEqual(heard[i], heard[i - 1], 'never the same track twice running, across bags too');
+    }
+});
+
+test('a single-shot palette draws one track and then moves on', () => {
+    const map = { bgm: { name: '', volume: 90, pitch: 100, pan: 0 }, bgmSequence: { enabled: true, entries: [
+        { type: 'palette', single: true, once: true, duration: 0, fadeIn: 2, fadeOut: 3, layers: [
+            { volume: 100, pitch: 100, pan: 0, order: 'shuffle',
+              pool: [{ type: 'track', name: 'IntroA' }, { type: 'track', name: 'IntroB' }] }
+        ] },
+        { type: 'track', name: 'Bed' }
+    ] } };
+    const { AudioManager, created, live } = loadAudioManager({ map });
+    AudioManager.playBgm(AudioManager.mapBgmObject(map, 1));
+    const chosen = created[0].name;
+    assert.ok(/^Intro[AB]$/.test(chosen), 'one of the two intros was drawn: ' + chosen);
+    assert.equal(created[0].fadedIn, 2);
+
+    created[0].end();
+    assert.deepEqual(live(), ['Bed'], 'it moved on rather than drawing the other intro');
+    assert.equal(created.filter(b => /^Intro/.test(b.name)).length, 1, 'exactly one intro was heard');
+
+    // And being an intro, the loop never comes back to it.
+    created[1].end();
+    assert.equal(created.filter(b => /^Intro/.test(b.name)).length, 1, 'still one after the sequence loops');
+});
+
+test('a single-shot palette crossfades into what follows when its track runs out', () => {
+    const map = { bgm: { name: '', volume: 90, pitch: 100, pan: 0 }, bgmSequence: { enabled: true, entries: [
+        { type: 'palette', single: true, duration: 0, fadeIn: 2, fadeOut: 4, layers: [
+            { volume: 100, pitch: 100, pan: 0, pool: [{ type: 'track', name: 'Opening' }] }
+        ] },
+        { type: 'track', name: 'Bed', fadeIn: 3 }
+    ] } };
+    const { AudioManager, context, created, live, tick } = loadAudioManager({ map });
+    context.WebAudio.trackSeconds = 40;
+    AudioManager.playBgm(AudioManager.mapBgmObject(map, 1));
+    tick(36);
+    assert.deepEqual(live().sort(), ['Bed', 'Opening'], 'both sound while the opening bows out');
+    assert.equal(created[0].fadedOut, 4);
+    assert.equal(created[1].fadedIn, 3);
+});
