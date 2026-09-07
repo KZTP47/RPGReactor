@@ -226,14 +226,20 @@ class RRBgmSequenceEditor {
                 </div>
             </div>`;
         }).join('');
+        // Three timing fields plus the row tools need 564px and the dialog gives
+        // the column 492, at every window size -- the modal is a fixed 1150 wide.
+        // So the fields get their own line rather than pushing the tools onto a
+        // second one, which left the arrows orphaned under the row they belong to.
         return `<div class="bgm-seq-row bgm-seq-depth-1">
-            <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">${head}
+            <div style="display: flex; gap: 6px; align-items: center;">${head}
                 <span style="flex: 0 0 52px; font-size: 12px;">${this.escape(this.tt('Palette'))}</span>
+                <span style="flex: 1;"></span>
+                ${this.rowTools(path)}
+            </div>
+            <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 3px 0 0 22px;">
                 <label style="display: inline-flex; align-items: center; gap: 4px; font-size: 12px;">${this.escape(this.tt('Duration (s)'))} ${this.numberInput(`${path}.duration`, entry.duration, 0, 36000, 1, 64)}</label>
                 <label style="display: inline-flex; align-items: center; gap: 4px; font-size: 12px;">${this.escape(this.tt('Fade-in (s)'))} ${this.numberInput(`${path}.fadeIn`, entry.fadeIn, 0, 600, 0.5, 60)}</label>
                 <label style="display: inline-flex; align-items: center; gap: 4px; font-size: 12px;">${this.escape(this.tt('Fade-out (s)'))} ${this.numberInput(`${path}.fadeOut`, entry.fadeOut, 0, 600, 0.5, 60)}</label>
-                <span style="flex: 1;"></span>
-                ${this.rowTools(path)}
             </div>
             ${layers}
             <div style="padding: 3px 0 0 22px;">${this.smallButton('add-layer', path, this.tt('+ Layer'))}</div>
