@@ -1809,11 +1809,17 @@ AudioManager.throwLoadError = function(webAudio) {
 // the sequence loops:
 //   { type: "track", name, volume, pitch, pan }   plays once to its true end
 //   { type: "silence", duration }                 seconds of quiet
-//   { type: "palette", duration, fadeOut, layers } layers sound together;
-//       each layer draws at random from its own pool of tracks and silences
-//       (never the same entry twice running), the palette runs `duration`
-//       seconds (0 = until something else stops it) and fades out over
-//       `fadeOut` seconds before the next entry.
+//   { type: "palette", duration, fadeIn, fadeOut, layers } layers sound
+//       together; each layer draws from its own pool of tracks and silences --
+//       at random, never the same entry twice running, or in pool order when
+//       the layer sets `order: "sequential"`. The palette runs `duration`
+//       seconds (0 = until something else stops it) and fades over `fadeOut`
+//       before the next entry. A layer whose track reaches its end first hands
+//       over to its next draw the same way, so with `duration: 0` a pool plays
+//       through in full, crossfading track to track.
+// Any entry may set `once: true` to play only on the sequence's first pass;
+// later passes skip it, which is how an opening statement plays once over a
+// bed that then repeats without it.
 // A track inside a sequence or a palette plays with looping off, so its
 // LOOPSTART/LOOPLENGTH tags are inert; a sequence that is one plain track
 // is the ordinary BGM path, tags honoured.
@@ -1877,6 +1883,7 @@ AudioManager.playBgmSequence = function(bgm) {
         due: 0,
         palette: null,
         retiring: [],
+        looped: false,
         stopping: false
     };
     this._advanceBgmSequence();
@@ -1975,7 +1982,18 @@ AudioManager._advanceBgmSequence = function(fadeOut) {
     if (!state || state.stopping) return;
     this._endBgmSequencePalette(state, fadeOut);
     this._pruneBgmSequenceBuffers(state);
-    state.index = (state.index + 1) % state.entries.length;
+    const total = state.entries.length;
+    // Walk forward past anything the sequence has already used up. Bounded by
+    // the entry count, so a sequence made entirely of once-entries replays one
+    // rather than falling silent looking for a survivor. `from` starts at -1, so
+    // arriving at the first entry is the sequence beginning, not a lap.
+    const from = state.index;
+    for (let step = 0; step < total; step++) {
+        state.index = (state.index + 1) % total;
+        if (state.index === 0 && from >= 0) state.looped = true;
+        const candidate = state.entries[state.index];
+        if (!state.looped || !candidate || !candidate.once) break;
+    }
     this._startBgmSequenceEntry(state, state.entries[state.index]);
 };
 
@@ -2009,6 +2027,7 @@ AudioManager._startBgmSequencePalette = function(state, entry, now) {
         pitch: Number.isFinite(layer.pitch) ? layer.pitch : 100,
         pan: Number.isFinite(layer.pan) ? layer.pan : 0,
         pool: (Array.isArray(layer.pool) ? layer.pool : []).filter(item => item && typeof item === "object"),
+        order: layer.order === "sequential" ? "sequential" : "random",
         buffer: null,
         silentUntil: 0,
         last: -1
@@ -2034,10 +2053,11 @@ AudioManager._startBgmSequencePalette = function(state, entry, now) {
     for (const layer of layers) this._startBgmSequenceLayer(state, layer);
 };
 
-/** A random pool entry, never the one that just played when there is a choice. */
+/** The next pool entry: in order, or at random but never the one just played. */
 AudioManager._pickBgmSequencePoolEntry = function(layer) {
     const pool = layer.pool;
     if (pool.length === 1) return 0;
+    if (layer.order === "sequential") return (layer.last + 1) % pool.length;
     let index = Math.floor(Math.random() * pool.length);
     if (index === layer.last) index = (index + 1 + Math.floor(Math.random() * (pool.length - 1))) % pool.length;
     return index;
@@ -2063,6 +2083,21 @@ AudioManager._startBgmSequenceLayer = function(state, layer) {
         this._startBgmSequenceLayer(state, layer);
     }, palette.fadeIn);
     layer.buffer = buffer;
+};
+
+/**
+ * Whether a layer's track is close enough to its end to hand over now. Measured
+ * from the buffer's own clock rather than from when playback was asked for, so a
+ * slow decode delays the hand-over with the track instead of cutting it short.
+ */
+AudioManager._bgmSequenceLayerIsEnding = function(layer, palette) {
+    const buffer = layer.buffer;
+    if (!buffer || buffer._rrRetired || !(palette.fadeOut > 0)) return false;
+    if (!buffer.isPlaying || !buffer.isPlaying()) return false;
+    const total = buffer._totalTime;
+    // A track shorter than its own crossfade would hand over before it is heard.
+    if (!(total > palette.fadeOut)) return false;
+    return buffer.seek() >= total - palette.fadeOut;
 };
 
 AudioManager._endBgmSequencePalette = function(state, fadeOut) {
@@ -2100,6 +2135,13 @@ AudioManager.updateBgmSequence = function() {
         for (const layer of palette.layers) {
             if (!layer.buffer && layer.silentUntil && now >= layer.silentUntil) {
                 layer.silentUntil = 0;
+                this._startBgmSequenceLayer(state, layer);
+            } else if (layer.buffer && this._bgmSequenceLayerIsEnding(layer, palette)) {
+                // Retiring first matters twice: the stop listener bails on a
+                // retired buffer, so the track playing itself out cannot start a
+                // second draw on top of the one starting here.
+                this._retireBgmSequenceBuffer(state, layer.buffer, palette.fadeOut);
+                layer.buffer = null;
                 this._startBgmSequenceLayer(state, layer);
             }
         }

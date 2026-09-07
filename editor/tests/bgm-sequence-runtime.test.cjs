@@ -22,18 +22,21 @@ function loadAudioManager({ mapId = 1, map = null } = {}) {
             this._stopListeners = [];
             this.playing = false;
             this.destroyed = false;
+            // Length and position, so a test can drive a track to its own end.
+            this._totalTime = WebAudio.trackSeconds || 0;
+            this._startedAt = null;
             this.fadedOut = null;
             this.fadedIn = null;
             this.volume = 1;
             created.push(this);
         }
-        play(loop) { this.loop = loop; this.playing = true; }
+        play(loop) { this.loop = loop; this.playing = true; this._startedAt = clock.now; }
         stop() { this.playing = false; while (this._stopListeners.length) this._stopListeners.shift()(); }
         destroy() { this.destroyed = true; this.stop(); }
         fadeOut(duration) { this.fadedOut = duration; this.playing = false; }
         fadeIn(duration) { this.fadedIn = duration; }
         addStopListener(fn) { this._stopListeners.push(fn); }
-        seek() { return 0; }
+        seek() { return this._startedAt === null ? 0 : clock.now - this._startedAt; }
         isError() { return !!this.error; }
         isPlaying() { return this.playing; }
         /** What the end timer does when the track plays out. */
@@ -390,4 +393,98 @@ test('a palette handing over to a fresh draw never crossfades a track into itsel
         // overlap turns into a track phasing against a copy of itself.
         assert.notEqual(after, before, 'run ' + run + ': handed over to its own track');
     }
+});
+
+test('a track reaching its end hands over to the next draw, so a pool plays through crossfading', () => {
+    // Duration 0: nothing cycles the palette, so the only hand-over is the one
+    // a track's own ending causes.
+    const map = { bgm: { name: '', volume: 90, pitch: 100, pan: 0 }, bgmSequence: { enabled: true, entries: [
+        { type: 'palette', duration: 0, fadeIn: 3, fadeOut: 4, layers: [
+            { volume: 100, pitch: 100, pan: 0, pool: [{ type: 'track', name: 'A' }, { type: 'track', name: 'B' }] }
+        ] }
+    ] } };
+    const { AudioManager, context, created, live, tick } = loadAudioManager({ map });
+    context.WebAudio.trackSeconds = 90;
+    AudioManager.playBgm(AudioManager.mapBgmObject(map, 1));
+    const first = created[0];
+    assert.equal(first.fadedIn, 3);
+
+    tick(80);
+    assert.deepEqual(live(), [first.name], 'nothing happens while the track has more than its fade left');
+
+    tick(6);   // 86s in: within the 4s fade-out of a 90s track
+    assert.equal(created.length, 2, 'the next draw started');
+    const second = created[1];
+    assert.notEqual(second.name, first.name);
+    assert.equal(first.fadedOut, 4, 'the outgoing track rides its fade down');
+    assert.equal(second.fadedIn, 3, 'the incoming one swells up under it');
+    assert.deepEqual(live().sort(), [first.name, second.name].sort(), 'both sound together');
+
+    tick(4);
+    assert.deepEqual(live(), [second.name], 'the outgoing track is released when its tail ends');
+});
+
+test('a track shorter than its own crossfade is left alone', () => {
+    const map = { bgm: { name: '', volume: 90, pitch: 100, pan: 0 }, bgmSequence: { enabled: true, entries: [
+        { type: 'palette', duration: 0, fadeIn: 1, fadeOut: 10, layers: [
+            { volume: 100, pitch: 100, pan: 0, pool: [{ type: 'track', name: 'Stinger' }, { type: 'track', name: 'Other' }] }
+        ] }
+    ] } };
+    const { AudioManager, context, created, tick } = loadAudioManager({ map });
+    context.WebAudio.trackSeconds = 6;
+    AudioManager.playBgm(AudioManager.mapBgmObject(map, 1));
+    tick(5);
+    // Handing over would mean never hearing it: it would begin its fade before
+    // it began. It plays out and the stop listener draws the next one instead.
+    assert.equal(created.length, 1, 'no early hand-over');
+    created[0].end();
+    assert.equal(created.length, 2, 'the ordinary end-of-track draw still happens');
+});
+
+test('a layer set to sequential walks its pool in order instead of drawing at random', () => {
+    const pool = [{ type: 'track', name: 'One' }, { type: 'track', name: 'Two' }, { type: 'track', name: 'Three' }];
+    const map = { bgm: { name: '', volume: 90, pitch: 100, pan: 0 }, bgmSequence: { enabled: true, entries: [
+        { type: 'palette', duration: 0, fadeIn: 0, fadeOut: 0, layers: [
+            { volume: 100, pitch: 100, pan: 0, order: 'sequential', pool }
+        ] }
+    ] } };
+    const { AudioManager, created } = loadAudioManager({ map });
+    AudioManager.playBgm(AudioManager.mapBgmObject(map, 1));
+    const heard = [created[0].name];
+    for (let i = 0; i < 6; i++) {
+        AudioManager._bgmSequence.palette.layers[0].buffer.end();
+        heard.push(AudioManager._bgmSequence.palette.layers[0].buffer.name);
+    }
+    assert.deepEqual(heard, ['One', 'Two', 'Three', 'One', 'Two', 'Three', 'One']);
+});
+
+test('an entry marked once plays on the first pass and is skipped on every later one', () => {
+    const map = { bgm: { name: '', volume: 90, pitch: 100, pan: 0 }, bgmSequence: { enabled: true, entries: [
+        { type: 'track', name: 'Opening', once: true },
+        { type: 'silence', duration: 5 },
+        { type: 'track', name: 'Bed' }
+    ] } };
+    const { AudioManager, created, tick } = loadAudioManager({ map });
+    AudioManager.playBgm(AudioManager.mapBgmObject(map, 1));
+    assert.equal(created[0].name, 'Opening', 'the opening statement leads');
+
+    created[0].end();                       // -> silence
+    tick(5);                                // -> Bed
+    assert.equal(created[1].name, 'Bed');
+    created[1].end();                       // wraps: Opening must be skipped
+    tick(5);
+    const names = created.map(b => b.name);
+    assert.deepEqual(names, ['Opening', 'Bed', 'Bed'], 'the second pass goes straight back to the bed');
+    assert.equal(names.filter(n => n === 'Opening').length, 1, 'the opening is never heard twice');
+});
+
+test('a sequence of nothing but once-entries keeps playing rather than falling silent', () => {
+    const map = { bgm: { name: '', volume: 90, pitch: 100, pan: 0 }, bgmSequence: { enabled: true, entries: [
+        { type: 'track', name: 'A', once: true },
+        { type: 'track', name: 'B', once: true }
+    ] } };
+    const { AudioManager, created } = loadAudioManager({ map });
+    AudioManager.playBgm(AudioManager.mapBgmObject(map, 1));
+    for (let i = 0; i < 4; i++) created[created.length - 1].end();
+    assert.ok(created.length >= 4, 'it keeps finding something to play: ' + created.map(b => b.name).join(','));
 });
