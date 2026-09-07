@@ -540,3 +540,64 @@ test('a track still loading does not hand over before it has started', () => {
     tick(120);
     assert.equal(created.length, 1, 'nothing handed over while the track had not started');
 });
+
+test('an intro survives a battle: the saved BGM remembers the sequence has come round', () => {
+    const map = { bgm: { name: 'Fallback', volume: 90, pitch: 100, pan: 0 }, bgmSequence: { enabled: true, entries: [
+        { type: 'track', name: 'Opening', once: true },
+        { type: 'track', name: 'Bed' }
+    ] } };
+    const { AudioManager, created, live } = loadAudioManager({ map });
+    AudioManager.playBgm(AudioManager.mapBgmObject(map, 1));
+    assert.equal(created[0].name, 'Opening');
+
+    // Before it has come round, the saved shape is exactly what it always was.
+    assert.equal('looped' in AudioManager.saveBgm(), false);
+
+    created[0].end();                       // -> Bed
+    created[1].end();                       // wraps past the intro, back to Bed
+    const saved = AudioManager.saveBgm();
+    assert.equal(saved.looped, true, 'the save records that the intro is spent');
+    assert.equal(saved.sequence, 1);
+
+    // A battle takes the channel and hands it back.
+    AudioManager.playBgm({ name: 'Battle', volume: 90, pitch: 100, pan: 0 });
+    assert.equal(AudioManager._bgmSequence, null, 'battle BGM stops the sequence outright');
+    AudioManager.replayBgm(saved);
+
+    assert.deepEqual(live(), ['Bed'], 'it comes back on the bed, not the opening');
+    assert.equal(created.filter(b => b.name === 'Opening').length, 1, 'the opening is heard once');
+});
+
+test('arriving on the map afresh plays the intro again, because nothing carries the flag', () => {
+    const map = { bgm: { name: 'Fallback', volume: 90, pitch: 100, pan: 0 }, bgmSequence: { enabled: true, entries: [
+        { type: 'track', name: 'Opening', once: true },
+        { type: 'track', name: 'Bed' }
+    ] } };
+    const { AudioManager, created } = loadAudioManager({ map });
+    AudioManager.playBgm(AudioManager.mapBgmObject(map, 1));
+    created[0].end();
+    created[1].end();
+    AudioManager.stopBgm();
+
+    // Map autoplay builds its object from the map, which carries no flag once
+    // nothing is running -- an intro is an intro on every visit.
+    const fresh = AudioManager.mapBgmObject(map, 1);
+    assert.equal('looped' in fresh, false);
+    AudioManager.playBgm(fresh);
+    assert.equal(created[created.length - 1].name, 'Opening', 'the opening leads again');
+});
+
+test('boarding a vehicle keeps the flag, since it saves the map BGM through mapBgmObject', () => {
+    const map = { bgm: { name: 'Fallback', volume: 90, pitch: 100, pan: 0 }, bgmSequence: { enabled: true, entries: [
+        { type: 'track', name: 'Opening', once: true },
+        { type: 'track', name: 'Bed' }
+    ] } };
+    const { AudioManager, created } = loadAudioManager({ map });
+    AudioManager.playBgm(AudioManager.mapBgmObject(map, 1));
+    created[0].end();
+    created[1].end();
+
+    const walking = AudioManager.mapBgmObject(map, 1);   // what saveWalkingBgm2 stores
+    assert.equal(walking.looped, true, 'the running sequence lends its progress');
+    assert.equal(AudioManager.mapBgmObject(map, 2).looped, undefined, 'but only for its own map');
+});

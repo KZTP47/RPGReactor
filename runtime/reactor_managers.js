@@ -1720,7 +1720,7 @@ AudioManager.saveBgm = function() {
     const sequence = this._bgmSequence || this._pendingBgmSequence;
     if (sequence) {
         const fallback = sequence.fallback || {};
-        return {
+        const saved = {
             name: fallback.name || "",
             volume: fallback.volume || 0,
             pitch: fallback.pitch || 0,
@@ -1728,6 +1728,9 @@ AudioManager.saveBgm = function() {
             pos: 0,
             sequence: sequence.mapId
         };
+        // Only when it has, so a sequence that never looped saves as it always did.
+        if (sequence.looped) saved.looped = true;
+        return saved;
     }
     if (this._currentBgm) {
         const bgm = this._currentBgm;
@@ -1841,7 +1844,14 @@ AudioManager.BGM_SEQUENCE_ME_DUCK = 0.25;
 AudioManager.mapBgmObject = function(map, mapId) {
     const bgm = Object.assign({}, (map && map.bgm) || this.makeEmptyAudioObject());
     delete bgm.sequence;
-    if (this.mapHasBgmSequence(map) && mapId > 0) bgm.sequence = mapId;
+    delete bgm.looped;
+    if (this.mapHasBgmSequence(map) && mapId > 0) {
+        bgm.sequence = mapId;
+        // Carry whether this map's sequence has already come round, so boarding
+        // a vehicle does not hand back an object that replays a heard intro.
+        const running = this._bgmSequence || this._pendingBgmSequence;
+        if (running && running.mapId === mapId && running.looped) bgm.looped = true;
+    }
     return bgm;
 };
 
@@ -1861,10 +1871,15 @@ AudioManager.playBgmSequence = function(bgm) {
     const mapId = bgm.sequence;
     if (this._bgmSequence && this._bgmSequence.mapId === mapId && !this._bgmSequence.stopping) return;
     const fallback = { name: bgm.name, volume: bgm.volume, pitch: bgm.pitch, pan: bgm.pan };
+    // A battle stops the sequence outright and coming back starts a new one, so
+    // without this an intro entry would be heard again after every encounter.
+    // Arriving on the map afresh carries no flag, which is what keeps an intro
+    // an intro on each visit rather than only ever once.
+    const looped = bgm.looped === true;
     const data = this._bgmSequenceDataFor(mapId);
     this.stopBgm();
     if (!data) {
-        this._pendingBgmSequence = { mapId: mapId, fallback: fallback };
+        this._pendingBgmSequence = { mapId: mapId, fallback: fallback, looped: looped };
         return;
     }
     const entries = data.entries.filter(entry => entry && typeof entry === "object");
@@ -1883,7 +1898,7 @@ AudioManager.playBgmSequence = function(bgm) {
         due: 0,
         palette: null,
         retiring: [],
-        looped: false,
+        looped: looped,
         stopping: false
     };
     this._advanceBgmSequence();
