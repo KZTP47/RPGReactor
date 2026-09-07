@@ -6,7 +6,7 @@
  *   { type: 'track', name, volume, pitch, pan, fadeIn }   (any entry may set `once`)
  *   { type: 'silence', duration }
  *   { type: 'palette', duration, fadeIn, fadeOut, single, layers: [{ volume, pitch, pan, order, pool }] }
- * where a pool holds tracks (`{ type: 'track', name }`) and silences.
+ * where a pool holds tracks (`{ type: 'track', name, volume }`) and silences.
  *
  * The model functions are static so a save can normalize and validate what
  * the form holds without the DOM; the instance renders one container and
@@ -42,7 +42,8 @@ class RRBgmSequenceEditor {
     static poolEntry(raw) {
         if (!raw || typeof raw !== 'object') return null;
         if (raw.type === 'silence') return { type: 'silence', duration: RRBgmSequenceEditor.seconds(raw.duration) };
-        return { type: 'track', name: typeof raw.name === 'string' ? raw.name : '' };
+        return { type: 'track', name: typeof raw.name === 'string' ? raw.name : '',
+                 volume: RRBgmSequenceEditor.number(raw.volume, 100, 0, 100) };
     }
 
     static layer(raw) {
@@ -220,7 +221,7 @@ class RRBgmSequenceEditor {
                 const ip = `${lp}.pool.${i}`;
                 const body = item.type === 'silence'
                     ? `<span style="display: inline-flex; align-items: center; gap: 4px; font-size: 12px;">${this.escape(this.tt('Silence'))} ${this.numberInput(`${ip}.duration`, item.duration, 0, 3600, 0.5, 60)} ${this.escape(this.tt('s'))}</span>`
-                    : nameBox(ip, item.name, null);
+                    : `${nameBox(ip, item.name, null)}<label style="flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; font-size: 12px;">${this.escape(this.tt('Volume'))} ${this.numberInput(`${ip}.volume`, item.volume, 0, 100, 1, 54)}</label>`;
                 return `<div class="bgm-seq-depth-3" style="display: flex; gap: 6px; align-items: center;">${body}${this.smallButton('remove', ip, '×', this.tt('Remove'))}</div>`;
             }).join('');
             // Four controls plus the remove button do not fit the column, the

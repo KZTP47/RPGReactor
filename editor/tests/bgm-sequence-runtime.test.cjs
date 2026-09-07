@@ -681,3 +681,31 @@ test('the overlap decision asks the entry that will actually play, not the one b
     assert.equal(AudioManager._bgmSequence.palette.fading, true, 'it faded rather than overlapping');
     assert.equal(live().length, 1, 'nothing started over the top of the outgoing bed');
 });
+
+test('a pool item can be trimmed against the rest of its pool', () => {
+    // Tracks mastered at different levels have to be balanced somewhere, and a
+    // layer's volume applies to all of them equally.
+    const map = { bgm: { name: '', volume: 90, pitch: 100, pan: 0 }, bgmSequence: { enabled: true, entries: [
+        { type: 'palette', duration: 0, fadeIn: 0, fadeOut: 0, layers: [
+            { volume: 100, pitch: 100, pan: 0, order: 'sequential', pool: [
+                { type: 'track', name: 'Loud', volume: 40 },
+                { type: 'track', name: 'Quiet' }
+            ] } ] } ] } };
+    const { AudioManager, created } = loadAudioManager({ map });
+    AudioManager._bgmVolume = 100;
+    AudioManager.playBgm(AudioManager.mapBgmObject(map, 1));
+
+    assert.equal(created[0].name, 'Loud');
+    const trimmed = created[0].volume;
+    AudioManager._bgmSequence.palette.layers[0].buffer.end();
+    assert.equal(created[1].name, 'Quiet');
+    assert.ok(Math.abs(created[1].volume - trimmed / 0.4) < 1e-9,
+        'the untrimmed one is 2.5x louder: ' + created[1].volume + ' vs ' + trimmed);
+
+    // And the option slider lands on top of the trim, not instead of it. Read
+    // the level before moving it: the refresh mutates the very buffer compared.
+    const before = created[1].volume;
+    AudioManager.bgmVolume = 50;
+    const after = AudioManager._bgmSequence.palette.layers[0].buffer.volume;
+    assert.ok(Math.abs(after - before / 2) < 1e-9, 'halved the slider, got ' + after + ' from ' + before);
+});

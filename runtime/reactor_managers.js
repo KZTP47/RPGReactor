@@ -2059,6 +2059,7 @@ AudioManager._startBgmSequencePalette = function(state, entry, now) {
         pitch: Number.isFinite(layer.pitch) ? layer.pitch : 100,
         pan: Number.isFinite(layer.pan) ? layer.pan : 0,
         pool: (Array.isArray(layer.pool) ? layer.pool : []).filter(item => item && typeof item === "object"),
+        trim: 100,
         order: layer.order === "sequential" || layer.order === "shuffle" ? layer.order : "random",
         bag: null,
         buffer: null,
@@ -2137,7 +2138,15 @@ AudioManager._startBgmSequenceLayer = function(state, layer) {
         return;
     }
     layer.silentUntil = 0;
-    const audio = { name: item.name, volume: layer.volume, pitch: layer.pitch, pan: layer.pan };
+    // A pool draws from wherever its tracks came from, and two sources rarely
+    // agree on level. The item's own volume trims it against the rest.
+    layer.trim = Number.isFinite(item.volume) ? item.volume : 100;
+    const audio = {
+        name: item.name,
+        volume: layer.volume * layer.trim / 100,
+        pitch: layer.pitch,
+        pan: layer.pan
+    };
     const buffer = this._startBgmSequenceTrack(state, audio, () => {
         this._destroyBgmSequenceBuffer(buffer);
         if (layer.buffer === buffer) layer.buffer = null;
@@ -2289,7 +2298,10 @@ AudioManager._refreshBgmSequenceVolumes = function() {
         let audio = null;
         if (state.palette) {
             const layer = state.palette.layers.find(item => item.buffer === buffer);
-            if (layer) audio = { volume: layer.volume, pitch: layer.pitch, pan: layer.pan };
+            if (layer) {
+                const trim = Number.isFinite(layer.trim) ? layer.trim : 100;
+                audio = { volume: layer.volume * trim / 100, pitch: layer.pitch, pan: layer.pan };
+            }
         } else if (entry) {
             audio = this._bgmSequenceTrackAudio(entry);
         }
