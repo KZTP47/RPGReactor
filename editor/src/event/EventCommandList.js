@@ -664,10 +664,21 @@ class EventCommandList {
         return range ? range.end - range.start : 0;
     }
 
+    /**
+     * Index of the plugin command that owns the 657 row at `index`, or -1.
+     * Shared with the troop and common-event lists, which render their own
+     * rows but must agree with this one on which command an argument belongs to.
+     */
+    static pluginArgsOwnerIndex(list, index) {
+        if (list?.[index]?.code !== 657) return -1;
+        const range = EventCommandList.contiguousBlockRange(list, index, 357, 657);
+        return range ? range.start : -1;
+    }
+
     /** True when the 657 row at `index` belongs to an expanded plugin command. */
     isPluginArgsExpanded(list, index) {
-        const range = EventCommandList.contiguousBlockRange(list, index, 357, 657);
-        return !!range && this.expandedPluginCommands.has(range.start);
+        const owner = EventCommandList.pluginArgsOwnerIndex(list, index);
+        return owner >= 0 && this.expandedPluginCommands.has(owner);
     }
 
     isBlockCollapsed(command) {

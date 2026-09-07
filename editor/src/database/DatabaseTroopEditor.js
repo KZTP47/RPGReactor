@@ -44,6 +44,7 @@ class DatabaseTroopEditor {
         this.selectedCommandIndices = [];
         this.commandSelectionAnchor = null;
         this.commandClipboard = null;
+        this.expandedPluginCommands = new Set();
         this._editors = {};
     }
 
@@ -1317,7 +1318,23 @@ class DatabaseTroopEditor {
             page.list = [{ code: 0, indent: 0, parameters: [] }];
         }
 
+        const ECL = this._eventCommandListClass();
+        // Expansion is recorded by position, so it only means anything for the
+        // list it was recorded against; drop it when the page changes.
+        if (this._expandedPluginList !== page.list) {
+            this._expandedPluginList = page.list;
+            this.expandedPluginCommands.clear();
+        }
+
         page.list.forEach((cmd, idx) => {
+            // Script continuations are folded into their parent 355's summary,
+            // and plugin arguments are shown only when their command is expanded.
+            if (cmd.code === 655) return;
+            if (cmd.code === 657 &&
+                    !this.expandedPluginCommands.has(ECL.pluginArgsOwnerIndex(page.list, idx))) {
+                return;
+            }
+
             const div = document.createElement('div');
             div.dataset.cmdIndex = idx;
             const isSelected = this.selectedCommandIndices.includes(idx);
@@ -1337,9 +1354,26 @@ class DatabaseTroopEditor {
                 div.innerHTML = `<span style="color: var(--color-border-input);">${tt('End')}</span>`;
             } else {
                 const info = this.getCommandDisplay(cmd, page, idx);
+                // A plugin command with argument rows gets the toggle that
+                // hides them; every other row gets the same width of nothing,
+                // so the name column stays aligned down the list.
+                const argRows = ECL.pluginArgsRowCount(page.list, idx);
+                const toggle = argRows > 0
+                    ? `<span class="plugin-args-toggle" style="color: var(--color-text-muted); cursor: pointer; user-select: none; min-width: 14px; display: inline-block; text-align: center;">${this.expandedPluginCommands.has(idx) ? '▼' : '▶'}</span>`
+                    : '<span style="min-width: 14px; display: inline-block;"></span>';
                 div.innerHTML = `<span style="color: var(--color-text-dim); min-width: 32px; display: inline-block;">${String(idx + 1).padStart(3, '0')}</span>` +
-                    `<span style="color: ${info.color}; font-weight: 600; margin-right: 8px;">${this.escapeHTML(info.name)}</span>` +
+                    toggle +
+                    `<span style="color: ${info.color}; font-weight: 600; margin: 0 8px 0 4px;">${this.escapeHTML(info.name)}</span>` +
                     `<span style="color: var(--color-text);">${this.escapeHTML(info.description)}</span>`;
+
+                div.querySelector('.plugin-args-toggle')?.addEventListener('click', (e) => {
+                    // Without this the row's own handler would also select the
+                    // command being folded.
+                    e.stopPropagation();
+                    if (this.expandedPluginCommands.has(idx)) this.expandedPluginCommands.delete(idx);
+                    else this.expandedPluginCommands.add(idx);
+                    this.renderCommandList(container, page);
+                });
             }
 
             // Click to select
