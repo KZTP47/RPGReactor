@@ -3,10 +3,10 @@
  *
  * A sequence is `{ enabled, entries }` and lives in Map###.json as
  * `bgmSequence`. Entries play in order and repeat:
- *   { type: 'track', name, volume, pitch, pan }
+ *   { type: 'track', name, volume, pitch, pan, fadeIn }   (any entry may set `once`)
  *   { type: 'silence', duration }
- *   { type: 'palette', duration, fadeOut, layers: [{ volume, pitch, pan, pool }] }
- * where a pool holds tracks (`{ type: 'track', name }`) and silences.
+ *   { type: 'palette', duration, fadeIn, fadeOut, single, layers: [{ volume, pitch, pan, order, pool }] }
+ * where a pool holds tracks (`{ type: 'track', name, volume }`) and silences.
  *
  * The model functions are static so a save can normalize and validate what
  * the form holds without the DOM; the instance renders one container and
@@ -42,12 +42,14 @@ class RRBgmSequenceEditor {
     static poolEntry(raw) {
         if (!raw || typeof raw !== 'object') return null;
         if (raw.type === 'silence') return { type: 'silence', duration: RRBgmSequenceEditor.seconds(raw.duration) };
-        return { type: 'track', name: typeof raw.name === 'string' ? raw.name : '' };
+        return { type: 'track', name: typeof raw.name === 'string' ? raw.name : '',
+                 volume: RRBgmSequenceEditor.number(raw.volume, 100, 0, 100) };
     }
 
     static layer(raw) {
         const source = raw && typeof raw === 'object' ? raw : {};
         return Object.assign(RRBgmSequenceEditor.levels(source), {
+            order: source.order === 'sequential' || source.order === 'shuffle' ? source.order : 'random',
             pool: (Array.isArray(source.pool) ? source.pool : []).map(RRBgmSequenceEditor.poolEntry).filter(Boolean)
         });
     }
@@ -56,16 +58,21 @@ class RRBgmSequenceEditor {
         if (!raw || typeof raw !== 'object') return null;
         switch (raw.type) {
             case 'silence':
-                return { type: 'silence', duration: RRBgmSequenceEditor.seconds(raw.duration) };
+                return { type: 'silence', duration: RRBgmSequenceEditor.seconds(raw.duration), once: !!raw.once };
             case 'palette':
                 return {
                     type: 'palette',
+                    once: !!raw.once,
+                    single: !!raw.single,
                     duration: RRBgmSequenceEditor.seconds(raw.duration),
+                    fadeIn: RRBgmSequenceEditor.seconds(raw.fadeIn),
                     fadeOut: RRBgmSequenceEditor.seconds(raw.fadeOut),
                     layers: (Array.isArray(raw.layers) ? raw.layers : []).map(RRBgmSequenceEditor.layer)
                 };
             default:
-                return Object.assign({ type: 'track', name: typeof raw.name === 'string' ? raw.name : '' }, RRBgmSequenceEditor.levels(raw));
+                return Object.assign(
+                    { type: 'track', name: typeof raw.name === 'string' ? raw.name : '', fadeIn: RRBgmSequenceEditor.seconds(raw.fadeIn), once: !!raw.once },
+                    RRBgmSequenceEditor.levels(raw));
         }
     }
 
@@ -103,6 +110,7 @@ class RRBgmSequenceEditor {
             } else if (entry.type === 'palette') {
                 if (!entry.layers.length) return say('Entry {n}: a palette needs at least one layer.', { n });
                 if (entry.duration > 0 && entry.fadeOut > entry.duration) return say('Entry {n}: the fade-out cannot be longer than the duration.', { n });
+                if (entry.duration > 0 && entry.fadeIn > entry.duration) return say('Entry {n}: the fade-in cannot be longer than the duration.', { n });
                 for (let l = 0; l < entry.layers.length; l++) {
                     const layer = entry.layers[l];
                     if (!layer.pool.length) return say('Entry {n}, layer {layer}: the pool needs at least one entry.', { n, layer: l + 1 });
@@ -160,12 +168,22 @@ class RRBgmSequenceEditor {
         return `<input type="number" data-path="${path}" value="${this.escape(value)}" min="${min}" max="${max}" step="${step}" style="width: ${width}px; padding: 3px 4px; font-size: 12px; background: var(--color-bg-input); color: var(--color-text); border: 1px solid var(--color-border-input); border-radius: 3px; box-sizing: border-box;">`;
     }
 
+    /** A themed picker for a layer's draw order. */
+    orderSelect(path, value) {
+        const option = (v, label) => `<option value="${v}"${value === v ? ' selected' : ''}>${this.escape(label)}</option>`;
+        return `<select data-path="${path}" style="padding: 2px 4px; font-size: 12px; background: var(--color-bg-input); color: var(--color-text); border: 1px solid var(--color-border-input); border-radius: 3px;">`
+            + option('random', this.tt('Random')) + option('shuffle', this.tt('Shuffle'))
+            + option('sequential', this.tt('In order')) + `</select>`;
+    }
+
     smallButton(action, path, label, title) {
         return `<button type="button" class="bgm-seq-btn" data-action="${action}" data-path="${path}" title="${this.escape(title || label)}">${this.escape(label)}</button>`;
     }
 
-    rowTools(path, index, count) {
-        return `<span style="display: inline-flex; gap: 4px; flex: 0 0 auto;">`
+    rowTools(path, once) {
+        return `<span style="display: inline-flex; gap: 6px; align-items: center; flex: 0 0 auto;">`
+            + `<label title="${this.escape(this.tt('Plays on the first pass only, then is skipped.'))}" style="display: inline-flex; align-items: center; gap: 3px; font-size: 11px; color: var(--color-text-muted);">`
+            + `<input type="checkbox" data-path="${path}.once"${once ? ' checked' : ''}> ${this.escape(this.tt('Intro'))}</label>`
             + this.smallButton('up', path, '▲', this.tt('Move up'))
             + this.smallButton('down', path, '▼', this.tt('Move down'))
             + this.smallButton('remove', path, '×', this.tt('Remove'))
@@ -186,14 +204,15 @@ class RRBgmSequenceEditor {
             return `<div class="bgm-seq-row bgm-seq-depth-1" style="display: flex; gap: 6px; align-items: center;">${head}
                 <span style="flex: 0 0 52px; font-size: 12px;">${this.escape(this.tt('Track'))}</span>
                 ${nameBox(path, entry.name, entry)}
-                ${this.rowTools(path)}
+                <label style="flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; font-size: 12px;">${this.escape(this.tt('Fade-in (s)'))} ${this.numberInput(`${path}.fadeIn`, entry.fadeIn, 0, 600, 0.5, 60)}</label>
+                ${this.rowTools(path, entry.once)}
             </div>`;
         }
         if (entry.type === 'silence') {
             return `<div class="bgm-seq-row bgm-seq-depth-1" style="display: flex; gap: 6px; align-items: center;">${head}
                 <span style="flex: 0 0 52px; font-size: 12px;">${this.escape(this.tt('Silence'))}</span>
                 <span style="flex: 1; display: flex; align-items: center; gap: 4px; font-size: 12px;">${this.numberInput(`${path}.duration`, entry.duration, 0, 3600, 0.5, 64)} ${this.escape(this.tt('s'))}</span>
-                ${this.rowTools(path)}
+                ${this.rowTools(path, entry.once)}
             </div>`;
         }
         const layers = entry.layers.map((layer, l) => {
@@ -202,17 +221,23 @@ class RRBgmSequenceEditor {
                 const ip = `${lp}.pool.${i}`;
                 const body = item.type === 'silence'
                     ? `<span style="display: inline-flex; align-items: center; gap: 4px; font-size: 12px;">${this.escape(this.tt('Silence'))} ${this.numberInput(`${ip}.duration`, item.duration, 0, 3600, 0.5, 60)} ${this.escape(this.tt('s'))}</span>`
-                    : nameBox(ip, item.name, null);
+                    : `${nameBox(ip, item.name, null)}<label style="flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; font-size: 12px;">${this.escape(this.tt('Volume'))} ${this.numberInput(`${ip}.volume`, item.volume, 0, 100, 1, 54)}</label>`;
                 return `<div class="bgm-seq-depth-3" style="display: flex; gap: 6px; align-items: center;">${body}${this.smallButton('remove', ip, '×', this.tt('Remove'))}</div>`;
             }).join('');
+            // Four controls plus the remove button do not fit the column, the
+            // same way the palette's timings did not: the title line keeps the
+            // button where every other row keeps it, and the controls get a line.
             return `<div class="bgm-seq-depth-2">
-                <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 12px;">
+                <div style="display: flex; gap: 8px; align-items: center; font-size: 12px;">
                     <span style="min-width: 52px;">${this.escape(this.tt('Layer {n}').replace('{n}', String(l + 1)))}</span>
+                    <span style="flex: 1;"></span>
+                    ${this.smallButton('remove', lp, '×', this.tt('Remove'))}
+                </div>
+                <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 12px; padding: 3px 0 0 4px;">
                     <label style="display: inline-flex; align-items: center; gap: 4px;">${this.escape(this.tt('Volume'))} ${this.numberInput(`${lp}.volume`, layer.volume, 0, 100, 1, 54)}</label>
                     <label style="display: inline-flex; align-items: center; gap: 4px;">${this.escape(this.tt('Pitch'))} ${this.numberInput(`${lp}.pitch`, layer.pitch, 50, 150, 1, 54)}</label>
                     <label style="display: inline-flex; align-items: center; gap: 4px;">${this.escape(this.tt('Pan'))} ${this.numberInput(`${lp}.pan`, layer.pan, -100, 100, 1, 54)}</label>
-                    <span style="flex: 1;"></span>
-                    ${this.smallButton('remove', lp, '×', this.tt('Remove'))}
+                    <label style="display: inline-flex; align-items: center; gap: 4px;">${this.escape(this.tt('Order'))} ${this.orderSelect(`${lp}.order`, layer.order)}</label>
                 </div>
                 ${pool}
                 <div style="display: flex; gap: 4px; padding: 3px 0 0 14px;">
@@ -221,13 +246,21 @@ class RRBgmSequenceEditor {
                 </div>
             </div>`;
         }).join('');
+        // Three timing fields plus the row tools need 564px and the dialog gives
+        // the column 492, at every window size -- the modal is a fixed 1150 wide.
+        // So the fields get their own line rather than pushing the tools onto a
+        // second one, which left the arrows orphaned under the row they belong to.
         return `<div class="bgm-seq-row bgm-seq-depth-1">
-            <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">${head}
+            <div style="display: flex; gap: 6px; align-items: center;">${head}
                 <span style="flex: 0 0 52px; font-size: 12px;">${this.escape(this.tt('Palette'))}</span>
-                <label style="display: inline-flex; align-items: center; gap: 4px; font-size: 12px;">${this.escape(this.tt('Duration (s)'))} ${this.numberInput(`${path}.duration`, entry.duration, 0, 36000, 1, 64)}</label>
-                <label style="display: inline-flex; align-items: center; gap: 4px; font-size: 12px;">${this.escape(this.tt('Fade-out (s)'))} ${this.numberInput(`${path}.fadeOut`, entry.fadeOut, 0, 600, 0.5, 60)}</label>
                 <span style="flex: 1;"></span>
-                ${this.rowTools(path)}
+                ${this.rowTools(path, entry.once)}
+            </div>
+            <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 3px 0 0 22px;">
+                <label style="display: inline-flex; align-items: center; gap: 4px; font-size: 12px;">${this.escape(this.tt('Duration (s)'))} ${this.numberInput(`${path}.duration`, entry.duration, 0, 36000, 1, 64)}</label>
+                <label style="display: inline-flex; align-items: center; gap: 4px; font-size: 12px;">${this.escape(this.tt('Fade-in (s)'))} ${this.numberInput(`${path}.fadeIn`, entry.fadeIn, 0, 600, 0.5, 60)}</label>
+                <label style="display: inline-flex; align-items: center; gap: 4px; font-size: 12px;">${this.escape(this.tt('Fade-out (s)'))} ${this.numberInput(`${path}.fadeOut`, entry.fadeOut, 0, 600, 0.5, 60)}</label>
+                <label title="${this.escape(this.tt('Each layer plays one track, then the sequence moves on.'))}" style="display: inline-flex; align-items: center; gap: 4px; font-size: 12px;"><input type="checkbox" data-path="${path}.single"${entry.single ? ' checked' : ''}> ${this.escape(this.tt('Move on after one track'))}</label>
             </div>
             ${layers}
             <div style="padding: 3px 0 0 22px;">${this.smallButton('add-layer', path, this.tt('+ Layer'))}</div>
@@ -238,7 +271,7 @@ class RRBgmSequenceEditor {
         const entries = this.sequence.entries;
         const rows = entries.map((entry, index) => this.renderEntry(entry, index)).join('');
         this.container.innerHTML = `
-            <div style="font-size: 11px; color: var(--color-text-muted); line-height: 1.5; margin-bottom: 4px;">${this.escape(this.tt('A palette plays every layer at once; each layer draws at random from its pool. Duration 0 runs until the map changes. Loop points are ignored inside a sequence.'))}</div>
+            <div style="font-size: 11px; color: var(--color-text-muted); line-height: 1.5; margin-bottom: 4px;">${this.escape(this.tt('Each layer plays one track at a time from its pool, at random or in order. Loop points are ignored inside a sequence.'))} ${this.escape(this.tt('A fade-in on the next entry crossfades into it.'))} ${this.escape(this.t('mapProps.bgmSequenceDuration'))}</div>
             <div class="bgm-seq-list" style="display: flex; flex-direction: column; gap: 4px;">${rows || `<div style="font-size: 12px; color: var(--color-text-muted); padding: 4px 0;">${this.escape(this.tt('No entries yet.'))}</div>`}</div>
             <div style="display: flex; gap: 4px; margin-top: 6px;">
                 ${this.smallButton('add-track', '', this.tt('+ Track'))}
@@ -275,13 +308,13 @@ class RRBgmSequenceEditor {
         const { node, list, index } = this.resolve(path);
         switch (action) {
             case 'add-track':
-                this.sequence.entries.push(Object.assign({ type: 'track', name: '' }, RRBgmSequenceEditor.levels(null)));
+                this.sequence.entries.push(Object.assign({ type: 'track', name: '', fadeIn: 0 }, RRBgmSequenceEditor.levels(null)));
                 break;
             case 'add-silence':
                 this.sequence.entries.push({ type: 'silence', duration: 10 });
                 break;
             case 'add-palette':
-                this.sequence.entries.push({ type: 'palette', duration: 0, fadeOut: 4, layers: [RRBgmSequenceEditor.layer(null)] });
+                this.sequence.entries.push({ type: 'palette', duration: 0, fadeIn: 0, fadeOut: 4, layers: [RRBgmSequenceEditor.layer(null)] });
                 break;
             case 'add-layer':
                 if (node && node.type === 'palette') node.layers.push(RRBgmSequenceEditor.layer(null));
@@ -318,10 +351,15 @@ class RRBgmSequenceEditor {
         const key = parts.pop();
         const { node } = this.resolve(parts.join('.'));
         if (!node) return;
-        if (key === 'duration' || key === 'fadeOut') node[key] = RRBgmSequenceEditor.seconds(input.value);
+        // An unlisted key is not merely ignored: the write-back below then
+        // restores the old value, so the field reads as refusing to be typed in
+        // at all. Anything numberInput() renders has to appear here.
+        if (key === 'duration' || key === 'fadeOut' || key === 'fadeIn') node[key] = RRBgmSequenceEditor.seconds(input.value);
         else if (key === 'volume') node[key] = RRBgmSequenceEditor.number(input.value, 100, 0, 100);
         else if (key === 'pitch') node[key] = RRBgmSequenceEditor.number(input.value, 100, 50, 150);
         else if (key === 'pan') node[key] = RRBgmSequenceEditor.number(input.value, 0, -100, 100);
+        else if (key === 'order') node[key] = input.value === 'sequential' || input.value === 'shuffle' ? input.value : 'random';
+        else if (key === 'once' || key === 'single') { node[key] = !!input.checked; return; }
         input.value = node[key];
     }
 

@@ -125,3 +125,43 @@ test('an unterminated block is left expanded rather than swallowing the rest', (
     assert.equal(instance.collapsedHiddenIndices(list).size, 0);
     assert.equal(instance.collapsedBlockSize(list, 0), 0);
 });
+
+// 357 Plugin Command                    0
+//   657 "Round Count = 1"               1
+//   657 "Round Duration = 90"           2
+// 357 Plugin Command, no arg rows       3
+// 356 legacy plugin command             4
+function pluginCommands() {
+    return [
+        { code: 357, indent: 0, parameters: ['P', 'cmd', 'Do Thing', { a: '1', b: '2' }] },
+        { code: 657, indent: 0, parameters: ['Round Count = 1'] },
+        { code: 657, indent: 0, parameters: ['Round Duration = 90'] },
+        { code: 357, indent: 0, parameters: ['P', 'bare', 'Bare', { c: '3' }] },
+        { code: 356, indent: 0, parameters: ['LegacyPlugin doThing 5'] }
+    ];
+}
+
+test('a plugin command owns exactly its own trailing argument rows', () => {
+    const list = pluginCommands();
+    assert.equal(EventCommandList.pluginArgsRowCount(list, 0), 2);
+    assert.equal(EventCommandList.pluginArgsRowCount(list, 3), 0, 'no 657 rows follow');
+    assert.equal(EventCommandList.pluginArgsRowCount(list, 4), 0, 'a 356 never has them');
+    assert.equal(EventCommandList.pluginArgsRowCount(list, 1), 0, 'a 657 is not itself an owner');
+});
+
+test('argument rows are hidden until their own plugin command is expanded', () => {
+    const list = pluginCommands();
+    const instance = lister();
+    instance.expandedPluginCommands = new Set();
+
+    assert.equal(instance.isPluginArgsExpanded(list, 1), false);
+    assert.equal(instance.isPluginArgsExpanded(list, 2), false);
+
+    instance.expandedPluginCommands.add(0);
+    assert.equal(instance.isPluginArgsExpanded(list, 1), true);
+    assert.equal(instance.isPluginArgsExpanded(list, 2), true);
+
+    // Expanding a different command must not reveal this one's rows.
+    instance.expandedPluginCommands = new Set([3]);
+    assert.equal(instance.isPluginArgsExpanded(list, 1), false);
+});

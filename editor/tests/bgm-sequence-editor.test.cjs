@@ -26,9 +26,9 @@ test('a sequence normalizes to its three entry shapes with clamped levels, and a
         null, 'junk'
     ] };
     const sequence = plain(E.normalize(raw));
-    assert.deepEqual(sequence.entries[0], { type: 'track', name: 'Forest', volume: 100, pitch: 50, pan: 0 });
-    assert.deepEqual(sequence.entries[1], { type: 'silence', duration: 2.6 });
-    assert.deepEqual(sequence.entries[2], { type: 'palette', duration: 30, fadeOut: 4, layers: [{ volume: 70, pitch: 100, pan: 0, pool: [{ type: 'track', name: 'A' }, { type: 'silence', duration: 0 }] }] });
+    assert.deepEqual(sequence.entries[0], { type: 'track', name: 'Forest', fadeIn: 0, once: false, volume: 100, pitch: 50, pan: 0 });
+    assert.deepEqual(sequence.entries[1], { type: 'silence', duration: 2.6, once: false });
+    assert.deepEqual(sequence.entries[2], { type: 'palette', once: false, single: false, duration: 30, fadeIn: 0, fadeOut: 4, layers: [{ volume: 70, pitch: 100, pan: 0, order: 'random', pool: [{ type: 'track', name: 'A', volume: 100 }, { type: 'silence', duration: 0 }] }] });
     assert.deepEqual(plain(E.levels(null)), { volume: 100, pitch: 100, pan: 0 }, 'a new row starts at full volume and pitch, not at the slider minimums');
     assert.deepEqual(plain(E.layer(null)).volume, 100);
     assert.equal(sequence.entries.length, 3);
@@ -84,7 +84,7 @@ test('the list edits its copy in place: add, move, remove, retype a number, and 
     assert.equal(picks[0].levels, null, 'a pool entry has no levels of its own');
     assert.deepEqual(picks[0].previewLevels, { volume: 100, pitch: 100, pan: 0 }, 'it previews with its layer');
     await editor.pick('entries.0', editor.sequence.entries[0], null);
-    assert.deepEqual(plain(editor.value().entries[0]), { type: 'track', name: 'Chosen', volume: 55, pitch: 100, pan: 10 }, 'a track row takes the picker levels');
+    assert.deepEqual(plain(editor.value().entries[0]), { type: 'track', name: 'Chosen', fadeIn: 0, once: false, volume: 55, pitch: 100, pan: 10 }, 'a track row takes the picker levels');
     assert.match(container.innerHTML, /bgm-seq-row/);
     editor.setEnabled(false);
     assert.equal(editor.value().enabled, false);
@@ -127,9 +127,50 @@ function controllerFor(mapData, sequence) {
     return controller;
 }
 
+test('every control round-trips, because an unhandled key silently reverts', () => {
+    const E = loadEditorClass();
+    const handlers = {};
+    const container = { innerHTML: '', addEventListener: (type, fn) => { handlers[type] = fn; }, contains: () => true };
+    const editor = new E({ container, tt: t => t, t: () => 'levels', pickTrack: () => Promise.resolve(null) });
+    editor.load({ enabled: true, entries: [
+        { type: 'track', name: 'A', fadeIn: 1 },
+        { type: 'silence', duration: 5 },
+        { type: 'palette', duration: 60, fadeIn: 2, fadeOut: 4, layers: [
+            { volume: 90, pitch: 100, pan: 0, pool: [{ type: 'track', name: 'B' }, { type: 'silence', duration: 3 }] }
+        ] }
+    ] });
+
+    // onChange writes the model back into the control, so a key it does not
+    // handle presents as a control that refuses input -- which is how a missing
+    // fadeIn branch reached a running editor. Sweep every control the form
+    // renders, not just the ones a test happened to think of.
+    const wanted = { duration: 3, fadeIn: 3, fadeOut: 3, volume: 70, pitch: 120, pan: -20,
+                     once: true, single: true, order: 'shuffle' };
+    const found = [];
+    editor.container.innerHTML.replace(/<(input|select)[^>]*>/g, tag => {
+        const path = (tag.match(/data-path="([^"]+)"/) || [])[1];
+        if (!path) return tag;
+        found.push({ path, checkbox: /type="checkbox"/.test(tag), select: /^<select/.test(tag) });
+        return tag;
+    });
+    assert.ok(found.some(f => f.path.endsWith('.fadeIn')), 'the sweep reaches a fade-in field');
+    assert.ok(found.some(f => f.checkbox), 'the sweep reaches a checkbox');
+    assert.ok(found.some(f => f.select), 'the sweep reaches a select');
+
+    for (const { path, checkbox } of found) {
+        const key = path.split('.').pop();
+        assert.ok(key in wanted, path + ' has no known-good value; add one');
+        const target = checkbox
+            ? { dataset: { path }, checked: wanted[key], value: 'on' }
+            : { dataset: { path }, value: String(wanted[key]) };
+        handlers.change({ target });
+        assert.deepEqual(editor.resolve(path).node, wanted[key], path + ' reached the model');
+    }
+});
+
 test('Map Properties carries every field the map already has and writes the sequence beside them', async () => {
     const map = { id: 3, name: 'Woods', width: 20, height: 15, data: [1, 2], events: [null], pluginField: { kept: true }, _transient: 1, bgm: { name: 'Old' } };
-    const sequence = { enabled: true, entries: [{ type: 'track', name: 'A', volume: 80, pitch: 100, pan: 0 }, { type: 'silence', duration: 2 }] };
+    const sequence = { enabled: true, entries: [{ type: 'track', name: 'A', fadeIn: 0, once: false, volume: 80, pitch: 100, pan: 0 }, { type: 'silence', duration: 2, once: false }] };
     const controller = controllerFor(map, sequence);
     assert.equal(await controller.saveMapProperties(), true);
     const written = controller.written;
@@ -147,9 +188,9 @@ test('a blank sequence leaves the key off, a disabled one with entries stays, an
     assert.equal(await controller.saveMapProperties(), true);
     assert.equal('bgmSequence' in controller.written, false);
 
-    controller = controllerFor(map, { enabled: false, entries: [{ type: 'silence', duration: 0 }] });
+    controller = controllerFor(map, { enabled: false, entries: [{ type: 'silence', duration: 0, once: false }] });
     assert.equal(await controller.saveMapProperties(), true, 'disabled is not validated');
-    assert.deepEqual(controller.written.bgmSequence, { enabled: false, entries: [{ type: 'silence', duration: 0 }] });
+    assert.deepEqual(controller.written.bgmSequence, { enabled: false, entries: [{ type: 'silence', duration: 0, once: false }] });
 
     controller = controllerFor(map, { enabled: true, entries: [{ type: 'silence', duration: 0 }] });
     assert.equal(await controller.saveMapProperties(), false);

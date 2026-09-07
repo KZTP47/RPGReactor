@@ -654,6 +654,33 @@ class EventCommandList {
         return !!(command && EventCommandList.BLOCK_STRUCTURES[command.code]);
     }
 
+    /**
+     * How many 657 Plugin Args rows the plugin command at `index` owns.
+     * Zero for a 356, for a 357 written without them, and for anything else.
+     */
+    static pluginArgsRowCount(list, index) {
+        if (list?.[index]?.code !== 357) return 0;
+        const range = EventCommandList.contiguousBlockRange(list, index, 357, 657);
+        return range ? range.end - range.start : 0;
+    }
+
+    /**
+     * Index of the plugin command that owns the 657 row at `index`, or -1.
+     * Shared with the troop and common-event lists, which render their own
+     * rows but must agree with this one on which command an argument belongs to.
+     */
+    static pluginArgsOwnerIndex(list, index) {
+        if (list?.[index]?.code !== 657) return -1;
+        const range = EventCommandList.contiguousBlockRange(list, index, 357, 657);
+        return range ? range.start : -1;
+    }
+
+    /** True when the 657 row at `index` belongs to an expanded plugin command. */
+    isPluginArgsExpanded(list, index) {
+        const owner = EventCommandList.pluginArgsOwnerIndex(list, index);
+        return owner >= 0 && this.expandedPluginCommands.has(owner);
+    }
+
     isBlockCollapsed(command) {
         return this.isBlockOpener(command) && this.collapsedBlocks.has(command);
     }
@@ -711,6 +738,15 @@ class EventCommandList {
         listContainer.style.cssText = 'font-family: monospace; font-size: 12px;';
 
         this.hydrateCollapsedBlocks(page);
+        // Plugin-command expansion is keyed by position, so it only means
+        // anything for the list it was recorded against. Dropping it when the
+        // list changes stops a stale index expanding an unrelated command on
+        // the next page. Toggling does not replace page.list, so a fold
+        // survives its own refresh.
+        if (this._expandedPluginList !== page.list) {
+            this._expandedPluginList = page.list;
+            this.expandedPluginCommands.clear();
+        }
         const hiddenByCollapse = this.collapsedHiddenIndices(page.list);
 
         page.list.forEach((command, index) => {
@@ -735,6 +771,14 @@ class EventCommandList {
 
         // Hide 655 Script continuation rows - folded into parent 355's description
         if (command.code === 655) {
+            return null;
+        }
+
+        // Hide 657 Plugin Args rows unless their plugin command is expanded.
+        // They used to render unconditionally AND be duplicated by the parent's
+        // ▶/▼, which showed every argument twice; the toggle is now the single
+        // control for them.
+        if (command.code === 657 && !this.isPluginArgsExpanded(page.list, index)) {
             return null;
         }
 
@@ -798,10 +842,16 @@ class EventCommandList {
 
         // Expand/collapse button for plugin commands
         const isPluginCommand = command.code === 356 || command.code === 357;
+        // Rows the toggle hides. Authored 657 lines are preferred over the raw
+        // parameters[3] object because they carry the plugin's own @arg labels
+        // ("Round Count = 1") rather than its internal keys ("RoundCount:num").
+        const pluginArgRows = isPluginCommand
+            ? EventCommandList.pluginArgsRowCount(page.list, index)
+            : 0;
         if (isPluginCommand) {
             const params = command.parameters || [];
             const args = params[3] || {};
-            const hasArgs = Object.keys(args).length > 0;
+            const hasArgs = pluginArgRows > 0 || Object.keys(args).length > 0;
 
             if (hasArgs) {
                 const isExpanded = this.expandedPluginCommands.has(index);
@@ -915,8 +965,11 @@ class EventCommandList {
 
         div.appendChild(contentDiv);
 
-        // Add nested argument display for expanded plugin commands
-        if (isPluginCommand && this.expandedPluginCommands.has(index)) {
+        // Nested argument display, for expanded plugin commands that have no
+        // authored 657 rows to show instead — a 356, or 357 data written
+        // without them. When they exist they are the display, so rendering
+        // parameters[3] here as well would list every argument twice.
+        if (isPluginCommand && pluginArgRows === 0 && this.expandedPluginCommands.has(index)) {
             const params = command.parameters || [];
             const args = params[3] || {};
 
@@ -1381,6 +1434,7 @@ class EventCommandList {
             403: { name: 'When Cancel', color: 'var(--color-syntax-string)' },
             404: { name: 'End', color: 'var(--color-syntax-comment)' },
             405: { name: 'Scrolling Text', color: 'var(--color-syntax-comment)' },
+            408: { name: 'Comment', color: 'var(--color-syntax-string)' },
             411: { name: 'Else', color: 'var(--color-syntax-comment)' },
             412: { name: 'End', color: 'var(--color-syntax-comment)' },
             413: { name: 'Repeat Above', color: 'var(--color-syntax-comment)' },
@@ -1531,6 +1585,12 @@ class EventCommandList {
                 break;
             case 408:
                 // Comment continuation - show text
+                description = params[0] || '';
+                break;
+            case 657:
+                // Plugin Args continuation - already a formatted "Name = value"
+                // line. Without this it fell to the JSON.stringify default and
+                // rendered as ["Round Count = 1"].
                 description = params[0] || '';
                 break;
             case 402: {

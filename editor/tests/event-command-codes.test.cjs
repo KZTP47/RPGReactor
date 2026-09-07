@@ -117,3 +117,22 @@ test('pictureEditorFor rejects malformed, unknown, and noncanonical picture oper
     assert.equal(EventCommandList.pictureEditorFor(alteredBody, editors), null);
     assert.equal(EventCommandList.pictureEditorFor(canonical, editors), editors.erase);
 });
+
+test('continuation rows are named, not reported as unknown commands', () => {
+    const formatter = Object.create(EventCommandList.prototype);
+    formatter.eventEditor = {};
+
+    // A multi-line comment. Every line after the first is a 408, and each used
+    // to render as a red "Unknown (408)" beside its own perfectly good text.
+    const comment = formatter.getCommandInfo({ code: 408, indent: 0, parameters: [' Name: Battle8'] });
+    assert.equal(comment.name, 'Comment');
+    assert.equal(comment.color, 'var(--color-syntax-string)');
+    assert.equal(comment.description, ' Name: Battle8');
+
+    // A plugin argument line. Already formatted by the plugin command editor,
+    // so it must be shown as-is rather than through the JSON fallback that
+    // turned it into ["Round Count = 1"].
+    const args = formatter.getCommandInfo({ code: 657, indent: 0, parameters: ['Round Count = 1'] });
+    assert.equal(args.name, 'Plugin Args');
+    assert.equal(args.description, 'Round Count = 1');
+});
