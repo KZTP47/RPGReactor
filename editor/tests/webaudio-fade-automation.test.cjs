@@ -41,7 +41,8 @@ function recordingParam({ value = 1, canHold = true } = {}) {
 }
 
 const buffer = (WebAudio, param, volume) => ({
-    _gainNode: { gain: param },
+    _fadeGainNode: { gain: param },
+    _gainNode: { gain: recordingParam().param },
     _volume: volume,
     _loadListeners: [],
     isReady: () => true,
@@ -84,10 +85,12 @@ test('a fade-in clears the timeline and forces zero, because a gain node starts 
     const { param, calls } = recordingParam({ value: 0.8 });
     buffer(WebAudio, param, 0.8).fadeIn(3);
 
+    // The ramp target is 1, not _volume: the fade stage carries an envelope and
+    // the level it is heard through lives downstream, in _gainNode.
     assert.deepEqual(calls, [
         ['cancelScheduledValues', clock.now],
         ['setValueAtTime', 0, clock.now],
-        ['linearRamp', 0.8, clock.now + 3]
+        ['linearRamp', 1, clock.now + 3]
     ]);
 });
 
@@ -109,6 +112,7 @@ test('a fade-out interrupting a fade-in leaves exactly one ramp pending', () => 
     // time from governing the second.
     assert.ok(calls.indexOf(clears[1]) < calls.indexOf(ramps[1]));
     assert.deepEqual(ramps[1], ['linearRamp', 0, clock.now + 2]);
+    assert.deepEqual(ramps[0], ['linearRamp', 1, 100 + 2]);
 });
 
 test('the master fades clear the timeline the same way', () => {
@@ -131,4 +135,49 @@ test('the master fades clear the timeline the same way', () => {
         ['setValueAtTime', 0, clock.now],
         ['linearRamp', 1, clock.now + 1.5]
     ]);
+});
+
+test('the graph puts the fade stage between the sources and the volume it is heard through', () => {
+    const { WebAudio, clock } = loadFades();
+    const slice = (from, to) => core.slice(core.indexOf(from), core.indexOf(to, core.indexOf(from)));
+    const context = { WebAudio, console, Math, Object };
+    vm.createContext(context);
+    vm.runInContext(
+        slice('WebAudio.prototype._createPannerNode = function', 'WebAudio.prototype._createAllSourceNodes = function') +
+        slice('WebAudio.prototype._createSourceNode = function', 'WebAudio.prototype._removeNodes = function') +
+        slice('WebAudio.prototype._removeNodes = function', 'WebAudio.prototype._createEndTimer = function'),
+        context);
+
+    const node = kind => ({ kind, out: null, gain: recordingParam().param, connect(target) { this.out = target; } });
+    WebAudio._masterGainNode = node('master');
+    WebAudio._context = {
+        createGain: () => node('gain'),
+        createPanner: () => node('panner'),
+        createBufferSource: () => Object.assign(node('source'), { playbackRate: recordingParam().param })
+    };
+
+    const track = {
+        _volume: 0.5, _pitch: 1, _pan: 0, _loop: false, _isLoaded: true,
+        _loopStartTime: 0, _loopLengthTime: 0, _sourceNodes: [], _buffers: [{ duration: 4 }],
+        _updatePanner() {},
+        _createPannerNode: WebAudio.prototype._createPannerNode,
+        _createGainNode: WebAudio.prototype._createGainNode,
+        _createSourceNode: WebAudio.prototype._createSourceNode,
+        _removeNodes: WebAudio.prototype._removeNodes,
+        _stopSourceNode() {}
+    };
+    track._createPannerNode();
+    track._createGainNode();
+    track._createSourceNode(0);
+
+    assert.equal(track._sourceNodes[0].out, track._fadeGainNode, 'sources feed the fade stage');
+    assert.equal(track._fadeGainNode.out, track._gainNode, 'the fade stage feeds the volume stage');
+    assert.equal(track._gainNode.out, track._pannerNode, 'the volume stage still feeds the panner');
+    assert.equal(track._pannerNode.out, WebAudio._masterGainNode);
+    // The fade stage opens at 1 and the volume stage carries the level, so the
+    // product is the authored volume until something fades.
+    assert.equal(track._fadeGainNode.gain.value, 1);
+
+    track._removeNodes();
+    assert.equal(track._fadeGainNode, null, 'teardown drops the fade stage with the rest');
 });

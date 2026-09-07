@@ -8362,6 +8362,7 @@ WebAudio.prototype.clear = function() {
     this._fetchedData = [];
     this._buffers = [];
     this._sourceNodes = [];
+    this._fadeGainNode = null;
     this._gainNode = null;
     this._pannerNode = null;
     this._totalTime = 0;
@@ -8591,11 +8592,13 @@ WebAudio.prototype.destroy = function() {
  */
 WebAudio.prototype.fadeIn = function(duration) {
     if (this.isReady()) {
-        if (this._gainNode) {
-            const gain = this._gainNode.gain;
+        if (this._fadeGainNode) {
+            const gain = this._fadeGainNode.gain;
             const currentTime = WebAudio._currentTime();
+            // Forced to zero rather than held: the stage is created open, so a
+            // fade-in that started from the live value would not be a fade.
             WebAudio._restartGain(gain, 0, currentTime);
-            gain.linearRampToValueAtTime(this._volume, currentTime + duration);
+            gain.linearRampToValueAtTime(1, currentTime + duration);
         }
     } else {
         this.addLoadListener(() => this.fadeIn(duration));
@@ -8608,10 +8611,10 @@ WebAudio.prototype.fadeIn = function(duration) {
  * @param {number} duration - Fade-out time in seconds.
  */
 WebAudio.prototype.fadeOut = function(duration) {
-    if (this._gainNode) {
-        const gain = this._gainNode.gain;
+    if (this._fadeGainNode) {
+        const gain = this._fadeGainNode.gain;
         const currentTime = WebAudio._currentTime();
-        // Held, not pinned to _volume: a track fading out from partway through a
+        // Held, not forced open: a track fading out from partway through a
         // fade-in must continue down from where it is rather than jump to full.
         WebAudio._holdGain(gain, currentTime);
         gain.linearRampToValueAtTime(0, currentTime + duration);
@@ -9113,6 +9116,15 @@ WebAudio.prototype._createGainNode = function() {
     this._gainNode = WebAudio._context.createGain();
     this._gainNode.gain.setValueAtTime(this._volume, currentTime);
     this._gainNode.connect(this._pannerNode);
+    // Fades own a stage of their own, upstream of the volume they are heard
+    // through. Sharing one node made the two cancel each other: a duck or a
+    // volume change during a fade was swallowed whole by the running ramp,
+    // and a fade starting during a volume change inherited a stale target.
+    // The fade stage carries a plain 0..1 envelope; what it is multiplied by
+    // stays entirely in _gainNode, so neither has to know about the other.
+    this._fadeGainNode = WebAudio._context.createGain();
+    this._fadeGainNode.gain.setValueAtTime(1, currentTime);
+    this._fadeGainNode.connect(this._gainNode);
 };
 
 WebAudio.prototype._createAllSourceNodes = function() {
@@ -9129,7 +9141,7 @@ WebAudio.prototype._createSourceNode = function(index) {
     sourceNode.loopStart = this._loopStartTime;
     sourceNode.loopEnd = this._loopStartTime + this._loopLengthTime;
     sourceNode.playbackRate.setValueAtTime(this._pitch, currentTime);
-    sourceNode.connect(this._gainNode);
+    sourceNode.connect(this._fadeGainNode);
     this._sourceNodes[index] = sourceNode;
 };
 
@@ -9137,6 +9149,7 @@ WebAudio.prototype._removeNodes = function() {
     if (this._sourceNodes && this._sourceNodes.length > 0) {
         this._stopSourceNode();
         this._sourceNodes = [];
+        this._fadeGainNode = null;
         this._gainNode = null;
         this._pannerNode = null;
     }
