@@ -8366,7 +8366,6 @@ WebAudio.prototype.clear = function() {
     this._gainNode = null;
     this._pannerNode = null;
     this._totalTime = 0;
-    this._audibleDuration = null;
     this._sampleRate = 0;
     this._loop = 0;
     this._loopStart = 0;
@@ -8622,54 +8621,6 @@ WebAudio.prototype.fadeOut = function(duration) {
     }
     this._isPlaying = false;
     this._loadListeners = [];
-};
-
-/**
- * How far in the sound actually stops, ignoring a silent tail. A file often runs
- * on past its last note -- a decaying piano bed measured here held 5.3s of
- * silence after 6.9s of music -- and anything that schedules against the end of
- * the file rather than the end of the sound spends that time fading nothing.
- *
- * Scanned coarsely and then refined, so the cost is a few thousand samples
- * rather than the whole track, and cached because it cannot change.
- *
- * @returns {number} Seconds until the audio goes quiet for good.
- */
-WebAudio.prototype.audibleDuration = function() {
-    if (this._audibleDuration != null) return this._audibleDuration;
-    const total = this._totalTime;
-    if (!(total > 0) || !this._buffers || this._buffers.length === 0) return total;
-    const THRESHOLD = 0.005;   // about -46 dB: below this nothing is heard
-    const STRIDE = 128;        // ~3ms at 44.1kHz, finer than any fade needs
-    let trailing = 0;
-    for (let i = this._buffers.length - 1; i >= 0; i--) {
-        const buffer = this._buffers[i];
-        const channels = [];
-        for (let c = 0; c < buffer.numberOfChannels; c++) {
-            channels.push(buffer.getChannelData(c));
-        }
-        const loudAt = index => {
-            for (const data of channels) {
-                if (Math.abs(data[index]) > THRESHOLD) return true;
-            }
-            return false;
-        };
-        let coarse = -1;
-        for (let index = buffer.length - 1; index >= 0; index -= STRIDE) {
-            if (loudAt(index)) { coarse = index; break; }
-        }
-        if (coarse >= 0) {
-            let last = Math.min(buffer.length - 1, coarse + STRIDE);
-            while (last > coarse && !loudAt(last)) last--;
-            trailing += (buffer.length - 1 - last) / buffer.sampleRate;
-            this._audibleDuration = Math.max(0, total - trailing);
-            return this._audibleDuration;
-        }
-        trailing += buffer.duration;
-    }
-    // Silent throughout: nothing to trim, and no reason to treat it as zero.
-    this._audibleDuration = total;
-    return this._audibleDuration;
 };
 
 /**
@@ -9032,7 +8983,6 @@ WebAudio.prototype._onDecode = function(buffer) {
     }
     this._buffers.push(buffer);
     this._totalTime += buffer.duration;
-    this._audibleDuration = null;
     if (this._loopLength > 0 && this._sampleRate > 0) {
         this._loopStartTime = this._loopStart / this._sampleRate;
         this._loopLengthTime = this._loopLength / this._sampleRate;

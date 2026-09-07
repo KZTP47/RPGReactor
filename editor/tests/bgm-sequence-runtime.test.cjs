@@ -32,9 +32,6 @@ function loadAudioManager({ mapId = 1, map = null } = {}) {
             // wrap early on a tagged track.
             this._loopStartTime = 0;
             this._loopLengthTime = WebAudio.loopSeconds || this._totalTime;
-            // Where the sound stops, which a file with a decaying tail reaches
-            // well before its last sample.
-            this._audibleSeconds = WebAudio.audibleSeconds || 0;
             this.fadedOut = null;
             this.fadedIn = null;
             this.volume = 1;
@@ -46,7 +43,6 @@ function loadAudioManager({ mapId = 1, map = null } = {}) {
         fadeOut(duration) { this.fadedOut = duration; this.playing = false; }
         fadeIn(duration) { this.fadedIn = duration; }
         addStopListener(fn) { this._stopListeners.push(fn); }
-        audibleDuration() { return this._audibleSeconds > 0 ? this._audibleSeconds : this._totalTime; }
         seek() {
             let pos = this._startedAt === null ? 0 : clock.now - this._startedAt;
             if (this._loopLengthTime > 0) while (pos >= this._loopStartTime + this._loopLengthTime) pos -= this._loopLengthTime;
@@ -684,26 +680,4 @@ test('the overlap decision asks the entry that will actually play, not the one b
     tick(30);
     assert.equal(AudioManager._bgmSequence.palette.fading, true, 'it faded rather than overlapping');
     assert.equal(live().length, 1, 'nothing started over the top of the outgoing bed');
-});
-
-test('a hand-over is timed from where the sound stops, not where the file does', () => {
-    const map = { bgm: { name: '', volume: 90, pitch: 100, pan: 0 }, bgmSequence: { enabled: true, entries: [
-        { type: 'palette', duration: 0, fadeIn: 2, fadeOut: 4, layers: [
-            { volume: 100, pitch: 100, pan: 0, pool: [{ type: 'track', name: 'Decay' }, { type: 'track', name: 'Next' }] }
-        ] } ] } };
-    const { AudioManager, context, created, live, tick } = loadAudioManager({ map });
-    context.WebAudio.trackSeconds = 12.2;     // the file
-    context.WebAudio.audibleSeconds = 6.9;    // where the music actually stops
-    AudioManager.playBgm(AudioManager.mapBgmObject(map, 1));
-
-    tick(2.5);
-    assert.equal(created.length, 1, 'nothing yet');
-    tick(0.6);   // 3.1s: past 6.9 - 4, so the hand-over is due
-    assert.equal(created.length, 2, 'it began before the music died away');
-    assert.deepEqual(live().sort(), ['Decay', 'Next'].sort());
-
-    // Timed from the file it would have waited until 8.2s, by which point the
-    // track had been silent for over a second.
-    assert.ok(3.1 < 8.2);
-    context.WebAudio.audibleSeconds = 0;
 });

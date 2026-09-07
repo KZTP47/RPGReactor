@@ -2157,9 +2157,7 @@ AudioManager._bgmSequenceLayerIsEnding = function(layer, palette) {
     const buffer = layer.buffer;
     if (!buffer || buffer._rrRetired || !(palette.fadeOut > 0)) return false;
     if (!buffer.isPlaying || !buffer.isPlaying()) return false;
-    // Where the sound stops, not where the file does: a track with a silent tail
-    // would otherwise spend its crossfade fading something already inaudible.
-    const total = buffer.audibleDuration ? buffer.audibleDuration() : buffer._totalTime;
+    const total = buffer._totalTime;
     // A track shorter than its own crossfade would hand over before it is heard.
     if (!(total > palette.fadeOut)) return false;
     // play() marks a buffer playing while it is still decoding, and _startTime
