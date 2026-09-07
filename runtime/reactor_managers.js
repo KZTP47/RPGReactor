@@ -2097,7 +2097,16 @@ AudioManager._bgmSequenceLayerIsEnding = function(layer, palette) {
     const total = buffer._totalTime;
     // A track shorter than its own crossfade would hand over before it is heard.
     if (!(total > palette.fadeOut)) return false;
-    return buffer.seek() >= total - palette.fadeOut;
+    // play() marks a buffer playing while it is still decoding, and _startTime
+    // is only set once playback really begins; reading it before that would
+    // hand over a track nobody has heard.
+    if (!(buffer._startTime > 0)) return false;
+    // Not seek(): that wraps at the file's loop points whether or not the source
+    // is looping, and a sequence plays every track with looping off, so a file
+    // whose loop region is shorter than itself would wrap before reaching its
+    // end and never hand over at all.
+    const played = (WebAudio._currentTime() - buffer._startTime) * (buffer._pitch || 1);
+    return played >= total - palette.fadeOut;
 };
 
 AudioManager._endBgmSequencePalette = function(state, fadeOut) {

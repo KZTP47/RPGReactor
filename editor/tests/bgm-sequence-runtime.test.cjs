@@ -25,18 +25,29 @@ function loadAudioManager({ mapId = 1, map = null } = {}) {
             // Length and position, so a test can drive a track to its own end.
             this._totalTime = WebAudio.trackSeconds || 0;
             this._startedAt = null;
+            this._isPlaying = false;
+            this._startTime = 0;
+            this._pitch = 1;
+            // A loop region shorter than the file, which is what makes seek()
+            // wrap early on a tagged track.
+            this._loopStartTime = 0;
+            this._loopLengthTime = WebAudio.loopSeconds || this._totalTime;
             this.fadedOut = null;
             this.fadedIn = null;
             this.volume = 1;
             created.push(this);
         }
-        play(loop) { this.loop = loop; this.playing = true; this._startedAt = clock.now; }
+        play(loop) { this.loop = loop; this.playing = true; this._isPlaying = true; this._startedAt = clock.now; this._startTime = clock.now; }
         stop() { this.playing = false; while (this._stopListeners.length) this._stopListeners.shift()(); }
         destroy() { this.destroyed = true; this.stop(); }
         fadeOut(duration) { this.fadedOut = duration; this.playing = false; }
         fadeIn(duration) { this.fadedIn = duration; }
         addStopListener(fn) { this._stopListeners.push(fn); }
-        seek() { return this._startedAt === null ? 0 : clock.now - this._startedAt; }
+        seek() {
+            let pos = this._startedAt === null ? 0 : clock.now - this._startedAt;
+            if (this._loopLengthTime > 0) while (pos >= this._loopStartTime + this._loopLengthTime) pos -= this._loopLengthTime;
+            return pos;
+        }
         isError() { return !!this.error; }
         isPlaying() { return this.playing; }
         /** What the end timer does when the track plays out. */
@@ -487,4 +498,45 @@ test('a sequence of nothing but once-entries keeps playing rather than falling s
     AudioManager.playBgm(AudioManager.mapBgmObject(map, 1));
     for (let i = 0; i < 4; i++) created[created.length - 1].end();
     assert.ok(created.length >= 4, 'it keeps finding something to play: ' + created.map(b => b.name).join(','));
+});
+
+test('a loop-tagged track still hands over at its end, though seek() would wrap first', () => {
+    // LOOPSTART/LOOPLENGTH stay populated even though a sequence plays with
+    // looping off, and seek() wraps on them regardless. A track whose loop
+    // region is shorter than the file would wrap back to zero and never reach
+    // its end, so the hand-over has to read the unwrapped position.
+    const map = { bgm: { name: '', volume: 90, pitch: 100, pan: 0 }, bgmSequence: { enabled: true, entries: [
+        { type: 'palette', duration: 0, fadeIn: 2, fadeOut: 4, layers: [
+            { volume: 100, pitch: 100, pan: 0, pool: [{ type: 'track', name: 'Tagged' }, { type: 'track', name: 'Next' }] }
+        ] }
+    ] } };
+    const { AudioManager, context, created, live, tick } = loadAudioManager({ map });
+    context.WebAudio.trackSeconds = 90;
+    context.WebAudio.loopSeconds = 30;      // a 30s loop region inside a 90s file
+    AudioManager.playBgm(AudioManager.mapBgmObject(map, 1));
+    const first = created[0];
+    assert.ok(first.seek() < 30, 'seek wraps inside the loop region, as the engine does');
+
+    tick(86);
+    assert.equal(created.length, 2, 'the hand-over fired on the real end, not the wrapped position');
+    assert.equal(first.fadedOut, 4);
+    assert.deepEqual(live().sort(), [first.name, created[1].name].sort());
+    context.WebAudio.loopSeconds = 0;
+});
+
+test('a track still loading does not hand over before it has started', () => {
+    // play() marks _isPlaying even while the buffer is still decoding, and
+    // _startTime is stale until playback really begins; reading it then would
+    // make an unheard track hand over immediately.
+    const map = { bgm: { name: '', volume: 90, pitch: 100, pan: 0 }, bgmSequence: { enabled: true, entries: [
+        { type: 'palette', duration: 0, fadeIn: 2, fadeOut: 4, layers: [
+            { volume: 100, pitch: 100, pan: 0, pool: [{ type: 'track', name: 'Slow' }, { type: 'track', name: 'Other' }] }
+        ] }
+    ] } };
+    const { AudioManager, context, created, tick } = loadAudioManager({ map });
+    context.WebAudio.trackSeconds = 90;
+    AudioManager.playBgm(AudioManager.mapBgmObject(map, 1));
+    created[0]._startTime = 0;              // as it reads before _startPlaying runs
+    tick(120);
+    assert.equal(created.length, 1, 'nothing handed over while the track had not started');
 });
